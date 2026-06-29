@@ -1,0 +1,5 @@
+{
+  "auth.failed": "Estas credenciales no coinciden con nuestros registros.",
+  "validation.email": "El campo debe ser una dirección de correo válida.",
+  "validation.required": "El campo es obligatorio."
+}

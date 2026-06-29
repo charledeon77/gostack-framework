@@ -1,0 +1,5 @@
+{
+  "auth.failed": "Diese Zugangsdaten stimmen nicht mit unseren Aufzeichnungen überein.",
+  "validation.email": "Dieses Feld muss eine gültige E-Mail-Adresse sein.",
+  "validation.required": "Dieses Feld ist erforderlich."
+}

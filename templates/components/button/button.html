@@ -1,0 +1,10 @@
+<div gs-component="button">
+    <!-- 
+        Accepts variables:
+        - variant: 'primary', 'secondary', 'danger'
+        - text: Button text 
+    -->
+    <button class="gs-btn gs-btn-{{ .variant }}" gs-on:click="{{ .onClick }}">
+        {{ .text }}
+    </button>
+</div>

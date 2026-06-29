@@ -1,0 +1,5 @@
+{
+  "auth.failed": "Bu kimlik bilgileri kayıtlarımızla eşleşmiyor.",
+  "validation.email": "Bu alan geçerli bir e-posta adresi olmalıdır.",
+  "validation.required": "Bu alan zorunludur."
+}

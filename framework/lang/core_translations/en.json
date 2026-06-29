@@ -1,0 +1,5 @@
+{
+  "auth.failed": "These credentials do not match our records.",
+  "validation.email": "The field must be a valid email address.",
+  "validation.required": "The field is required."
+}

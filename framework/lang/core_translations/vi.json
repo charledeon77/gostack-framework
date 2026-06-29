@@ -1,0 +1,5 @@
+{
+  "auth.failed": "Thông tin đăng nhập không khớp với hồ sơ của chúng tôi.",
+  "validation.email": "Trường này phải là một địa chỉ email hợp lệ.",
+  "validation.required": "Trường này là bắt buộc."
+}

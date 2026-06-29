@@ -1,0 +1,5 @@
+{
+  "auth.failed": "Kredensial iki ora cocog karo cathetan kita.",
+  "validation.email": "Kolom iki kudu dadi alamat email sing valid.",
+  "validation.required": "Kolom iki kudu diisi."
+}

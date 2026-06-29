@@ -1,0 +1,5 @@
+{
+  "auth.failed": "这些凭据与我们的记录不符。",
+  "validation.email": "该字段必须是有效的电子邮件地址。",
+  "validation.required": "该字段是必填项。"
+}
