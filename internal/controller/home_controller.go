@@ -2,8 +2,8 @@ package controller
 
 import (
 	"fmt"
-	"github.com/charledeon77/gostack/framework/contract"
-	"github.com/charledeon77/gostack/framework/http"
+	"github.com/charledeon77/gostack-framework/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/http"
 )
 
 // HomeController serves as the primary controller for home-related 

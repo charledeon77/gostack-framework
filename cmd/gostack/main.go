@@ -26,9 +26,9 @@ package main
 
 import (
 	"fmt"
-	"github.com/charledeon77/gostack"
-	"github.com/charledeon77/gostack/framework/console"
-	"github.com/charledeon77/gostack/framework/foundation"
+	"github.com/charledeon77/gostack-framework"
+	"github.com/charledeon77/gostack-framework/framework/console"
+	"github.com/charledeon77/gostack-framework/framework/foundation"
 	"log"
 	"os"
 )

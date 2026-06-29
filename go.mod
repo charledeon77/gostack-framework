@@ -1,4 +1,4 @@
-module github.com/charledeon77/gostack
+module github.com/charledeon77/gostack-framework
 
 go 1.26.3
 

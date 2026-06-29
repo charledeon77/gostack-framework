@@ -26,7 +26,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
-	"github.com/charledeon77/gostack/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/contract"
 	"sort"
 )
 

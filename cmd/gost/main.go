@@ -13,7 +13,7 @@ the project-local CLI at `cmd/gostack/main.go`, which is compiled against the
 project's exact dependency versions.
 
 Installation:
-  go install github.com/charledeon77/gostack/cmd/gost@latest
+  go install github.com/charledeon77/gostack-framework/cmd/gost@latest
 
 Usage:
   gost new <project-name>           Interactive wizard (recommended)
@@ -29,7 +29,7 @@ import (
 	"runtime"
 	"runtime/debug"
 
-	"github.com/charledeon77/gostack/framework/console"
+	"github.com/charledeon77/gostack-framework/framework/console"
 )
 
 const FallbackVersion = "v1.0.0"
@@ -78,7 +78,7 @@ func main() {
 		fmt.Printf("   Platform : %s/%s\n", runtime.GOOS, runtime.GOARCH)
 		fmt.Printf("   Go       : %s\n", runtime.Version())
 		fmt.Println("   Docs     : https://charledeon77.github.io/gostack-docs/")
-		fmt.Println("   Source   : https://github.com/charledeon77/gostack")
+		fmt.Println("   Source   : https://github.com/charledeon77/gostack-framework")
 		os.Exit(0)
 	}
 

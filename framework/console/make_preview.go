@@ -3,7 +3,7 @@ package console
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/charledeon77/gostack/framework/ui"
+	"github.com/charledeon77/gostack-framework/framework/ui"
 	"html/template"
 	"io"
 	"net/http"

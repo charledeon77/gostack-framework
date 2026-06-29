@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/charledeon77/gostack/framework/contract"
-	ghttp "github.com/charledeon77/gostack/framework/http"
+	"github.com/charledeon77/gostack-framework/framework/contract"
+	ghttp "github.com/charledeon77/gostack-framework/framework/http"
 )
 
 // Kernel acts as the heart of the framework. It holds the application's

@@ -27,7 +27,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/charledeon77/gostack/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/contract"
 )
 
 const redisQueueKey = "gostack:queue:default"

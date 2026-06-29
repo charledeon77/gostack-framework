@@ -3,7 +3,7 @@ package cache
 import (
 	"time"
 
-	"github.com/charledeon77/gostack/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/contract"
 )
 
 // Purpose: Provide a strictly typed, Developer-Facing API (Mory) for the cache subsystem.

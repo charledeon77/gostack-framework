@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Go%20Report-A%2B-8a2be2?logo=goreportcard" />
   <img src="https://img.shields.io/badge/docs-available-blue?logo=readthedocs" />
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?logo=googlecast&logoColor=F4842D" />
-  <a href="https://pkg.go.dev/github.com/charledeon77/gostack"><img src="https://img.shields.io/badge/go.dev-reference-007d9c?logo=go" alt="Go Reference" /></a>
+  <a href="https://pkg.go.dev/github.com/charledeon77/gostack-framework"><img src="https://img.shields.io/badge/go.dev-reference-007d9c?logo=go" alt="Go Reference" /></a>
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?logo=github" />
 </p>
 

@@ -23,7 +23,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
-	"github.com/charledeon77/gostack/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/contract"
 	"io"
 	"strings"
 	"sync"

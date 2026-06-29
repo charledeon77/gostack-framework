@@ -33,7 +33,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"github.com/charledeon77/gostack/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/contract"
 	netHTTP "net/http"
 )
 

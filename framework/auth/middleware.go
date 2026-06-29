@@ -25,8 +25,8 @@ package auth
 
 import (
 	"context"
-	"github.com/charledeon77/gostack/framework/contract"
-	"github.com/charledeon77/gostack/framework/http"
+	"github.com/charledeon77/gostack-framework/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/http"
 	netHTTP "net/http"
 	"strings"
 )

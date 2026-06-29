@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/charledeon77/gostack/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/contract"
 )
 
 // Purpose: To provide an asynchronous job processing system (Sequence) for GoStack.

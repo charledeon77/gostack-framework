@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/charledeon77/gostack/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/contract"
 )
 
 // Purpose: Provide a lightning-fast, zero-dependency caching driver for GoStack.

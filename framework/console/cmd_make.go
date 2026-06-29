@@ -22,7 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"go/format"
-	"github.com/charledeon77/gostack/framework/ui"
+	"github.com/charledeon77/gostack-framework/framework/ui"
 	"io"
 	"net/http"
 	"os"
@@ -55,7 +55,7 @@ Specifically, it handles the creation and destruction of the "{{.Table}}" table.
 package migrations
 
 import (
-	"github.com/charledeon77/gostack/framework/database"
+	"github.com/charledeon77/gostack-framework/framework/database"
 )
 
 func init() {
@@ -139,8 +139,8 @@ This file defines the "{{.StructName}}" HTTP Controller.
 package controller
 
 import (
-	"github.com/charledeon77/gostack/framework/contract"
-	"github.com/charledeon77/gostack/framework/http"
+	"github.com/charledeon77/gostack-framework/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/http"
 	netHTTP "net/http"
 )
 
@@ -252,7 +252,7 @@ func (c *MakeAuthCommand) Execute(args []string) error {
 		fmt.Sprintf("%d_create_users_table.go", versionUsers): `package migrations
 
 import (
-	"github.com/charledeon77/gostack/framework/database"
+	"github.com/charledeon77/gostack-framework/framework/database"
 )
 
 func init() {
@@ -274,7 +274,7 @@ func init() {
 		fmt.Sprintf("%d_create_user_tokens_table.go", versionTokens): `package migrations
 
 import (
-	"github.com/charledeon77/gostack/framework/database"
+	"github.com/charledeon77/gostack-framework/framework/database"
 )
 
 func init() {
@@ -352,9 +352,9 @@ func (u *User) GetPassword() string {
 		"user_provider.go": `package model
 
 import (
-	"github.com/charledeon77/gostack"
-	"github.com/charledeon77/gostack/framework/auth"
-	"github.com/charledeon77/gostack/framework/contract"
+	"github.com/charledeon77/gostack-framework"
+	"github.com/charledeon77/gostack-framework/framework/auth"
+	"github.com/charledeon77/gostack-framework/framework/contract"
 	"time"
 )
 
@@ -452,11 +452,11 @@ func (p *UserProvider) ValidateCredentials(user contract.Authenticatable, creden
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"github.com/charledeon77/gostack"
-	"github.com/charledeon77/gostack/framework/auth"
-	"github.com/charledeon77/gostack/framework/contract"
-	"github.com/charledeon77/gostack/framework/http"
-	"github.com/charledeon77/gostack/internal/model"
+	"github.com/charledeon77/gostack-framework"
+	"github.com/charledeon77/gostack-framework/framework/auth"
+	"github.com/charledeon77/gostack-framework/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/http"
+	"github.com/charledeon77/gostack-framework/internal/model"
 	netHTTP "net/http"
 	"time"
 )
@@ -1017,7 +1017,7 @@ This file defines the "{{.StructName}}" request validation struct.
 package request
 
 import (
-	"github.com/charledeon77/gostack/framework/http"
+	"github.com/charledeon77/gostack-framework/framework/http"
 )
 
 type {{.StructName}} struct {
@@ -1101,7 +1101,7 @@ This file defines the "{{.FuncName}}" HTTP middleware interceptor.
 package middleware
 
 import (
-	"github.com/charledeon77/gostack/framework/http"
+	"github.com/charledeon77/gostack-framework/framework/http"
 )
 
 // {{.FuncName}} intercepts incoming HTTP requests.
@@ -1179,7 +1179,7 @@ This file defines the "{{.StructName}}" mail constructor.
 package mail
 
 import (
-	"github.com/charledeon77/gostack/framework/mail"
+	"github.com/charledeon77/gostack-framework/framework/mail"
 )
 
 // {{.StructName}} represents a mailable message layout.
@@ -1266,7 +1266,7 @@ This file defines the "{{.StructName}}" seeder.
 package seeders
 
 import (
-	"github.com/charledeon77/gostack/framework/database"
+	"github.com/charledeon77/gostack-framework/framework/database"
 )
 
 type {{.StructName}} struct{}

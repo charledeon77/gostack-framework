@@ -24,7 +24,7 @@ GoStack ships with a global command-line tool called **`gost`**. You install it 
 Open your terminal and run:
 
 ```bash
-go install github.com/charledeon77/gostack/cmd/gost@latest
+go install github.com/charledeon77/gostack-framework/cmd/gost@latest
 ```
 
 Go will download, compile, and install the `gost` binary on your machine automatically. This may take a minute the first time.
@@ -147,7 +147,7 @@ This creates a new file at `internal/controller/welcome_controller.go`. Open tha
 ```go
 package controller
 
-import "github.com/charledeon77/gostack/framework/http"
+import "github.com/charledeon77/gostack-framework/framework/http"
 
 type WelcomeController struct{}
 
@@ -264,7 +264,7 @@ This is the fix for most people. Your terminal needs to be restarted to recognis
 
 **Step 2 — If it still does not work**, it means your Go installation was not set up completely on your machine. Visit [go.dev/doc/install](https://go.dev/doc/install) and follow the "Test your installation" instructions for your operating system to fix your Go setup. Once Go is working correctly, run the install command again:
 ```bash
-go install github.com/charledeon77/gostack/cmd/gost@latest
+go install github.com/charledeon77/gostack-framework/cmd/gost@latest
 ```
 
 ---

@@ -6,11 +6,11 @@ package main
 
 import (
 	"fmt"
-	"github.com/charledeon77/gostack/framework/contract"
-	"github.com/charledeon77/gostack/framework/database"
-	"github.com/charledeon77/gostack/framework/foundation"
-	"github.com/charledeon77/gostack/framework/http"
-	"github.com/charledeon77/gostack/internal/controller"
+	"github.com/charledeon77/gostack-framework/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/database"
+	"github.com/charledeon77/gostack-framework/framework/foundation"
+	"github.com/charledeon77/gostack-framework/framework/http"
+	"github.com/charledeon77/gostack-framework/internal/controller"
 	"log"
 )
 

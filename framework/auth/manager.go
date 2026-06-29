@@ -22,7 +22,7 @@ package auth
 
 import (
 	"fmt"
-	"github.com/charledeon77/gostack/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/contract"
 	"net/http"
 	"sync"
 )

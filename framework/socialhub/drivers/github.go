@@ -9,7 +9,7 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/github"
 
-	"github.com/charledeon77/gostack/framework/socialhub"
+	"github.com/charledeon77/gostack-framework/framework/socialhub"
 )
 
 // Purpose: To provide a seamless GitHub authentication driver for the SocialHub ecosystem.

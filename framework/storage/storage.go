@@ -10,7 +10,7 @@ expose applications to directory traversal exploits. This driver prevents that b
 resolving all operations strictly within a configured root directory.
 
 Architecture:
-A standalone framework package (`github.com/charledeon77/gostack/framework/storage`). Implements the
+A standalone framework package (`github.com/charledeon77/gostack-framework/framework/storage`). Implements the
 `contract.Storage` interface.
 
 Choice:

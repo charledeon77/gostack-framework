@@ -10,7 +10,7 @@ rules. The dispatcher is written using standard mutexes to ensure high-performan
 concurrent-safe registrations and publishing.
 
 Architecture:
-A standalone framework package (`github.com/charledeon77/gostack/framework/events`). Implements the
+A standalone framework package (`github.com/charledeon77/gostack-framework/framework/events`). Implements the
 `contract.EventDispatcher` interface.
 
 Choice:
@@ -28,7 +28,7 @@ package events
 
 import (
 	"fmt"
-	"github.com/charledeon77/gostack/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/contract"
 	"sync"
 )
 

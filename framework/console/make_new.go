@@ -384,8 +384,8 @@ func (c *NewCommand) Execute(args []string) error {
 			if err != nil {
 				return err
 			}
-			newContent := strings.ReplaceAll(string(content), `"github.com/charledeon77/gostack"`, `"`+projectName+`"`)
-			newContent = strings.ReplaceAll(newContent, `"github.com/charledeon77/gostack/`, `"`+projectName+`/`)
+			newContent := strings.ReplaceAll(string(content), `"github.com/charledeon77/gostack-framework"`, `"`+projectName+`"`)
+			newContent = strings.ReplaceAll(newContent, `"github.com/charledeon77/gostack-framework/`, `"`+projectName+`/`)
 			if string(content) != newContent {
 				os.WriteFile(path, []byte(newContent), 0644)
 			}
@@ -414,7 +414,7 @@ func (c *NewCommand) Execute(args []string) error {
 				importInject = "\n\t_ \"modernc.org/sqlite\""
 			}
 		case "mongodb", "neo4j", "cassandra":
-			importInject = "\n\t\"github.com/charledeon77/gostack\""
+			importInject = "\n\t\"github.com/charledeon77/gostack-framework\""
 		}
 		mainStr = strings.Replace(mainStr, "import (", "import ("+importInject, 1)
 
@@ -720,7 +720,7 @@ func (c *NewCommand) Execute(args []string) error {
 // downloadAndUnzip retrieves the main project template ZIP from GitHub over HTTPS,
 // and extracts its contents natively in pure Go, bypassing the system Git command.
 func downloadAndUnzip(projectName string) error {
-	url := "https://github.com/charledeon77/gostack/archive/refs/heads/main.zip"
+	url := "https://github.com/charledeon77/gostack-framework/archive/refs/heads/main.zip"
 	resp, err := http.Get(url)
 	if err != nil {
 		return fmt.Errorf("network connection failed: %w", err)

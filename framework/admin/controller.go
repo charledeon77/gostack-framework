@@ -22,7 +22,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/charledeon77/gostack/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/contract"
 )
 
 // Mount registers all admin panel routes onto the provided mux.

@@ -121,9 +121,9 @@ func (c *AssetCompiler) Run() error {
 	if needsFmt {
 		imports = append(imports, `"fmt"`)
 	}
-	imports = append(imports, `"github.com/charledeon77/gostack/framework/http"`)
+	imports = append(imports, `"github.com/charledeon77/gostack-framework/framework/http"`)
 	if needsUI {
-		imports = append(imports, `"github.com/charledeon77/gostack/framework/ui"`)
+		imports = append(imports, `"github.com/charledeon77/gostack-framework/framework/ui"`)
 	}
 	imports = append(imports, `"io"`)
 

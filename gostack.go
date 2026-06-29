@@ -2,10 +2,10 @@ package gostack
 
 import (
 	"fmt"
-	"github.com/charledeon77/gostack/framework/auth"
-	"github.com/charledeon77/gostack/framework/contract"
-	"github.com/charledeon77/gostack/framework/database"
-	"github.com/charledeon77/gostack/framework/mail"
+	"github.com/charledeon77/gostack-framework/framework/auth"
+	"github.com/charledeon77/gostack-framework/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/database"
+	"github.com/charledeon77/gostack-framework/framework/mail"
 	"github.com/gocql/gocql"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"go.mongodb.org/mongo-driver/mongo"

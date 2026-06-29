@@ -17,8 +17,8 @@ package console
 
 import (
 	"fmt"
-	"github.com/charledeon77/gostack"
-	"github.com/charledeon77/gostack/framework/database"
+	"github.com/charledeon77/gostack-framework"
+	"github.com/charledeon77/gostack-framework/framework/database"
 )
 
 // MigrateCommand implements the console.Command interface for the "migrate" CLI action.

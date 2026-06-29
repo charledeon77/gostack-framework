@@ -5,8 +5,8 @@ package main
 
 import (
 	"fmt"
-	"github.com/charledeon77/gostack/framework/http"
-	"github.com/charledeon77/gostack/framework/ui"
+	"github.com/charledeon77/gostack-framework/framework/http"
+	"github.com/charledeon77/gostack-framework/framework/ui"
 	"io"
 )
 

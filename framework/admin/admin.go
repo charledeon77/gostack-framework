@@ -20,7 +20,7 @@ package admin
 // - Find(name): Retrieves a specific entry by model name.
 
 import (
-	"github.com/charledeon77/gostack/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/contract"
 	"reflect"
 	"strings"
 	"sync"
