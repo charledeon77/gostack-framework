@@ -6,33 +6,84 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// Purpose: To provide a native, background task scheduling engine (Planner) for GoStack.
-// Philosophy: Modern web applications shouldn't require external Cron daemons for simple
-// periodic tasks (like cleaning up sessions or sending daily reports). By building a
-// native scheduler using Go's concurrent `select` loops, we maintain the "Zero External Bloat"
-// philosophy while delivering full Cron-like capabilities.
-// Architecture:
-// - Job: Represents a single schedulable function.
-// - Scheduler: The engine holding the registry of jobs and managing their tick loops.
-// Choice:
-// We use `time.Ticker` for fixed-interval execution. We also include a `sync.WaitGroup`
-// so the application can gracefully shut down the scheduler without interrupting in-flight jobs.
-// Implementation:
-// - `Every(duration)`: Registers a job to run at fixed intervals.
-// - `Cron(expr)`: Registers a job using standard 5-field cron syntax.
-// - `Run(ctx)`: Boots the scheduler goroutines.
+// Purpose: Native background task scheduling engine (Planner) for GoStack.
+// Philosophy: Modern web apps shouldn't need an external cron daemon for periodic
+// tasks. This engine uses Go's concurrent select loops — zero external dependencies.
+//
+// New in this version:
+//   - Timezone support: jobs can run in any IANA time zone.
+//   - Overlap prevention: WithoutOverlapping() skips a tick if the prior run is
+//     still executing, preventing pile-ups under slow tasks.
+//   - RunOnce: optional flag to fire the task immediately on boot before the
+//     first interval/cron tick.
 
 // Task represents a function that can be scheduled.
 type Task func() error
 
 // Job represents a registered task with its scheduling constraints.
 type Job struct {
-	Interval time.Duration
-	CronExpr string
-	Task     Task
+	Interval       time.Duration
+	CronExpr       string
+	Task           Task
+	timezone       *time.Location // nil means UTC/local
+	withoutOverlap bool
+	runOnBoot      bool
+	running        int32 // accessed via sync/atomic; 1 while task is executing
+}
+
+// Timezone sets the IANA time zone for the job (e.g. "America/New_York").
+// Falls back to UTC if the zone is invalid.
+func (j *Job) Timezone(zone string) *Job {
+	loc, err := time.LoadLocation(zone)
+	if err != nil {
+		loc = time.UTC
+	}
+	j.timezone = loc
+	return j
+}
+
+// WithoutOverlapping prevents a new execution from starting if the previous
+// invocation of this job is still running. Safe to use on long-running tasks.
+func (j *Job) WithoutOverlapping() *Job {
+	j.withoutOverlap = true
+	return j
+}
+
+// RunOnBoot fires the task once immediately when the scheduler starts, before
+// the first scheduled tick. Useful for warming up caches or running initial checks.
+func (j *Job) RunOnBoot() *Job {
+	j.runOnBoot = true
+	return j
+}
+
+// inLocation returns the supplied time converted to the job's configured timezone.
+// If no timezone is set, the original time is returned unchanged.
+func (j *Job) inLocation(t time.Time) time.Time {
+	if j.timezone != nil {
+		return t.In(j.timezone)
+	}
+	return t
+}
+
+// tryRun executes the task, honouring WithoutOverlapping if set.
+// It returns false (and skips execution) when a previous run is still in progress.
+func (j *Job) tryRun(id int) {
+	if j.withoutOverlap {
+		if !atomic.CompareAndSwapInt32(&j.running, 0, 1) {
+			// Previous run still in flight — skip this tick.
+			fmt.Printf("[Scheduler] Job %d skipped — previous execution still running.\n", id)
+			return
+		}
+		defer atomic.StoreInt32(&j.running, 0)
+	}
+
+	if err := j.Task(); err != nil {
+		fmt.Printf("[Scheduler] Error executing job %d: %v\n", id, err)
+	}
 }
 
 // Scheduler manages the execution of periodic background jobs.
@@ -52,6 +103,7 @@ func New() *Scheduler {
 }
 
 // Every registers a task to run repeatedly at the given interval.
+// Returns the *Job so callers can chain .Timezone(), .WithoutOverlapping(), .RunOnBoot().
 func (s *Scheduler) Every(interval time.Duration, task Task) *Job {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -64,7 +116,8 @@ func (s *Scheduler) Every(interval time.Duration, task Task) *Job {
 	return job
 }
 
-// Cron registers a task to run repeatedly according to a 5-field cron expression.
+// Cron registers a task using a standard 5-field cron expression.
+// Returns the *Job so callers can chain .Timezone(), .WithoutOverlapping(), .RunOnBoot().
 func (s *Scheduler) Cron(expr string, task Task) *Job {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -77,8 +130,8 @@ func (s *Scheduler) Cron(expr string, task Task) *Job {
 	return job
 }
 
-// Run starts the scheduler in the background. It blocks until the context is canceled.
-// Typically, you call this in a goroutine: `go scheduler.Run(ctx)`
+// Run starts the scheduler. It blocks until the context is canceled.
+// Typically called in a goroutine: go scheduler.Run(ctx)
 func (s *Scheduler) Run(ctx context.Context) {
 	s.mu.Lock()
 	s.ctx, s.cancel = context.WithCancel(ctx)
@@ -87,14 +140,20 @@ func (s *Scheduler) Run(ctx context.Context) {
 	s.mu.Unlock()
 
 	for i, job := range jobsToRun {
+		// Fire on-boot tasks immediately before entering the tick loop.
+		if job.runOnBoot {
+			s.wg.Add(1)
+			go func(id int, j *Job) {
+				defer s.wg.Done()
+				j.tryRun(id)
+			}(i, job)
+		}
+
 		s.wg.Add(1)
 		go s.runJob(s.ctx, i, job)
 	}
 
-	// Block until context is done
 	<-s.ctx.Done()
-
-	// Wait for any running jobs to finish gracefully
 	s.wg.Wait()
 }
 
@@ -112,20 +171,18 @@ func (s *Scheduler) runJob(ctx context.Context, id int, job *Job) {
 	defer s.wg.Done()
 
 	if job.CronExpr != "" {
-		// Align initial check to the minute boundary
-		now := time.Now()
+		// Align the initial check to the next minute boundary in the job's timezone.
+		now := job.inLocation(time.Now())
 		nextMinute := now.Truncate(time.Minute).Add(time.Minute)
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(nextMinute.Sub(now)):
+		case <-time.After(time.Until(nextMinute)):
 		}
 
-		// Run immediately at the start of the first minute boundary
-		if matchCron(job.CronExpr, time.Now()) {
-			if err := job.Task(); err != nil {
-				fmt.Printf("[Scheduler] Error executing cron job %d: %v\n", id, err)
-			}
+		// Check and run at the start of the first minute boundary.
+		if matchCron(job.CronExpr, job.inLocation(time.Now())) {
+			job.tryRun(id)
 		}
 
 		ticker := time.NewTicker(time.Minute)
@@ -135,11 +192,9 @@ func (s *Scheduler) runJob(ctx context.Context, id int, job *Job) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
-				if matchCron(job.CronExpr, time.Now()) {
-					if err := job.Task(); err != nil {
-						fmt.Printf("[Scheduler] Error executing cron job %d: %v\n", id, err)
-					}
+			case t := <-ticker.C:
+				if matchCron(job.CronExpr, job.inLocation(t)) {
+					job.tryRun(id)
 				}
 			}
 		}
@@ -152,10 +207,7 @@ func (s *Scheduler) runJob(ctx context.Context, id int, job *Job) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				err := job.Task()
-				if err != nil {
-					fmt.Printf("[Scheduler] Error executing job %d: %v\n", id, err)
-				}
+				job.tryRun(id)
 			}
 		}
 	}
@@ -177,6 +229,7 @@ func matchCron(expr string, t time.Time) bool {
 }
 
 // matchField evaluates a single cron field expression.
+// Supports: * (wildcard), */n (step), a-b (range), a,b,c (list), n (exact).
 func matchField(field string, val int) bool {
 	if field == "*" {
 		return true
@@ -195,6 +248,7 @@ func matchField(field string, val int) bool {
 	if strings.Contains(field, ",") {
 		parts := strings.Split(field, ",")
 		for _, part := range parts {
+			part = strings.TrimSpace(part)
 			if partVal, err := strconv.Atoi(part); err == nil && partVal == val {
 				return true
 			}
@@ -215,7 +269,7 @@ func matchField(field string, val int) bool {
 		return false
 	}
 
-	// Simple match
+	// Simple exact match
 	partVal, err := strconv.Atoi(field)
 	return err == nil && partVal == val
 }

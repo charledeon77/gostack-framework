@@ -4,6 +4,7 @@ package http
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 )
 
@@ -24,6 +25,9 @@ type Context struct {
 
 	// Tempose points directly to the companion view engine, enabling isolation during server-side composition.
 	Tempose *Tempose
+
+	// Router maps back to the central router table, enabling named route lookups and dynamic URL builds.
+	Router *Router
 
 	// values stores request-scoped values passed between middlewares and handlers.
 	values map[string]any
@@ -136,4 +140,21 @@ func (c *Context) Trans(key string, replace ...map[string]string) string {
 		repl = replace[0]
 	}
 	return t.Trans(c.Locale(), key, repl)
+}
+
+// Param retrieves a path/wildcard parameter extracted from the matched URL pattern (e.g. for /users/:id).
+func (c *Context) Param(key string) string {
+	params, ok := c.Get("params").(map[string]string)
+	if !ok || params == nil {
+		return ""
+	}
+	return params[key]
+}
+
+// URL builds a path pattern for the named route, replacing parameters with values.
+func (c *Context) URL(name string, params map[string]string) (string, error) {
+	if c.Router == nil {
+		return "", fmt.Errorf("router is not registered on HTTP Context")
+	}
+	return c.Router.URL(name, params)
 }

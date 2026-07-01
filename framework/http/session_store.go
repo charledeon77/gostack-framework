@@ -26,6 +26,7 @@ package http
 import (
 	"fmt"
 	"github.com/charledeon77/gostack-framework/framework/contract"
+	netHTTP "net/http"
 	"sync"
 )
 
@@ -167,4 +168,48 @@ func (store *InMemoryStore) Destroy(id string) error {
 	defer store.mu.Unlock()
 	delete(store.sessions, id)
 	return nil
+}
+
+// RegenerateID issues a brand new session ID for the given session, transfers
+// all existing data, and removes the old session entry. Call this immediately
+// after a successful login to prevent session fixation attacks.
+//
+// Example:
+//
+//	sess := http.GetSession(ctx)
+//	http.RegenerateSessionID(ctx, store, sess, "gostack_session")
+func RegenerateSessionID(ctx *Context, store contract.SessionStore, sess contract.Session, cookieName string) (contract.Session, error) {
+	newID := generateSessionID()
+
+	// Build new session and copy all data from old session.
+	newSess := NewMemorySession(newID)
+	if ms, ok := sess.(*MemorySession); ok {
+		ms.mu.RLock()
+		for k, v := range ms.data {
+			newSess.data[k] = v
+		}
+		ms.mu.RUnlock()
+	}
+
+	// Destroy old session and save new session.
+	_ = store.Destroy(sess.ID())
+	if err := store.Save(newSess); err != nil {
+		return nil, err
+	}
+
+	// Update context reference.
+	ctx.Set("session", newSess)
+
+	// Overwrite cookie with new session ID.
+	isSecure := ctx.Request.TLS != nil || ctx.Request.Header.Get("X-Forwarded-Proto") == "https"
+	netHTTP.SetCookie(ctx.Writer, &netHTTP.Cookie{
+		Name:     cookieName,
+		Value:    newID,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   isSecure,
+		SameSite: netHTTP.SameSiteLaxMode,
+	})
+
+	return newSess, nil
 }

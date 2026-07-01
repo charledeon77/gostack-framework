@@ -4,7 +4,6 @@
 package main
 
 import (
-	"fmt"
 	"github.com/charledeon77/gostack-framework/framework/http"
 	"github.com/charledeon77/gostack-framework/framework/ui"
 	"io"
@@ -56,12 +55,12 @@ background-color: #dc2626;
         - text: Button text 
     -->
     <button class="gs-btn gs-btn-`); err != nil { return err }
-		if _, err := io.WriteString(w, fmt.Sprint(ui.Evaluate(data, "variant"))); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "variant"))); err != nil { return err }
 		if _, err := io.WriteString(w, `" gs-on:click="`); err != nil { return err }
-		if _, err := io.WriteString(w, fmt.Sprint(ui.Evaluate(data, "onClick"))); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "onClick"))); err != nil { return err }
 		if _, err := io.WriteString(w, `">
         `); err != nil { return err }
-		if _, err := io.WriteString(w, fmt.Sprint(ui.Evaluate(data, "text"))); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "text"))); err != nil { return err }
 		if _, err := io.WriteString(w, `
     </button>
 </div>
@@ -192,7 +191,7 @@ text-decoration: underline;
 	<h2>Login</h2>
 	<form action="/login" method="POST">
 		<input type="hidden" name="_token" value="`); err != nil { return err }
-		if _, err := io.WriteString(w, fmt.Sprint(ui.Evaluate(data, "csrf_token"))); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "csrf_token"))); err != nil { return err }
 		if _, err := io.WriteString(w, `" />
 		<div class="form-group">
 			<label>Email Address</label>
@@ -203,7 +202,7 @@ text-decoration: underline;
 			<input type="password" name="password" required />
 		</div>
 		<div class="alert alert-danger">`); err != nil { return err }
-		if _, err := io.WriteString(w, fmt.Sprint(ui.Evaluate(data, "error"))); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "error"))); err != nil { return err }
 		if _, err := io.WriteString(w, `</div>
 		<button type="submit" class="btn">Sign In</button>
 	</form>
@@ -288,28 +287,28 @@ transform: scale(1);
 <div gs-component="modal">
     <!-- Overlay -->
     <div class="gs-modal-overlay gs-hidden" id="gs-modal-`); err != nil { return err }
-		if _, err := io.WriteString(w, fmt.Sprint(ui.Evaluate(data, "id"))); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "id"))); err != nil { return err }
 		if _, err := io.WriteString(w, `">
         <!-- Modal Dialog -->
         <div class="gs-modal-content">
             <div class="gs-modal-header">
                 <h3 class="gs-modal-title">`); err != nil { return err }
-		if _, err := io.WriteString(w, fmt.Sprint(ui.Evaluate(data, "title"))); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "title"))); err != nil { return err }
 		if _, err := io.WriteString(w, `</h3>
                 <button class="gs-modal-close" gs-on:click="GoStack.closeModal('`); err != nil { return err }
-		if _, err := io.WriteString(w, fmt.Sprint(ui.Evaluate(data, "id"))); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "id"))); err != nil { return err }
 		if _, err := io.WriteString(w, `')">&times;</button>
             </div>
             
             <div class="gs-modal-body">
                 `); err != nil { return err }
-		if _, err := io.WriteString(w, fmt.Sprint(ui.Evaluate(data, "content"))); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "content"))); err != nil { return err }
 		if _, err := io.WriteString(w, `
             </div>
             
             <div class="gs-modal-footer">
                 `); err != nil { return err }
-		if _, err := io.WriteString(w, fmt.Sprint(ui.Evaluate(data, "footer"))); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "footer"))); err != nil { return err }
 		if _, err := io.WriteString(w, `
             </div>
         </div>
@@ -410,7 +409,7 @@ text-decoration: underline;
 	<h2>Register</h2>
 	<form action="/register" method="POST">
 		<input type="hidden" name="_token" value="`); err != nil { return err }
-		if _, err := io.WriteString(w, fmt.Sprint(ui.Evaluate(data, "csrf_token"))); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "csrf_token"))); err != nil { return err }
 		if _, err := io.WriteString(w, `" />
 		<div class="form-group">
 			<label>Email Address</label>
@@ -421,7 +420,7 @@ text-decoration: underline;
 			<input type="password" name="password" required />
 		</div>
 		<div class="alert alert-danger">`); err != nil { return err }
-		if _, err := io.WriteString(w, fmt.Sprint(ui.Evaluate(data, "error"))); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "error"))); err != nil { return err }
 		if _, err := io.WriteString(w, `</div>
 		<button type="submit" class="btn">Create Account</button>
 	</form>

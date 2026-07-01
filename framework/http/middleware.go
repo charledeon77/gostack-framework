@@ -157,3 +157,25 @@ func RequireAuth(ctx *Context, next NextHandler) error {
 
 	return next(ctx)
 }
+
+// TrailingSlashRedirectMiddleware issues a permanent 301 redirect for any request
+// path that carries a trailing slash (except the root "/"), normalising URLs for
+// SEO and preventing duplicate content.
+//
+// Register it globally before your routes:
+//
+//	router.Use(http.TrailingSlashRedirectMiddleware())
+func TrailingSlashRedirectMiddleware() Middleware {
+	return func(ctx *Context, next NextHandler) error {
+		path := ctx.Request.URL.Path
+		if path != "/" && len(path) > 1 && path[len(path)-1] == '/' {
+			target := path[:len(path)-1]
+			if ctx.Request.URL.RawQuery != "" {
+				target += "?" + ctx.Request.URL.RawQuery
+			}
+			netHTTP.Redirect(ctx.Writer, ctx.Request, target, netHTTP.StatusMovedPermanently)
+			return nil
+		}
+		return next(ctx)
+	}
+}

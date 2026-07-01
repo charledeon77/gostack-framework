@@ -253,16 +253,29 @@ func Matches(pattern string) Rule {
 }
 
 // IsUnique returns a Rule that queries a database to ensure the field value is unique in the specified table and column.
+//
+// Security: table and column names are validated against a strict alphanumeric+underscore allowlist
+// before being interpolated into the SQL query, preventing SQL injection attacks.
 func IsUnique(db contract.Database, table, column string) Rule {
 	return func(field, value string) (bool, string) {
+		// Guard against SQL injection: only allow safe identifier characters.
+		if !isSafeIdentifier(table) {
+			return false, fmt.Sprintf("%s uniqueness check failed: invalid table name", field)
+		}
+		if !isSafeIdentifier(column) {
+			return false, fmt.Sprintf("%s uniqueness check failed: invalid column name", field)
+		}
+
 		query := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s = ?", table, column)
 		result, err := db.Query(query, value)
 		if err != nil {
 			return false, fmt.Sprintf("%s uniqueness check failed: %v", field, err)
 		}
+
 		rows, ok := result.(*sql.Rows)
 		if !ok {
-			return false, fmt.Sprintf("%s uniqueness check failed: invalid driver results", field)
+			// Driver returned a non-standard result — treat as "cannot confirm uniqueness".
+			return false, fmt.Sprintf("%s uniqueness check failed: unsupported driver result type", field)
 		}
 		defer rows.Close()
 
@@ -274,4 +287,12 @@ func IsUnique(db contract.Database, table, column string) Rule {
 		}
 		return true, ""
 	}
+}
+
+// isSafeIdentifier checks that a database identifier (table/column name) contains
+// only alphanumeric characters and underscores, preventing SQL injection.
+var safeIdentifierPattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
+func isSafeIdentifier(name string) bool {
+	return safeIdentifierPattern.MatchString(name)
 }

@@ -21,10 +21,48 @@ package admin
 
 import (
 	"github.com/charledeon77/gostack-framework/framework/contract"
+	"net/http"
 	"reflect"
 	"strings"
 	"sync"
 )
+
+// AuthGuard is the pluggable authentication middleware for the admin panel.
+// When set, every request to /admin is passed through this function before
+// being handled. If not set, the panel defaults to LocalOnlyGuard, which
+// only allows access from localhost/127.0.0.1.
+//
+// Example usage:
+//
+//	admin.AuthGuard = func(next http.Handler) http.Handler {
+//	    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+//	        if !isAdminUser(r) {
+//	            http.Error(w, "403 Forbidden", http.StatusForbidden)
+//	            return
+//	        }
+//	        next.ServeHTTP(w, r)
+//	    })
+//	}
+var AuthGuard func(next http.Handler) http.Handler
+
+// LocalOnlyGuard is the default admin panel guard when no AuthGuard is configured.
+// It allows requests only from localhost or 127.0.0.1, blocking all remote clients
+// to prevent accidental exposure of the admin CRUD interface in production.
+func LocalOnlyGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.RemoteAddr
+		// Strip port suffix if present
+		if idx := strings.LastIndex(host, ":"); idx != -1 {
+			host = host[:idx]
+		}
+		host = strings.Trim(host, "[]")
+		if host == "127.0.0.1" || host == "::1" || host == "localhost" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		http.Error(w, "403 Forbidden — GoDash admin panel is restricted to local access. Set admin.AuthGuard to enable remote access.", http.StatusForbidden)
+	})
+}
 
 // AdminEntry describes a model registered with the admin panel.
 type AdminEntry struct {

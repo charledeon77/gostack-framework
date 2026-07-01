@@ -28,11 +28,21 @@ import (
 // Mount registers all admin panel routes onto the provided mux.
 // db is required for dynamic CRUD queries.
 // prefix is the URL prefix (e.g. "/admin").
+//
+// Access Control: By default, the panel is restricted to localhost-only access via LocalOnlyGuard.
+// Set admin.AuthGuard to a custom middleware function to enable authenticated remote access.
 func Mount(mux *http.ServeMux, db *sql.DB, prefix string) {
 	if prefix == "" {
 		prefix = "/admin"
 	}
-	mux.HandleFunc(prefix+"/", func(w http.ResponseWriter, r *http.Request) {
+
+	// Resolve the active guard: use the configured AuthGuard or fall back to LocalOnlyGuard.
+	guard := AuthGuard
+	if guard == nil {
+		guard = LocalOnlyGuard
+	}
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, prefix)
 		parts := strings.Split(strings.Trim(path, "/"), "/")
 
@@ -57,6 +67,8 @@ func Mount(mux *http.ServeMux, db *sql.DB, prefix string) {
 			http.NotFound(w, r)
 		}
 	})
+
+	mux.Handle(prefix+"/", guard(inner))
 }
 
 func handleDashboard(w http.ResponseWriter, r *http.Request) {

@@ -3,6 +3,7 @@ package http
 
 import (
 	"net/http"
+	"strings"
 )
 
 // Engine represents the operational HTTP server configuration block.
@@ -45,22 +46,62 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Writer:  w,
 			Request: r,
 			Tempose: e.Tempose,
+			Router:  e.Router,
 		}
 		handler(ctx)
 		return
 	}
 
+	// Try dynamic/parameterized routing match
+	if route, params := e.Router.Match(r.Method, r.URL.Path); route != nil {
+		ctx := &Context{
+			Writer:  w,
+			Request: r,
+			Tempose: e.Tempose,
+			Router:  e.Router,
+		}
+		ctx.Set("params", params)
+		route.Handler(ctx)
+		return
+	}
+
 	// Return 405 if the path exists under a different method, 404 otherwise.
-	for k := range routes {
-		if len(k) > len(r.URL.Path) && k[len(k)-len(r.URL.Path):] == r.URL.Path {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			_, _ = w.Write([]byte("405 Method Not Allowed - GoStack Engine"))
+	trimmedPath := strings.Trim(r.URL.Path, "/")
+	var pathSegments []string
+	if trimmedPath != "" {
+		pathSegments = strings.Split(trimmedPath, "/")
+	}
+
+	for _, route := range e.Router.GetDynamicRoutes() {
+		if _, matched := matchRoute(route.Segments, pathSegments); matched {
+			if e.Router.methodNotAllowedHandler != nil {
+				ctx := &Context{
+					Writer:  w,
+					Request: r,
+					Tempose: e.Tempose,
+					Router:  e.Router,
+				}
+				e.Router.methodNotAllowedHandler(ctx)
+			} else {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				_, _ = w.Write([]byte("405 Method Not Allowed - GoStack Engine"))
+			}
 			return
 		}
 	}
 
-	w.WriteHeader(http.StatusNotFound)
-	_, _ = w.Write([]byte("404 Page Not Found - GoStack Engine"))
+	if e.Router.notFoundHandler != nil {
+		ctx := &Context{
+			Writer:  w,
+			Request: r,
+			Tempose: e.Tempose,
+			Router:  e.Router,
+		}
+		e.Router.notFoundHandler(ctx)
+	} else {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("404 Page Not Found - GoStack Engine"))
+	}
 }
 
 // GoStackRuntimeJS holds the core client-side reactivity engine text.
@@ -144,6 +185,17 @@ const GoStackRuntimeJS = `(function () {
                 }
             });
 
+            // gs-html allows dynamic HTML rendering with built-in XSS sanitization.
+            // SECURITY: Content is passed through sanitizeHTML() which strips dangerous
+            // script tags, javascript: URLs, and inline event attributes before injection.
+            const htmlNodes = rootElement.querySelectorAll('[gs-html]');
+            htmlNodes.forEach(node => {
+                const stateKey = node.getAttribute('gs-html');
+                if (state[stateKey] !== undefined) {
+                    node.innerHTML = this.sanitizeHTML(String(state[stateKey]));
+                }
+            });
+
             const visibleNodes = rootElement.querySelectorAll('[gs-show]');
             visibleNodes.forEach(node => {
                 const stateKey = node.getAttribute('gs-show');
@@ -151,6 +203,41 @@ const GoStackRuntimeJS = `(function () {
                     node.style.display = !!state[stateKey] ? '' : 'none';
                 }
             });
+        }
+
+        // sanitizeHTML removes known XSS vectors from an HTML string using the
+        // browser's native DOMParser API. It strips <script> tags, elements with
+        // javascript: URLs in attributes, and inline event handler attributes.
+        sanitizeHTML(htmlStr) {
+            if (!htmlStr) return '';
+            try {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(htmlStr, 'text/html');
+                
+                // Remove all script tags
+                const scripts = doc.querySelectorAll('script');
+                scripts.forEach(s => s.remove());
+                
+                // Remove inline event handlers and javascript: URLs on all elements
+                const allElements = doc.querySelectorAll('*');
+                allElements.forEach(el => {
+                    // Iterate backwards because we may remove attributes
+                    for (let i = el.attributes.length - 1; i >= 0; i--) {
+                        const attr = el.attributes[i];
+                        const name = attr.name.toLowerCase();
+                        const val = attr.value.trim().toLowerCase();
+                        
+                        if (name.startsWith('on') || val.startsWith('javascript:')) {
+                            el.removeAttribute(attr.name);
+                        }
+                    }
+                });
+                
+                return doc.body.innerHTML;
+            } catch (e) {
+                console.error('[GoStack Runtime] Sanitization failed, returning empty string:', e);
+                return '';
+            }
         }
     }
 

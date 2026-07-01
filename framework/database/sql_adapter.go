@@ -25,12 +25,34 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/charledeon77/gostack-framework/framework/contract"
+	"time"
 )
 
 // SQLAdapter is the concrete implementation of the contract.Database interface.
 type SQLAdapter struct {
 	db     *sql.DB
 	driver string
+}
+
+// SetMaxOpenConns sets the maximum number of open connections to the database.
+func (a *SQLAdapter) SetMaxOpenConns(n int) {
+	if a != nil && a.db != nil {
+		a.db.SetMaxOpenConns(n)
+	}
+}
+
+// SetMaxIdleConns sets the maximum number of connections in the idle connection pool.
+func (a *SQLAdapter) SetMaxIdleConns(n int) {
+	if a != nil && a.db != nil {
+		a.db.SetMaxIdleConns(n)
+	}
+}
+
+// SetConnMaxLifetime sets the maximum amount of time a connection may be reused.
+func (a *SQLAdapter) SetConnMaxLifetime(d time.Duration) {
+	if a != nil && a.db != nil {
+		a.db.SetConnMaxLifetime(d)
+	}
 }
 
 // NewSQLAdapter acts as a constructor for the SQLAdapter.

@@ -25,9 +25,11 @@ import (
 	"fmt"
 	"github.com/charledeon77/gostack-framework/framework/contract"
 	"io"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // ─── Simple mockDB (no real SQL) ───────────────────────────────────────────────
@@ -235,7 +237,46 @@ func (s *relationsMockStmt) Query(args []driver.Value) (driver.Rows, error) {
 			},
 		}, nil
 	}
+	if strings.Contains(s.query, "FROM profiles") {
+		return &hydratorMockRows{
+			cols: []string{"id", "user_id", "bio"},
+			data: [][]driver.Value{
+				{int64(100), int64(1), "Bio of Alice"},
+				{int64(200), int64(2), "Bio of Bob"},
+			},
+		}, nil
+	}
+	if strings.Contains(s.query, "FROM role_user") {
+		return &hydratorMockRows{
+			cols: []string{"user_id", "role_id"},
+			data: [][]driver.Value{
+				{int64(1), int64(10)},
+				{int64(1), int64(20)},
+				{int64(2), int64(20)},
+			},
+		}, nil
+	}
+	if strings.Contains(s.query, "FROM roles") {
+		return &hydratorMockRows{
+			cols: []string{"id", "name"},
+			data: [][]driver.Value{
+				{int64(10), "Admin"},
+				{int64(20), "Editor"},
+			},
+		}, nil
+	}
 	if strings.Contains(s.query, "FROM users") {
+		// Mock hasManyThrough query targeting intermediate users table
+		if strings.Contains(s.query, "country_id") {
+			return &hydratorMockRows{
+				cols: []string{"id", "country_id"},
+				data: [][]driver.Value{
+					{int64(1), int64(50)},
+					{int64(2), int64(60)},
+				},
+			}, nil
+		}
+		// Standard query
 		return &hydratorMockRows{
 			cols: []string{"id", "name"},
 			data: [][]driver.Value{
@@ -254,11 +295,44 @@ func (s *relationsMockStmt) Query(args []driver.Value) (driver.Rows, error) {
 			},
 		}, nil
 	}
+	if strings.Contains(s.query, "FROM countries") {
+		return &hydratorMockRows{
+			cols: []string{"id", "name"},
+			data: [][]driver.Value{
+				{int64(50), "USA"},
+				{int64(60), "Canada"},
+			},
+		}, nil
+	}
 	return nil, fmt.Errorf("[Mock] Unexpected query: %s", s.query)
 }
 
 func init() {
 	sql.Register("gostack_relations_mock", &relationsMockDriver{})
+}
+
+type mockTx struct {
+	db *relationsTestDB
+}
+
+func (m *mockTx) Exec(q string, args ...any) error {
+	relTrackQuery("[TX] " + q)
+	return m.db.Exec(q, args...)
+}
+
+func (m *mockTx) Query(q string, args ...any) (any, error) {
+	relTrackQuery("[TX] " + q)
+	return m.db.Query(q, args...)
+}
+
+func (m *mockTx) Commit() error {
+	relTrackQuery("[TX] COMMIT")
+	return nil
+}
+
+func (m *mockTx) Rollback() error {
+	relTrackQuery("[TX] ROLLBACK")
+	return nil
 }
 
 type relationsTestDB struct {
@@ -269,7 +343,7 @@ type relationsTestDB struct {
 func (r *relationsTestDB) Connect() error                              { return nil }
 func (r *relationsTestDB) Query(q string, args ...any) (any, error)  { return r.db.Query(q, args...) }
 func (r *relationsTestDB) Exec(q string, args ...any) error          { _, err := r.db.Exec(q, args...); return err }
-func (r *relationsTestDB) BeginTx() (contract.Tx, error)              { return nil, nil }
+func (r *relationsTestDB) BeginTx() (contract.Tx, error)              { return &mockTx{db: r}, nil }
 func (r *relationsTestDB) Driver() string                              { return r.driver }
 func (r *relationsTestDB) Close() error                                { return nil }
 
@@ -402,3 +476,311 @@ func TestQueryBuilder_Paginate(t *testing.T) {
 		t.Errorf("Expected second query to have LIMIT 2 OFFSET 0, got: %s", queries[1])
 	}
 }
+
+func TestQueryBuilder_SelectColumns(t *testing.T) {
+	qb := New(nil, "users").Select("id", "email", "name")
+	sqlStr := qb.ToSQL()
+	expected := "SELECT id, email, name FROM users"
+	if sqlStr != expected {
+		t.Errorf("Expected SQL %q, got %q", expected, sqlStr)
+	}
+}
+
+func TestQueryBuilder_LogicalFilters(t *testing.T) {
+	qb := New(nil, "users").
+		Where("status", "=", "active").
+		OrWhere("role", "=", "admin").
+		WhereNull("deleted_at").
+		WhereNotNull("verified_at").
+		WhereBetween("age", 18, 65).
+		WhereLike("name", "John%")
+
+	sqlStr := qb.ToSQL()
+	expected := "SELECT * FROM users WHERE status = ? OR role = ? AND deleted_at IS NULL AND verified_at IS NOT NULL AND age BETWEEN ? AND ? AND name LIKE ?"
+	if sqlStr != expected {
+		t.Errorf("Expected SQL %q, got %q", expected, sqlStr)
+	}
+}
+
+func TestQueryBuilder_Joins(t *testing.T) {
+	qb := New(nil, "users").
+		Join("profiles", "users.id", "=", "profiles.user_id").
+		LeftJoin("posts", "users.id", "=", "posts.user_id").
+		RightJoin("roles", "users.role_id", "=", "roles.id")
+
+	sqlStr := qb.ToSQL()
+	expected := "SELECT * FROM users INNER JOIN profiles ON users.id = profiles.user_id LEFT JOIN posts ON users.id = posts.user_id RIGHT JOIN roles ON users.role_id = roles.id"
+	if sqlStr != expected {
+		t.Errorf("Expected SQL %q, got %q", expected, sqlStr)
+	}
+}
+
+type SoftDeleteModel struct {
+	ID        int        `db:"id"`
+	Name      string     `db:"name"`
+	DeletedAt *time.Time `db:"deleted_at"`
+	CreatedAt time.Time  `db:"created_at"`
+	UpdatedAt time.Time  `db:"updated_at"`
+}
+
+func TestActiveRecord_LifecycleHelpers(t *testing.T) {
+	var model SoftDeleteModel
+	typ := reflect.TypeOf(model)
+	if !hasField(typ, "DeletedAt") {
+		t.Error("Expected SoftDeleteModel to have DeletedAt field")
+	}
+	if !hasField(typ, "CreatedAt") {
+		t.Error("Expected SoftDeleteModel to have CreatedAt field")
+	}
+	if !hasField(typ, "UpdatedAt") {
+		t.Error("Expected SoftDeleteModel to have UpdatedAt field")
+	}
+}
+
+type ProfileRelModel struct {
+	ID     int64  `db:"id"`
+	UserID int64  `db:"user_id"`
+	Bio    string `db:"bio"`
+}
+
+type RoleRelModel struct {
+	ID   int64  `db:"id"`
+	Name string `db:"name"`
+}
+
+type UserWithRelations struct {
+	ID      int64             `db:"id"`
+	Name    string            `db:"name"`
+	Profile *ProfileRelModel  `rel:"has_one" fk:"user_id" table:"profiles"`
+	Roles   []RoleRelModel    `rel:"many_to_many" pivot:"role_user" fk:"user_id" related_fk:"role_id" table:"roles"`
+	Posts   []PostRelModel    `rel:"has_many" fk:"user_id" table:"posts"`
+}
+
+type CountryRelModel struct {
+	ID    int64          `db:"id"`
+	Name  string         `db:"name"`
+	Posts []PostRelModel `rel:"has_many_through" through:"users" fk:"country_id" through_fk:"user_id" table:"posts"`
+}
+
+func TestEagerLoadHasOne(t *testing.T) {
+	relClearQueries()
+	dbConn, err := sql.Open("gostack_relations_mock", "")
+	if err != nil {
+		t.Fatalf("Failed to open mock db: %v", err)
+	}
+	defer dbConn.Close()
+
+	testDB := &relationsTestDB{db: dbConn, driver: "mysql"}
+	var users []UserWithRelations
+	err = New(testDB, "users").With("Profile").Get(&users)
+	if err != nil {
+		t.Fatalf("Eager load HasOne failed: %v", err)
+	}
+
+	if len(users) != 2 {
+		t.Fatalf("Expected 2 users, got %d", len(users))
+	}
+
+	if users[0].Profile == nil || users[0].Profile.Bio != "Bio of Alice" {
+		t.Errorf("Alice profile mismatch: %+v", users[0].Profile)
+	}
+	if users[1].Profile == nil || users[1].Profile.Bio != "Bio of Bob" {
+		t.Errorf("Bob profile mismatch: %+v", users[1].Profile)
+	}
+
+	queries := relGetQueries()
+	if len(queries) != 2 {
+		t.Fatalf("Expected exactly 2 SQL queries, got %d: %v", len(queries), queries)
+	}
+}
+
+func TestEagerLoadManyToMany(t *testing.T) {
+	relClearQueries()
+	dbConn, err := sql.Open("gostack_relations_mock", "")
+	if err != nil {
+		t.Fatalf("Failed to open mock db: %v", err)
+	}
+	defer dbConn.Close()
+
+	testDB := &relationsTestDB{db: dbConn, driver: "mysql"}
+	var users []UserWithRelations
+	err = New(testDB, "users").With("Roles").Get(&users)
+	if err != nil {
+		t.Fatalf("Eager load ManyToMany failed: %v", err)
+	}
+
+	if len(users) != 2 {
+		t.Fatalf("Expected 2 users, got %d", len(users))
+	}
+
+	if len(users[0].Roles) != 2 || users[0].Roles[0].Name != "Admin" || users[0].Roles[1].Name != "Editor" {
+		t.Errorf("Alice roles mismatch: %+v", users[0].Roles)
+	}
+	if len(users[1].Roles) != 1 || users[1].Roles[0].Name != "Editor" {
+		t.Errorf("Bob roles mismatch: %+v", users[1].Roles)
+	}
+
+	queries := relGetQueries()
+	if len(queries) != 3 { // SELECT users, SELECT pivot pairs, SELECT roles
+		t.Fatalf("Expected exactly 3 SQL queries, got %d: %v", len(queries), queries)
+	}
+}
+
+func TestEagerLoadHasManyThrough(t *testing.T) {
+	relClearQueries()
+	dbConn, err := sql.Open("gostack_relations_mock", "")
+	if err != nil {
+		t.Fatalf("Failed to open mock db: %v", err)
+	}
+	defer dbConn.Close()
+
+	testDB := &relationsTestDB{db: dbConn, driver: "mysql"}
+	var countries []CountryRelModel
+	err = New(testDB, "countries").With("Posts").Get(&countries)
+	if err != nil {
+		t.Fatalf("Eager load HasManyThrough failed: %v", err)
+	}
+
+	if len(countries) != 2 {
+		t.Fatalf("Expected 2 countries, got %d", len(countries))
+	}
+
+	// USA (id: 50) -> through user (id: 1) -> posts (user_id: 1) -> Post A (10), Post B (20)
+	if len(countries[0].Posts) != 2 || countries[0].Posts[0].Title != "Post A" || countries[0].Posts[1].Title != "Post B" {
+		t.Errorf("USA posts mismatch: %+v", countries[0].Posts)
+	}
+
+	// Canada (id: 60) -> through user (id: 2) -> posts (user_id: 2) -> Post C (30)
+	if len(countries[1].Posts) != 1 || countries[1].Posts[0].Title != "Post C" {
+		t.Errorf("Canada posts mismatch: %+v", countries[1].Posts)
+	}
+
+	queries := relGetQueries()
+	if len(queries) != 3 { // SELECT countries, SELECT through users, SELECT far posts
+		t.Fatalf("Expected exactly 3 SQL queries, got %d: %v", len(queries), queries)
+	}
+}
+
+func TestNestedEagerLoading(t *testing.T) {
+	relClearQueries()
+	dbConn, err := sql.Open("gostack_relations_mock", "")
+	if err != nil {
+		t.Fatalf("Failed to open mock db: %v", err)
+	}
+	defer dbConn.Close()
+
+	testDB := &relationsTestDB{db: dbConn, driver: "mysql"}
+	var users []UserWithRelations
+	err = New(testDB, "users").With("Posts.User").Get(&users)
+	if err != nil {
+		t.Fatalf("Nested eager load failed: %v", err)
+	}
+
+	if len(users) != 2 {
+		t.Fatalf("Expected 2 users, got %d", len(users))
+	}
+	if len(users[0].Posts) != 2 {
+		t.Fatalf("Expected 2 posts for user 0, got %d", len(users[0].Posts))
+	}
+	// Verify nested loading loaded User back on Post
+	if users[0].Posts[0].User == nil || users[0].Posts[0].User.Name != "Alice" {
+		t.Errorf("Nested user not eager-loaded correctly on Post A: %+v", users[0].Posts[0].User)
+	}
+
+	queries := relGetQueries()
+	if len(queries) != 3 { // SELECT users, SELECT posts, SELECT nested users
+		t.Fatalf("Expected exactly 3 SQL queries, got %d: %v", len(queries), queries)
+	}
+}
+
+func TestDatabaseTransactions(t *testing.T) {
+	relClearQueries()
+	dbConn, err := sql.Open("gostack_relations_mock", "")
+	if err != nil {
+		t.Fatalf("Failed to open mock db: %v", err)
+	}
+	defer dbConn.Close()
+
+	testDB := &relationsTestDB{db: dbConn, driver: "mysql"}
+
+	err = Transaction(testDB, func(tx contract.Tx) error {
+		var users []UserWithRelations
+		err := New(testDB, "users").WithTx(tx).Get(&users)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("Transaction closure failed: %v", err)
+	}
+
+	queries := relGetQueries()
+	// Should see "[TX]" prefix on queries and a COMMIT
+	foundTXQuery := false
+	foundCommit := false
+	for _, q := range queries {
+		if strings.HasPrefix(q, "[TX] SELECT") {
+			foundTXQuery = true
+		}
+		if q == "[TX] COMMIT" {
+			foundCommit = true
+		}
+	}
+	if !foundTXQuery {
+		t.Error("Expected queries inside transaction to carry [TX] execution context marker")
+	}
+	if !foundCommit {
+		t.Error("Expected transaction COMMIT callback to run successfully")
+	}
+}
+
+func TestNestedTransactions(t *testing.T) {
+	relClearQueries()
+	dbConn, err := sql.Open("gostack_relations_mock", "")
+	if err != nil {
+		t.Fatalf("Failed to open mock db: %v", err)
+	}
+	defer dbConn.Close()
+
+	testDB := &relationsTestDB{db: dbConn, driver: "mysql"}
+
+	// Outer transaction
+	err = Transaction(testDB, func(tx contract.Tx) error {
+		// Nested transaction
+		err := Transaction(tx, func(subTx contract.Tx) error {
+			var users []UserWithRelations
+			return New(testDB, "users").WithTx(subTx).Get(&users)
+		})
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("Nested Transaction failed: %v", err)
+	}
+
+	queries := relGetQueries()
+	
+	foundSavepoint := false
+	foundRelease := false
+	for _, q := range queries {
+		if strings.Contains(q, "SAVEPOINT sp_") {
+			foundSavepoint = true
+		}
+		if strings.Contains(q, "RELEASE SAVEPOINT sp_") {
+			foundRelease = true
+		}
+	}
+
+	if !foundSavepoint {
+		t.Error("Expected SAVEPOINT to be registered for nested transaction")
+	}
+	if !foundRelease {
+		t.Error("Expected RELEASE SAVEPOINT to be registered for completed nested transaction")
+	}
+}
+

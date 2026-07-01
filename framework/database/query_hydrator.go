@@ -27,6 +27,7 @@ import (
 	"database/sql"
 	"fmt"
 	"reflect"
+	"time"
 )
 
 // Hydrate inspects raw relational database rows and dynamically maps their 
@@ -126,8 +127,77 @@ func mapRowToStruct(columns []string, values []sql.RawBytes, structVal reflect.V
 			if _, err := fmt.Sscanf(string(rawValue), "%d", &val); err == nil {
 				targetField.SetInt(val)
 			}
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			var val uint64
+			if _, err := fmt.Sscanf(string(rawValue), "%d", &val); err == nil {
+				targetField.SetUint(val)
+			}
+		case reflect.Float32, reflect.Float64:
+			var val float64
+			if _, err := fmt.Sscanf(string(rawValue), "%f", &val); err == nil {
+				targetField.SetFloat(val)
+			}
 		case reflect.Bool:
 			targetField.SetBool(string(rawValue) == "1" || string(rawValue) == "true")
+		case reflect.Struct:
+			typeName := targetField.Type().String()
+			if typeName == "time.Time" {
+				str := string(rawValue)
+				var t time.Time
+				var err error
+				formats := []string{
+					"2006-01-02 15:04:05",
+					time.RFC3339,
+					"2006-01-02",
+				}
+				for _, fmtStr := range formats {
+					t, err = time.Parse(fmtStr, str)
+					if err == nil {
+						break
+					}
+				}
+				if err == nil {
+					targetField.Set(reflect.ValueOf(t))
+				}
+			} else if typeName == "sql.NullString" {
+				targetField.FieldByName("String").SetString(string(rawValue))
+				targetField.FieldByName("Valid").SetBool(true)
+			} else if typeName == "sql.NullInt64" {
+				var val int64
+				if _, err := fmt.Sscanf(string(rawValue), "%d", &val); err == nil {
+					targetField.FieldByName("Int64").SetInt(val)
+					targetField.FieldByName("Valid").SetBool(true)
+				}
+			} else if typeName == "sql.NullFloat64" {
+				var val float64
+				if _, err := fmt.Sscanf(string(rawValue), "%f", &val); err == nil {
+					targetField.FieldByName("Float64").SetFloat(val)
+					targetField.FieldByName("Valid").SetBool(true)
+				}
+			} else if typeName == "sql.NullBool" {
+				b := string(rawValue) == "1" || string(rawValue) == "true"
+				targetField.FieldByName("Bool").SetBool(b)
+				targetField.FieldByName("Valid").SetBool(true)
+			} else if typeName == "sql.NullTime" {
+				str := string(rawValue)
+				var t time.Time
+				var err error
+				formats := []string{
+					"2006-01-02 15:04:05",
+					time.RFC3339,
+					"2006-01-02",
+				}
+				for _, fmtStr := range formats {
+					t, err = time.Parse(fmtStr, str)
+					if err == nil {
+						break
+					}
+				}
+				if err == nil {
+					targetField.FieldByName("Time").Set(reflect.ValueOf(t))
+					targetField.FieldByName("Valid").SetBool(true)
+				}
+			}
 		}
 	}
 	return nil

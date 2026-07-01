@@ -64,6 +64,10 @@ func main() {
 	kernel.Register(&console.MakeSeederCommand{})
 	kernel.Register(&console.SeedCommand{})
 	kernel.Register(&console.AddComponentCommand{})
+	kernel.Register(&console.MakeEventCommand{})
+	kernel.Register(&console.MakeJobCommand{})
+	kernel.Register(&console.MakePolicyCommand{})
+	kernel.Register(&console.MakeProviderCommand{})
 
 
 	// 4. Bind kernel runner to CLI terminal inputs

@@ -1,34 +1,16 @@
-/*
-Purpose:
-This file implements standard routing middleware filters for GoStack authentication.
-It provides filters to protect routes (RequireAuth) and restrict authenticated access (Guest).
-
-Philosophy:
-Access control should be transparent, declarative, and format-aware. Middleware must seamlessly
-handle both web requests (with redirects) and API requests (with JSON payloads) without
-polluting the controller logic. Caching user retrieval in the request context prevents
-multiple database queries on complex pipelines.
-
-Architecture:
-Part of the auth package. The middleware wraps the standard GoStack http.Middleware contract.
-It uses standard request context propagation to pass user caches down the handler pipeline.
-
-Choice:
-We chose to inspect request headers (Accept / Content-Type) and guard names to auto-detect API
-vs Web contexts, rather than forcing the developer to register different middleware classes.
-
-Implementation:
-- RequireAuth: checks authentication, redirecting to /login or returning 401 JSON.
-- Guest: prevents authenticated access to auth routes, redirecting to /home.
-*/
 package auth
 
 import (
 	"context"
+	"fmt"
+	"net"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/charledeon77/gostack-framework/framework/contract"
 	"github.com/charledeon77/gostack-framework/framework/http"
 	netHTTP "net/http"
-	"strings"
 )
 
 // RequireAuth restricts route access to authenticated users.
@@ -87,4 +69,96 @@ func Guest(manager *AuthManager, guardName string) http.Middleware {
 
 		return next(ctx)
 	}
+}
+
+// AuthThrottle is a specialized rate-limiter for authentication endpoints.
+//
+// Unlike a generic IP-based throttle, AuthThrottle keys on a composite of the
+// client IP and the submitted credential (email/username) — blocking both
+// IP-based brute-force attacks and distributed credential-stuffing attacks
+// where many IPs target the same account.
+//
+// Usage:
+//
+//	router.Post("/login", loginHandler, auth.AuthThrottle(5, time.Minute))
+func AuthThrottle(limit int, period time.Duration) http.Middleware {
+	type clientEntry struct {
+		timestamps []time.Time
+	}
+	var mu sync.Mutex
+	clients := make(map[string]*clientEntry)
+
+	return func(ctx *http.Context, next http.NextHandler) error {
+		ip := resolveClientIP(ctx.Request)
+
+		// Extract the credential field from the posted form or JSON body.
+		// We inspect common field names used for login identifiers.
+		credential := ""
+		if err := ctx.Request.ParseForm(); err == nil {
+			for _, field := range []string{"email", "username", "login", "identifier"} {
+				if v := ctx.Request.FormValue(field); v != "" {
+					credential = strings.ToLower(strings.TrimSpace(v))
+					break
+				}
+			}
+		}
+
+		// Build the composite throttle key: IP + credential (or IP-only as fallback).
+		key := ip
+		if credential != "" {
+			key = fmt.Sprintf("%s|%s", ip, credential)
+		}
+
+		mu.Lock()
+		entry, exists := clients[key]
+		if !exists {
+			entry = &clientEntry{}
+			clients[key] = entry
+		}
+
+		now := time.Now()
+		cutoff := now.Add(-period)
+		var active []time.Time
+		for _, ts := range entry.timestamps {
+			if ts.After(cutoff) {
+				active = append(active, ts)
+			}
+		}
+
+		if len(active) >= limit {
+			mu.Unlock()
+			ctx.Writer.Header().Set("Retry-After", fmt.Sprintf("%d", int(period.Seconds())))
+			ctx.Writer.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", limit))
+			ctx.Writer.Header().Set("X-RateLimit-Remaining", "0")
+			ctx.Writer.WriteHeader(netHTTP.StatusTooManyRequests)
+			_ = ctx.JSON(netHTTP.StatusTooManyRequests, map[string]string{
+				"error":   "Too Many Requests",
+				"message": "Login attempt limit exceeded. Please wait before trying again.",
+			})
+			return nil
+		}
+
+		entry.timestamps = append(active, now)
+		mu.Unlock()
+
+		return next(ctx)
+	}
+}
+
+// resolveClientIP reads the originating IP address from proxy headers then remote addr.
+func resolveClientIP(r *netHTTP.Request) string {
+	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
+		if comma := strings.Index(ip, ","); comma != -1 {
+			return strings.TrimSpace(ip[:comma])
+		}
+		return strings.TrimSpace(ip)
+	}
+	if ip := r.Header.Get("X-Real-IP"); ip != "" {
+		return strings.TrimSpace(ip)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }

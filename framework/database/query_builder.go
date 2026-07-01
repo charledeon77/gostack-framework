@@ -35,18 +35,111 @@ import (
 	"fmt"
 	"github.com/charledeon77/gostack-framework/framework/contract"
 	"strings"
+	"sync/atomic"
 )
 
 // QueryBuilder serves as the core state manager for SQL construction.
 type QueryBuilder struct {
-	table     string
-	where     []string
-	bindings  []any
-	db        contract.Database
-	relations []string
-	orderBy   string // e.g. "created_at DESC"
-	limitVal  int    // 0 = no limit
-	offsetVal int    // 0 = no offset
+	table        string
+	columns      []string
+	where        []string
+	joins        []string
+	bindings     []any
+	db           contract.Database
+	tx           contract.Tx
+	relations    []string
+	orderBy      string // e.g. "created_at DESC"
+	limitVal     int    // 0 = no limit
+	offsetVal    int    // 0 = no offset
+	withTrashed  bool
+}
+
+type dbOrTx interface {
+	Query(sql string, args ...any) (any, error)
+	Exec(sql string, args ...any) error
+}
+
+func (qb *QueryBuilder) executor() dbOrTx {
+	if qb.tx != nil {
+		return qb.tx
+	}
+	return qb.db
+}
+
+var savepointCounter int64
+
+type savepointTx struct {
+	parent contract.Tx
+	name   string
+}
+
+func (s *savepointTx) Exec(sql string, args ...any) error {
+	return s.parent.Exec(sql, args...)
+}
+
+func (s *savepointTx) Query(sql string, args ...any) (any, error) {
+	return s.parent.Query(sql, args...)
+}
+
+func (s *savepointTx) Commit() error {
+	// Committing a savepoint is a no-op at the outer transaction level;
+	// the RELEASE SAVEPOINT command is handled in the Transaction wrapper closure.
+	return nil
+}
+
+func (s *savepointTx) Rollback() error {
+	return s.parent.Exec(fmt.Sprintf("ROLLBACK TO SAVEPOINT %s", s.name))
+}
+
+// Transaction runs a closure within a database transaction context, automatically
+// handling Commit, Rollback, and panic recovery.
+//
+// It natively supports nested transactions. If the first argument is a contract.Tx, it
+// uses database SAVEPOINTs to run a nested sub-transaction. If it is a
+// contract.Database, it begins a standard database transaction.
+func Transaction(conn any, fn func(tx contract.Tx) error) error {
+	if db, ok := conn.(contract.Database); ok {
+		tx, err := db.BeginTx()
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if p := recover(); p != nil {
+				_ = tx.Rollback()
+				panic(p)
+			}
+		}()
+		if err := fn(tx); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		return tx.Commit()
+	}
+
+	if tx, ok := conn.(contract.Tx); ok {
+		spName := fmt.Sprintf("sp_%d", atomic.AddInt64(&savepointCounter, 1))
+		if err := tx.Exec(fmt.Sprintf("SAVEPOINT %s", spName)); err != nil {
+			return err
+		}
+
+		sTx := &savepointTx{parent: tx, name: spName}
+
+		defer func() {
+			if p := recover(); p != nil {
+				_ = sTx.Rollback()
+				panic(p)
+			}
+		}()
+
+		if err := fn(sTx); err != nil {
+			_ = sTx.Rollback()
+			return err
+		}
+
+		return tx.Exec(fmt.Sprintf("RELEASE SAVEPOINT %s", spName))
+	}
+
+	return fmt.Errorf("transaction: unsupported connection type, expected contract.Database or contract.Tx")
 }
 
 // New constructs a new QueryBuilder instance.
@@ -55,6 +148,18 @@ func New(db contract.Database, table string) *QueryBuilder {
 		db:    db,
 		table: table,
 	}
+}
+
+// WithTx configures the query builder to run operations inside a transaction.
+func (qb *QueryBuilder) WithTx(tx contract.Tx) *QueryBuilder {
+	qb.tx = tx
+	return qb
+}
+
+// Select specifies the columns to be retrieved.
+func (qb *QueryBuilder) Select(cols ...string) *QueryBuilder {
+	qb.columns = cols
+	return qb
 }
 
 // Where adds a filtering condition to the internal state.
@@ -75,19 +180,148 @@ func (qb *QueryBuilder) Where(col, op string, val any) *QueryBuilder {
 	return qb
 }
 
-// ToSQL serializes the internal state into a valid SQL query string.
-func (qb *QueryBuilder) ToSQL() string {
-	sqlStr := fmt.Sprintf("SELECT * FROM %s", qb.table)
+// OrWhere adds an OR filtering condition to the query.
+func (qb *QueryBuilder) OrWhere(col, op string, val any) *QueryBuilder {
+	var placeholder string
+	drv := ""
+	if qb.db != nil {
+		drv = qb.db.Driver()
+	}
+	if drv == "postgres" || drv == "cockroach" || drv == "cockroachdb" {
+		placeholder = fmt.Sprintf("$%d", len(qb.bindings)+1)
+	} else {
+		placeholder = "?"
+	}
 
+	clause := fmt.Sprintf("%s %s %s", col, op, placeholder)
 	if len(qb.where) > 0 {
-		sqlStr += " WHERE "
-		for i, w := range qb.where {
-			sqlStr += w
-			if i < len(qb.where)-1 {
-				sqlStr += " AND "
+		qb.where = append(qb.where, "OR "+clause)
+	} else {
+		qb.where = append(qb.where, clause)
+	}
+	qb.bindings = append(qb.bindings, val)
+	return qb
+}
+
+// WhereNull adds a condition requiring a column to be NULL.
+func (qb *QueryBuilder) WhereNull(col string) *QueryBuilder {
+	qb.where = append(qb.where, fmt.Sprintf("%s IS NULL", col))
+	return qb
+}
+
+// WhereNotNull adds a condition requiring a column to be NOT NULL.
+func (qb *QueryBuilder) WhereNotNull(col string) *QueryBuilder {
+	qb.where = append(qb.where, fmt.Sprintf("%s IS NOT NULL", col))
+	return qb
+}
+
+// WhereBetween adds a condition requiring a column value to fall between min and max.
+func (qb *QueryBuilder) WhereBetween(col string, min, max any) *QueryBuilder {
+	var p1, p2 string
+	drv := ""
+	if qb.db != nil {
+		drv = qb.db.Driver()
+	}
+	if drv == "postgres" || drv == "cockroach" || drv == "cockroachdb" {
+		p1 = fmt.Sprintf("$%d", len(qb.bindings)+1)
+		p2 = fmt.Sprintf("$%d", len(qb.bindings)+2)
+	} else {
+		p1 = "?"
+		p2 = "?"
+	}
+
+	qb.where = append(qb.where, fmt.Sprintf("%s BETWEEN %s AND %s", col, p1, p2))
+	qb.bindings = append(qb.bindings, min, max)
+	return qb
+}
+
+// WhereLike adds a condition requiring a column value to match a pattern.
+func (qb *QueryBuilder) WhereLike(col, pattern string) *QueryBuilder {
+	var placeholder string
+	drv := ""
+	if qb.db != nil {
+		drv = qb.db.Driver()
+	}
+	if drv == "postgres" || drv == "cockroach" || drv == "cockroachdb" {
+		placeholder = fmt.Sprintf("$%d", len(qb.bindings)+1)
+	} else {
+		placeholder = "?"
+	}
+
+	qb.where = append(qb.where, fmt.Sprintf("%s LIKE %s", col, placeholder))
+	qb.bindings = append(qb.bindings, pattern)
+	return qb
+}
+
+// Join adds an INNER JOIN clause to the query.
+func (qb *QueryBuilder) Join(table, first, op, second string) *QueryBuilder {
+	qb.joins = append(qb.joins, fmt.Sprintf("INNER JOIN %s ON %s %s %s", table, first, op, second))
+	return qb
+}
+
+// LeftJoin adds a LEFT JOIN clause to the query.
+func (qb *QueryBuilder) LeftJoin(table, first, op, second string) *QueryBuilder {
+	qb.joins = append(qb.joins, fmt.Sprintf("LEFT JOIN %s ON %s %s %s", table, first, op, second))
+	return qb
+}
+
+// RightJoin adds a RIGHT JOIN clause to the query.
+func (qb *QueryBuilder) RightJoin(table, first, op, second string) *QueryBuilder {
+	qb.joins = append(qb.joins, fmt.Sprintf("RIGHT JOIN %s ON %s %s %s", table, first, op, second))
+	return qb
+}
+
+// WithTrashed includes soft-deleted records in the query constraints.
+func (qb *QueryBuilder) WithTrashed() *QueryBuilder {
+	qb.withTrashed = true
+	return qb
+}
+
+// whereSQL compiles internal filter states into a standard WHERE clause string.
+func (qb *QueryBuilder) whereSQL() string {
+	if len(qb.where) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString(" WHERE ")
+	for i, w := range qb.where {
+		if i > 0 {
+			if !strings.HasPrefix(w, "OR ") && !strings.HasPrefix(w, "AND ") {
+				sb.WriteString(" AND ")
+			} else {
+				sb.WriteString(" ")
 			}
 		}
+
+		if i == 0 {
+			cleaned := w
+			if strings.HasPrefix(w, "OR ") {
+				cleaned = strings.TrimPrefix(w, "OR ")
+			} else if strings.HasPrefix(w, "AND ") {
+				cleaned = strings.TrimPrefix(w, "AND ")
+			}
+			sb.WriteString(cleaned)
+		} else {
+			sb.WriteString(w)
+		}
 	}
+	return sb.String()
+}
+
+// ToSQL serializes the internal state into a valid SQL query string.
+func (qb *QueryBuilder) ToSQL() string {
+	cols := "*"
+	if len(qb.columns) > 0 {
+		cols = strings.Join(qb.columns, ", ")
+	}
+	sqlStr := fmt.Sprintf("SELECT %s FROM %s", cols, qb.table)
+
+	if len(qb.joins) > 0 {
+		sqlStr += " " + strings.Join(qb.joins, " ")
+	}
+
+	sqlStr += qb.whereSQL()
+
 	if qb.orderBy != "" {
 		sqlStr += " ORDER BY " + qb.orderBy
 	}
@@ -140,30 +374,26 @@ func (qb *QueryBuilder) Offset(n int) *QueryBuilder {
 //	var user model.User
 //	err := gostack.Table("users").Where("email", "=", email).First(&user)
 func (qb *QueryBuilder) First(dest any) error {
-	if qb.db == nil {
+	if qb.db == nil && qb.tx == nil {
 		return fmt.Errorf("database connection is nil; ensure the QueryBuilder was initialized with a valid database adapter")
 	}
 
-	sqlStr := qb.ToSQL()
-	// Enforce LIMIT 1 — override any previously set limit.
-	// We strip any existing LIMIT/OFFSET by building the clause fresh.
-	base := fmt.Sprintf("SELECT * FROM %s", qb.table)
-	if len(qb.where) > 0 {
-		base += " WHERE "
-		for i, w := range qb.where {
-			base += w
-			if i < len(qb.where)-1 {
-				base += " AND "
-			}
-		}
+	cols := "*"
+	if len(qb.columns) > 0 {
+		cols = strings.Join(qb.columns, ", ")
 	}
+	base := fmt.Sprintf("SELECT %s FROM %s", cols, qb.table)
+	if len(qb.joins) > 0 {
+		base += " " + strings.Join(qb.joins, " ")
+	}
+	base += qb.whereSQL()
+
 	if qb.orderBy != "" {
 		base += " ORDER BY " + qb.orderBy
 	}
 	base += " LIMIT 1"
-	_ = sqlStr // unused now; base is the canonical first-query SQL
 
-	result, err := qb.db.Query(base, qb.bindings...)
+	result, err := qb.executor().Query(base, qb.bindings...)
 	if err != nil {
 		return fmt.Errorf("[Crafter] First() execution failed: %w", err)
 	}
@@ -197,7 +427,7 @@ func (qb *QueryBuilder) Update(data map[string]any) error {
 
 // UpdateModel is Update with optional model hook support.
 func (qb *QueryBuilder) UpdateModel(model any, data map[string]any) error {
-	if qb.db == nil {
+	if qb.db == nil && qb.tx == nil {
 		return fmt.Errorf("database connection is nil; ensure the QueryBuilder was initialized with a valid database adapter")
 	}
 	if len(data) == 0 {
@@ -207,7 +437,10 @@ func (qb *QueryBuilder) UpdateModel(model any, data map[string]any) error {
 	var setClauses []string
 	var bindings []any
 
-	drv := qb.db.Driver()
+	drv := ""
+	if qb.db != nil {
+		drv = qb.db.Driver()
+	}
 	for col, val := range data {
 		var placeholder string
 		if drv == "postgres" || drv == "cockroach" || drv == "cockroachdb" {
@@ -220,26 +453,13 @@ func (qb *QueryBuilder) UpdateModel(model any, data map[string]any) error {
 	}
 
 	sqlStr := fmt.Sprintf("UPDATE %s SET %s", qb.table, strings.Join(setClauses, ", "))
-
+	sqlStr += qb.whereSQL()
+	
 	if len(qb.where) > 0 {
-		// Re-index postgres placeholders for the WHERE bindings.
-		for _, w := range qb.where {
-			if qb.db.Driver() == "postgres" {
-				// Rebuild the where clause with the correct placeholder offset.
-				_ = w // already stored with correct $N from Where()
-			}
-		}
-		sqlStr += " WHERE "
-		for i, w := range qb.where {
-			sqlStr += w
-			if i < len(qb.where)-1 {
-				sqlStr += " AND "
-			}
-		}
 		bindings = append(bindings, qb.bindings...)
 	}
 
-	return qb.db.Exec(sqlStr, bindings...)
+	return qb.executor().Exec(sqlStr, bindings...)
 }
 
 // Delete compiles and executes a DELETE statement against the target table.
@@ -254,7 +474,7 @@ func (qb *QueryBuilder) Delete() error {
 
 // DeleteModel is Delete with optional model hook support.
 func (qb *QueryBuilder) DeleteModel(model any) error {
-	if qb.db == nil {
+	if qb.db == nil && qb.tx == nil {
 		return fmt.Errorf("database connection is nil; ensure the QueryBuilder was initialized with a valid database adapter")
 	}
 
@@ -268,16 +488,9 @@ func (qb *QueryBuilder) DeleteModel(model any) error {
 	}
 
 	sqlStr := fmt.Sprintf("DELETE FROM %s", qb.table)
-	if len(qb.where) > 0 {
-		sqlStr += " WHERE "
-		for i, w := range qb.where {
-			sqlStr += w
-			if i < len(qb.where)-1 {
-				sqlStr += " AND "
-			}
-		}
-	}
-	if err := qb.db.Exec(sqlStr, qb.bindings...); err != nil {
+	sqlStr += qb.whereSQL()
+
+	if err := qb.executor().Exec(sqlStr, qb.bindings...); err != nil {
 		return err
 	}
 
@@ -295,11 +508,11 @@ func (qb *QueryBuilder) DeleteModel(model any) error {
 // Execute triggers the execution of the built SQL query via the 
 // injected database connection. 
 func (qb *QueryBuilder) Execute() (any, error) {
-	if qb.db == nil {
+	if qb.db == nil && qb.tx == nil {
 		return nil, fmt.Errorf("database connection is nil; ensure the QueryBuilder was initialized with a valid database adapter")
 	}
 	
-	return qb.db.Query(qb.ToSQL(), qb.bindings...)
+	return qb.executor().Query(qb.ToSQL(), qb.bindings...)
 }
 
 // Get executes the compiled query and automatically hydates the database results 
@@ -371,7 +584,7 @@ func (qb *QueryBuilder) Insert(data map[string]any) error {
 // InsertModel is Insert with optional model hook support. Pass the model pointer
 // to enable BeforeSave and AfterCreate lifecycle hooks.
 func (qb *QueryBuilder) InsertModel(model any, data map[string]any) error {
-	if qb.db == nil {
+	if qb.db == nil && qb.tx == nil {
 		return fmt.Errorf("database connection is nil; ensure the QueryBuilder was initialized with a valid database adapter")
 	}
 	if len(data) == 0 {
@@ -391,11 +604,14 @@ func (qb *QueryBuilder) InsertModel(model any, data map[string]any) error {
 	var placeholders []string
 	var bindings []any
 
-	idrv := qb.db.Driver()
+	drv := ""
+	if qb.db != nil {
+		drv = qb.db.Driver()
+	}
 	for col, val := range data {
 		columns = append(columns, col)
 		var placeholder string
-		if idrv == "postgres" || idrv == "cockroach" || idrv == "cockroachdb" {
+		if drv == "postgres" || drv == "cockroach" || drv == "cockroachdb" {
 			placeholder = fmt.Sprintf("$%d", len(bindings)+1)
 		} else {
 			placeholder = "?"
@@ -405,7 +621,7 @@ func (qb *QueryBuilder) InsertModel(model any, data map[string]any) error {
 	}
 
 	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", qb.table, strings.Join(columns, ", "), strings.Join(placeholders, ", "))
-	if err := qb.db.Exec(query, bindings...); err != nil {
+	if err := qb.executor().Exec(query, bindings...); err != nil {
 		return err
 	}
 
@@ -432,11 +648,11 @@ type PageMeta struct {
 
 // Count returns the total number of records matching current query constraints.
 func (qb *QueryBuilder) Count() (int, error) {
-	if qb.db == nil {
+	if qb.db == nil && qb.tx == nil {
 		return 0, fmt.Errorf("database connection is nil")
 	}
 	sqlStr := qb.countSQL()
-	result, err := qb.db.Query(sqlStr, qb.bindings...)
+	result, err := qb.executor().Query(sqlStr, qb.bindings...)
 	if err != nil {
 		return 0, err
 	}
@@ -458,15 +674,10 @@ func (qb *QueryBuilder) Count() (int, error) {
 
 func (qb *QueryBuilder) countSQL() string {
 	sqlStr := fmt.Sprintf("SELECT COUNT(*) FROM %s", qb.table)
-	if len(qb.where) > 0 {
-		sqlStr += " WHERE "
-		for i, w := range qb.where {
-			sqlStr += w
-			if i < len(qb.where)-1 {
-				sqlStr += " AND "
-			}
-		}
+	if len(qb.joins) > 0 {
+		sqlStr += " " + strings.Join(qb.joins, " ")
 	}
+	sqlStr += qb.whereSQL()
 	return sqlStr
 }
 
@@ -487,24 +698,22 @@ func (qb *QueryBuilder) Paginate(dest any, page, perPage int) (*PageMeta, error)
 
 	offset := (page - 1) * perPage
 
-	// Execute paginated selection using ToSQL + limit/offset
-	// Build paginated SQL without the builder's own LIMIT/OFFSET (we control those here).
-	base := fmt.Sprintf("SELECT * FROM %s", qb.table)
-	if len(qb.where) > 0 {
-		base += " WHERE "
-		for i, w := range qb.where {
-			base += w
-			if i < len(qb.where)-1 {
-				base += " AND "
-			}
-		}
+	cols := "*"
+	if len(qb.columns) > 0 {
+		cols = strings.Join(qb.columns, ", ")
 	}
+	base := fmt.Sprintf("SELECT %s FROM %s", cols, qb.table)
+	if len(qb.joins) > 0 {
+		base += " " + strings.Join(qb.joins, " ")
+	}
+	base += qb.whereSQL()
+
 	if qb.orderBy != "" {
 		base += " ORDER BY " + qb.orderBy
 	}
 	sqlStr := base + fmt.Sprintf(" LIMIT %d OFFSET %d", perPage, offset)
 
-	result, err := qb.db.Query(sqlStr, qb.bindings...)
+	result, err := qb.executor().Query(sqlStr, qb.bindings...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute paginated query: %w", err)
 	}
@@ -538,6 +747,79 @@ func (qb *QueryBuilder) Paginate(dest any, page, perPage int) (*PageMeta, error)
 		HasNext:  page < lastPage,
 		HasPrev:  page > 1,
 	}, nil
+}
+
+// executeAggregate executes a single value aggregate query and returns the scanned result.
+func (qb *QueryBuilder) executeAggregate(expr string, dest any) error {
+	if qb.db == nil && qb.tx == nil {
+		return fmt.Errorf("database connection is nil")
+	}
+	sqlStr := fmt.Sprintf("SELECT %s FROM %s", expr, qb.table)
+	if len(qb.joins) > 0 {
+		sqlStr += " " + strings.Join(qb.joins, " ")
+	}
+	sqlStr += qb.whereSQL()
+
+	result, err := qb.executor().Query(sqlStr, qb.bindings...)
+	if err != nil {
+		return err
+	}
+	rows, ok := result.(*sql.Rows)
+	if !ok {
+		return fmt.Errorf("expected *sql.Rows, got %T", result)
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		return sql.ErrNoRows
+	}
+	return rows.Scan(dest)
+}
+
+// Sum calculates the sum of a column.
+func (qb *QueryBuilder) Sum(col string) (float64, error) {
+	var val sql.NullFloat64
+	err := qb.executeAggregate(fmt.Sprintf("SUM(%s)", col), &val)
+	if err != nil {
+		return 0, err
+	}
+	return val.Float64, nil
+}
+
+// Avg calculates the average of a column.
+func (qb *QueryBuilder) Avg(col string) (float64, error) {
+	var val sql.NullFloat64
+	err := qb.executeAggregate(fmt.Sprintf("AVG(%s)", col), &val)
+	if err != nil {
+		return 0, err
+	}
+	return val.Float64, nil
+}
+
+// Min calculates the minimum of a column.
+func (qb *QueryBuilder) Min(col string) (any, error) {
+	var ns sql.NullString
+	err := qb.executeAggregate(fmt.Sprintf("MIN(%s)", col), &ns)
+	if err != nil {
+		return nil, err
+	}
+	if !ns.Valid {
+		return nil, nil
+	}
+	return ns.String, nil
+}
+
+// Max calculates the maximum of a column.
+func (qb *QueryBuilder) Max(col string) (any, error) {
+	var ns sql.NullString
+	err := qb.executeAggregate(fmt.Sprintf("MAX(%s)", col), &ns)
+	if err != nil {
+		return nil, err
+	}
+	if !ns.Valid {
+		return nil, nil
+	}
+	return ns.String, nil
 }
 
 

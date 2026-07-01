@@ -65,13 +65,16 @@ func CSRF(cookieName string) http.Middleware {
 		// Expose token to request context values for view builders / page forms
 		ctx.Set("csrf_token", token)
 
-		// Set companion XSRF cookie so frontend JS clients can read it
+		// Set companion XSRF cookie so frontend JS clients can read it.
+		// Secure is enabled automatically when the request is served over HTTPS.
+		isSecure := ctx.Request.TLS != nil || ctx.Request.Header.Get("X-Forwarded-Proto") == "https"
 		netHTTP.SetCookie(ctx.Writer, &netHTTP.Cookie{
 			Name:     cookieName,
 			Value:    token,
 			Path:     "/",
-			HttpOnly: false, // Readable by client scripts (standard pattern for Axios/SPAs)
-			Secure:   false,
+			HttpOnly: false,   // Readable by client scripts (standard pattern for Axios/SPAs)
+			Secure:   isSecure, // Only send over HTTPS when available
+			SameSite: netHTTP.SameSiteLaxMode, // Prevent cross-site delivery
 		})
 
 		// 3. Safe methods bypass validation check

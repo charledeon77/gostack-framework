@@ -57,6 +57,14 @@ type Database interface {
 	Close() error
 }
 
+// ConnectionPooler defines the connection pooling methods that are optional
+// for implementations of the Database interface.
+type ConnectionPooler interface {
+	SetMaxOpenConns(n int)
+	SetMaxIdleConns(n int)
+	SetConnMaxLifetime(d time.Duration)
+}
+
 // Tx defines the interface for a database transaction execution context.
 //
 // DESIGN RATIONALE:

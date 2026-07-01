@@ -3,6 +3,7 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -33,5 +34,42 @@ func TestAssetCompilerRun(t *testing.T) {
 	genFile := filepath.Join(outputPath, "gostack_components_gen.go")
 	if _, err := os.Stat(genFile); os.IsNotExist(err) {
 		t.Fatalf("Expected generated file %s does not exist", genFile)
+	}
+}
+
+func TestAssetCompiler_CompileHTMLDirectives(t *testing.T) {
+	c := NewAssetCompiler("", "")
+	
+	// Test @if compilation
+	html := `@if(.User.IsAdmin)
+  <p>Admin</p>
+@elseif(.User.IsGuest)
+  <p>Guest</p>
+@else
+  <p>Standard</p>
+@endif`
+	compiled, _ := c.compileHTML("test", html)
+	
+	if !strings.Contains(compiled, `if ui.EvaluateBool(data, "User.IsAdmin") {`) {
+		t.Errorf("Expected compiled output to contain if statement, got:\n%s", compiled)
+	}
+	if !strings.Contains(compiled, `} else if ui.EvaluateBool(data, "User.IsGuest") {`) {
+		t.Errorf("Expected compiled output to contain elseif statement, got:\n%s", compiled)
+	}
+	if !strings.Contains(compiled, `} else {`) {
+		t.Errorf("Expected compiled output to contain else block, got:\n%s", compiled)
+	}
+
+	// Test @foreach compilation
+	foreachHTML := `@foreach(.posts as post)
+  <p>{{ post.Title }}</p>
+@endforeach`
+	compiledForeach, _ := c.compileHTML("test", foreachHTML)
+
+	if !strings.Contains(compiledForeach, `for _, postVal := range ui.EvaluateSlice(data, "posts") {`) {
+		t.Errorf("Expected compiled output to contain loop statement, got:\n%s", compiledForeach)
+	}
+	if !strings.Contains(compiledForeach, `data := map[string]any{"$parent": data, "post": postVal}`) {
+		t.Errorf("Expected compiled output to contain local scope variables injection, got:\n%s", compiledForeach)
 	}
 }
