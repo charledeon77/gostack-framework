@@ -29,6 +29,27 @@ This ledger details the step-by-step history, architectural justifications, and 
 | **Nexus** | Neo4j Graph Database Integration | `framework/database/neo4j` |
 | **Aether** | Cassandra Wide-Column Database Integration | `framework/database/cassandra` |
 
+## [v1.0.3] - Security Hardening & Extensions Ecosystem
+*Released in July 2026*
+
+### Critical Security Hardening
+*   **XSS Protection**: Integrated automatic HTML escaping in the Tempose compiler (`ui.Escape`) to sanitize all dynamic template rendering values by default.
+*   **Admin Panel Auth**: Secured `/admin` routes with `LocalOnlyGuard` limiting access to localhost by default, with custom pluggable `AuthGuard` support for production.
+*   **SQL Injection & Stability**: Enforced alphanumeric allowlists (`isSafeIdentifier`) on table/column name evaluations within the `IsUnique` validator. Added type assertion checks on standard SQL query results to prevent panics on non-standard drivers.
+*   **CSRF Cookie Flags**: Configured secure cookie validation checks for enhanced browser-side token security.
+
+### HTTP Routing & Middleware
+*   **Trailing Slash Normalization**: Added `TrailingSlashRedirectMiddleware` to automatically redirect requests with trailing slashes, ensuring SEO consistency.
+*   **405 Method Dispatcher Fix**: Resolved a suffix-matching bug on HTTP 405 checks to prevent router panics on long URLs.
+*   **Auth Throttle rate-limiting**: Integrated brute-force and credential stuffing protections on authentication endpoints.
+
+### Official Extensions Ecosystem
+*   **Plug-and-play extensions isolation**: Isolated optional components to the `gostack-extensions` warehouse.
+*   **MFA Extension (`mfa/v1.0.0`)**: Standard TOTP secret generation, base64 QR code URLs, and passcode verification.
+*   **RBAC Extension (`rbac/v1.0.0`)**: Roles, permissions, route guards, and custom resolver callbacks (`SetRoleResolver`) for MongoDB and Cassandra engines.
+
+---
+
 ## [v1.0.0] - Initial Framework Release
 *Released in June 2026*
 
