@@ -80,7 +80,7 @@ func main() {
 
 	// 7. Orchestrate Framework Orchestration & Boot up the Application Kernel.
 	// Port is configurable via the APP_PORT environment variable, defaulting to :8080.
-	kernel := foundation.NewKernel(dbInstance, router)
+	kernel := foundation.NewKernel(container, router)
 	port := ":" + foundation.Get("APP_PORT", "8080")
 	fmt.Printf("GoStack fullstack engine starting up securely on port %s...\n", port)
 

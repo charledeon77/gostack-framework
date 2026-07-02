@@ -29,6 +29,24 @@ This ledger details the step-by-step history, architectural justifications, and 
 | **Nexus** | Neo4j Graph Database Integration | `framework/database/neo4j` |
 | **Aether** | Cassandra Wide-Column Database Integration | `framework/database/cassandra` |
 
+## [v1.0.4] - IoC Container Kernel, Redis Sessions & Multi-Channel Notifications
+*Released in July 2026*
+
+### IoC Container Core Integration
+*   **Container-driven Kernel**: Refactored the core [NewKernel](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/foundation/kernel.go#L39-L48) to inject a service [Container](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/foundation/kernel.go#L23-L24) rather than a direct database adapter. Dependencies like `"db"` and `"tempose"` are now resolved dynamically.
+*   **Entrypoints Update**: Bootstrapped [cmd/app/main.go](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/cmd/app/main.go) and [_examples/app/main.go](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/_examples/app/main.go) to pass the dependency container.
+
+### Persistence & Session Store
+*   **Redis-Backed Session Store**: Added [session_store_redis.go](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/http/session_store_redis.go) implementing the `contract.SessionStore` interface to persist sessions securely in Redis.
+*   **Tests**: Verified session loading, saving, and deletion using `miniredis` in [session_store_redis_test.go](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/http/session_store_redis_test.go).
+
+### Multi-Channel Notification System
+*   **Unified Notification Engine**: Introduced the [framework/notification/](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/notification) package to decouple notification structures from delivery channels.
+*   **Mail Channel**: Configured [MailChannel](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/notification/channel_mail.go#L23) for SMTP email alerts.
+*   **Database Channel**: Configured [DatabaseChannel](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/notification/channel_database.go#L27) to store notification logs inside a SQL-backed `notifications` table.
+
+---
+
 ## [v1.0.3] - Security Hardening & Extensions Ecosystem
 *Released in July 2026*
 

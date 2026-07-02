@@ -20,6 +20,9 @@ import (
 // configuration and coordinates the startup process.
 // It bridges the gap between the database infrastructure and the routing engine.
 type Kernel struct {
+	// Container provides access to bound dependencies during startup.
+	Container *Container
+
 	// DB provides access to the database layer throughout the application lifecycle.
 	DB contract.Database
 
@@ -31,16 +34,22 @@ type Kernel struct {
 }
 
 // NewKernel creates a new instance of the application kernel.
-// By injecting the database and router here, we ensure that the kernel
-// remains decoupled from specific implementations.
+// By injecting the container and router here, we ensure that the kernel
+// remains decoupled from specific implementations and can resolve resources.
 //
 // Parameters:
-//   - db: A concrete database adapter implementation that satisfies the contract.Database interface.
+//   - container: The service container instance.
 //   - router: The configured HTTP router instance.
-func NewKernel(db contract.Database, router *ghttp.Router) *Kernel {
+func NewKernel(container *Container, router *ghttp.Router) *Kernel {
+	var db contract.Database
+	if rawDB, err := container.Resolve("db"); err == nil {
+		db = rawDB.(contract.Database)
+	}
+
 	return &Kernel{
-		DB:     db,
-		Router: router,
+		Container: container,
+		DB:        db,
+		Router:    router,
 	}
 }
 
@@ -80,7 +89,13 @@ func (k *Kernel) shutdown() {
 func (k *Kernel) Run(addr string) error {
 	fmt.Printf("[GoStack Core] Server runtime engine initializing on network terminal address %s...\n", addr)
 
-	viewEngine := ghttp.NewTempose()
+	var viewEngine *ghttp.Tempose
+	if rawTempose, err := k.Container.Resolve("tempose"); err == nil {
+		viewEngine = rawTempose.(*ghttp.Tempose)
+	} else {
+		viewEngine = ghttp.NewTempose()
+	}
+
 	runtimeEngine := ghttp.NewEngine(k.Router, viewEngine)
 
 	srv := &http.Server{

@@ -62,7 +62,7 @@ func main() {
 	router.Get("/users", home.Users, http.Logger)
 
 	// 7. Orchestrate Framework Orchestration & Boot up the Application Kernel.
-	kernel := foundation.NewKernel(dbInstance, router)
+	kernel := foundation.NewKernel(container, router)
 	port := ":" + foundation.Get("APP_PORT", "8080")
 	fmt.Printf("GoStack fullstack engine starting up securely on port %s...\n", port)
 
