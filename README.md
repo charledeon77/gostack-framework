@@ -185,6 +185,19 @@ Every major capability in GoStack has a branded name:
 | **Nexus** | Neo4j Graph Database Integration | `framework/database/neo4j` |
 | **Aether** | Cassandra Wide-Column Database Integration | `framework/database/cassandra` |
 
+## 📦 Official Extensions
+
+GoStack supports optional plug-and-play extensions that are fully isolated from the core framework package to maintain clean database and architecture boundaries:
+
+*   **MFA (TOTP Multi-Factor Authentication):** Standard RFC 6238 TOTP verification and QR code generation.
+    ```bash
+    go get github.com/charledeon77/gostack-extensions/mfa
+    ```
+*   **RBAC (Role-Based Access Control):** Dynamic roles, permissions, HTTP middlewares, and database-agnostic resolvers (supporting both relational SQL databases and NoSQL/Cassandra).
+    ```bash
+    go get github.com/charledeon77/gostack-extensions/rbac
+    ```
+
 ---
 
 ## 🛠️ Architecture Invariants & Developer Guidelines
