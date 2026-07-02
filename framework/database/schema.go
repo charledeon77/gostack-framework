@@ -211,3 +211,19 @@ func (b *Builder) Drop(tableName string) error {
 	}
 	return nil
 }
+
+// Exec executes a raw SQL statement against the active transaction database.
+func (b *Builder) Exec(sql string, args ...any) error {
+	if err := b.tx.Exec(sql, args...); err != nil {
+		return fmt.Errorf("[Grapher] Exec query failed: %w", err)
+	}
+	return nil
+}
+
+// Raw executes a raw SQL statement against the active transaction database.
+func (b *Builder) Raw(sql string) error {
+	if err := b.tx.Exec(sql); err != nil {
+		return fmt.Errorf("[Grapher] Raw query failed: %w", err)
+	}
+	return nil
+}

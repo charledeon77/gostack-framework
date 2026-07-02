@@ -29,6 +29,15 @@ This ledger details the step-by-step history, architectural justifications, and 
 | **Nexus** | Neo4j Graph Database Integration | `framework/database/neo4j` |
 | **Aether** | Cassandra Wide-Column Database Integration | `framework/database/cassandra` |
 
+## [v1.0.5] - Schema Builder Raw SQL Migration Support
+*Released in July 2026*
+
+### Database migrations & DDL
+*   **Raw SQL in Migrations**: Added the [Exec](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/database/schema.go#L215-L220) and [Raw](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/database/schema.go#L223-L228) methods on the schema [Builder](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/database/schema.go#L185) struct, enabling migration files to run custom transactional SQL queries like `ALTER TABLE` or `CREATE INDEX`.
+*   **Verification Tests**: Covered compilation and query execution logic via [TestBuilderExecAndRaw](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/database/schema_test.go#L90-L126).
+
+---
+
 ## [v1.0.4] - IoC Container Kernel, Redis Sessions & Multi-Channel Notifications
 *Released in July 2026*
 
@@ -65,6 +74,47 @@ This ledger details the step-by-step history, architectural justifications, and 
 *   **Plug-and-play extensions isolation**: Isolated optional components to the `gostack-extensions` warehouse.
 *   **MFA Extension (`mfa/v1.0.0`)**: Standard TOTP secret generation, base64 QR code URLs, and passcode verification.
 *   **RBAC Extension (`rbac/v1.0.0`)**: Roles, permissions, route guards, and custom resolver callbacks (`SetRoleResolver`) for MongoDB and Cassandra engines.
+
+---
+
+## GoStack v1.0.2 — Enterprise Web Utilities & Hardening
+*Released in July 2026*
+
+GoStack v1.0.2 is a major upgrade that transitions the framework from a lightweight full-stack prototype into a robust, production-grade, and enterprise-ready application platform. This release introduces advanced database transactional control, recursive eager loading relationships, secure rate-limiting, timezone-aware scheduling, comprehensive MIME mail capabilities, and robust browser-native security hardening—all while strictly adhering to GoStack's zero-dependency standard library philosophy.
+
+### Database & ORM (Crafter & SQL Adapter)
+*   **Nested Transaction Support (SQL Savepoints)**: The global `Transaction(db, fn)` wrapper now natively supports nested transaction closures. Passing an active transaction (`contract.Tx`) automatically triggers SQL `SAVEPOINT`, `RELEASE SAVEPOINT`, and `ROLLBACK TO SAVEPOINT` commands.
+*   **Database Connection Pooling**: Added connection pool limit controls (`SetMaxOpenConns`, `SetMaxIdleConns`, and `SetConnMaxLifetime`) to `contract.ConnectionPooler` and implemented them in the SQL adapter.
+*   **Advanced Recursive Eager Loading**: Supports deep recursive relationship loading via `With("Relation.NestedRelation")` using type-agnostic key matching.
+*   **New Eager Relationships**: Fully implemented `HasOne`, `ManyToMany`, and `HasManyThrough` relationship loaders.
+
+### Security, Routing & Middleware (Navigator & Guard)
+*   **Brute-Force Auth Rate Limiter (AuthThrottle)**: Added a sliding-window rate-limiting middleware for auth endpoints using a composite Client IP + Credential key. Returns standard headers (`Retry-After`, `X-RateLimit-*`) and `429 Too Many Requests`.
+*   **Route Conflict Detection**: The HTTP router now scans and prints warning logs at bootstrap if there are duplicate method + path registrations.
+*   **Native DOMParser HTML Sanitization**: Upgraded the client-side Glide `gs-html` engine to use the browser-native `DOMParser` API instead of fragile regular expressions, safely stripping `<script>` tags, inline event attributes (`on*`), and `javascript:` URLs.
+
+### UI Engine & AOT Compiler (Tempose & Glide)
+*   **Stateful Filter Parser**: Rewrote the template pipe filter compiler to safely parse pipes (`|`) and commas (`,`) even when they are enclosed inside quotes or parentheses (e.g. `{{ .Text | replace("|", "-") }}`).
+*   **Standard Filters**: Added support for `date`, `truncate`, `slugify`, `plural`, `upper`, and `lower` filters.
+*   **Named Component Slots**: Added Svelte-style component slot support (`<slot name="...">` and `slot="..."`), translated to Blade-style `@yield` / `@section` blocks at compile-time.
+*   **SSE Hot-Reload Watcher**: Added a standard library-based file change watcher using folder polling and Server-Sent Events (SSE) to auto-reload browsers during development.
+
+### Timezone-Aware Cron Scheduler (Planner)
+*   **Timezone Support**: Task schedules can now be mapped to specific IANA locations (e.g. `.Timezone("Europe/London")`).
+*   **Overlap Prevention**: Added `.WithoutOverlapping()` utilizing atomic state markers to skip executions if a previous job run is still active.
+*   **Launch-on-Boot**: Added `.RunOnBoot()` to execute scheduled tasks once immediately when the scheduler starts.
+
+### MIME-Compliant Mailer & i18n Pluralization (GoMail & Lang)
+*   **Attachments & Advanced Envelopes**: Extended GoMail to support BCC, Reply-To, binary attachments, and automatic construction of multipart MIME formats with RFC 2045 compliant base64 line wrapping. Includes a fluent `MessageBuilder`.
+*   **Translator Choice Pluralization (TransChoice)**: Implemented localized pluralization templates with exact matches and range guards (e.g., `{0} No items|{1} One item|[2,*] :count items`).
+
+### CLI Code Scaffolding (Gost)
+*   **New CLI Generators**: Added 4 new generators to the CLI:
+    *   `gost make:event <Name>`
+    *   `gost make:job <Name>`
+    *   `gost make:policy <Name>`
+    *   `gost make:provider <Name>`
+*   **Automated Formatting**: Stubs are automatically run through `gofmt` to verify syntax and ensure perfect coding standards.
 
 ---
 

@@ -77,3 +77,48 @@ func TestTableCompilePostgres(t *testing.T) {
 		}
 	}
 }
+
+type mockSchemaTx struct {
+	queries []string
+	args    [][]any
+}
+
+func (m *mockSchemaTx) Exec(sql string, args ...any) error {
+	m.queries = append(m.queries, sql)
+	m.args = append(m.args, args)
+	return nil
+}
+
+func (m *mockSchemaTx) Query(sql string, args ...any) (any, error) { return nil, nil }
+func (m *mockSchemaTx) Commit() error                              { return nil }
+func (m *mockSchemaTx) Rollback() error                            { return nil }
+
+func TestBuilderExecAndRaw(t *testing.T) {
+	tx := &mockSchemaTx{}
+	builder := NewBuilder(tx, "sqlite")
+
+	err := builder.Exec("ALTER TABLE users ADD COLUMN age INT", 42)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	err = builder.Raw("CREATE INDEX idx_users_email ON users(email)")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(tx.queries) != 2 {
+		t.Fatalf("expected 2 queries, got %d", len(tx.queries))
+	}
+
+	if tx.queries[0] != "ALTER TABLE users ADD COLUMN age INT" {
+		t.Errorf("expected first query to be ALTER TABLE, got %q", tx.queries[0])
+	}
+	if len(tx.args[0]) != 1 || tx.args[0][0] != 42 {
+		t.Errorf("expected argument 42, got %v", tx.args[0])
+	}
+
+	if tx.queries[1] != "CREATE INDEX idx_users_email ON users(email)" {
+		t.Errorf("expected second query to be CREATE INDEX, got %q", tx.queries[1])
+	}
+}
