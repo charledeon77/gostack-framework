@@ -8,28 +8,6 @@ Philosophy:
 Glide is GoStack's browser-side reactivity layer. Like Alpine.js, it works directly
 on existing HTML via data attributes. Unlike Alpine, it is purpose-built for GoStack
 components and carries zero third-party footprint.
-
-Architecture:
-- GlideJS is a self-contained IIFE (Immediately Invoked Function Expression).
-- It finds all [gs-data] root elements, creates reactive Proxy scopes, then wires
-  all directive attributes (gs-text, gs-click, gs-model, gs-if, gs-each, gs-class,
-  gs-html, gs-submit, gs-change, gs-attr) to live DOM updates.
-- Updates are batched through requestAnimationFrame to avoid thrashing.
-- MutationObserver watches for server-rendered or lazily appended scopes.
-
-Directives:
-  gs-data="{ key: value }"   — declares a reactive state scope
-  gs-text="expr"              — binds expression to element text content
-  gs-html="expr"              — binds expression to element innerHTML
-  gs-model="key"              — two-way binds <input>/<select>/<textarea> to state key
-  gs-click="stmt"             — executes statement on click
-  gs-submit="stmt"            — executes statement on form submit (prevents default)
-  gs-change="stmt"            — executes statement on input change
-  gs-if="expr"                — shows/hides element based on truthy expression
-  gs-show="expr"              — toggles CSS visibility (keeps element in flow)
-  gs-each="item in list"      — repeats element for each item in a state array
-  gs-class="{ cls: expr }"    — toggles CSS classes based on an object expression
-  gs-attr="{ attr: expr }"    — sets element attributes from an object expression
 */
 package ui
 
@@ -40,45 +18,110 @@ const GlideJS = `
 (function(global) {
     'use strict';
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // Glide — GoStack UI Reactive Directive Engine  v1.0
-    // ──────────────────────────────────────────────────────────────────────────
-
     // ── Expression Helpers ────────────────────────────────────────────────────
 
-    function evaluate(expr, scope) {
+    function evaluate(expr, scope, extra) {
         try {
-            var keys = Object.keys(scope);
-            var vals = keys.map(function(k) { return scope[k]; });
-            return (new Function(keys.join(','), '"use strict"; return (' + expr + ')'))
-                .apply(null, vals);
+            var context = new Proxy(extra || {}, {
+                has: function(target, key) {
+                    return key in target || key in scope || key in global;
+                },
+                get: function(target, key) {
+                    if (target && key in target) return target[key];
+                    return scope[key];
+                },
+                set: function(target, key, value) {
+                    if (target && key in target) {
+                        target[key] = value;
+                    } else {
+                        scope[key] = value;
+                    }
+                    return true;
+                }
+            });
+            return (new Function('scope', 'with(scope) { return (' + expr + ') }'))(context);
         } catch(e) {
             return undefined;
         }
     }
 
-    function execute(stmt, scope) {
+    function execute(stmt, scope, extra) {
         try {
-            var keys = Object.keys(scope);
-            var vals = keys.map(function(k) { return scope[k]; });
-            (new Function(keys.join(','), '"use strict"; ' + stmt))
-                .apply(null, vals);
+            var context = new Proxy(extra || {}, {
+                has: function(target, key) {
+                    return key in target || key in scope || key in global;
+                },
+                get: function(target, key) {
+                    if (target && key in target) return target[key];
+                    return scope[key];
+                },
+                set: function(target, key, value) {
+                    if (target && key in target) {
+                        target[key] = value;
+                    } else {
+                        scope[key] = value;
+                    }
+                    return true;
+                }
+            });
+            (new Function('scope', 'with(scope) { ' + stmt + ' }'))(context);
         } catch(e) {
             // silent: expression errors should not crash the page
         }
     }
 
-    function parseData(expr) {
+    function parseData(expr, context) {
         try {
-            return (new Function('"use strict"; return (' + expr + ')'))();
+            var keys = Object.keys(context || {});
+            var vals = keys.map(function(k) { return context[k]; });
+            return (new Function(keys.join(','), 'return (' + expr + ')')).apply(null, vals);
         } catch(e) {
             return {};
         }
     }
 
-    // ── Reactivity via Proxy ──────────────────────────────────────────────────
+    // ── Nested Property Helper ────────────────────────────────────────────────
+
+    function setPath(obj, path, value) {
+        var parts = path.split('.');
+        var current = obj;
+        for (var i = 0; i < parts.length - 1; i++) {
+            if (current[parts[i]] === undefined) {
+                current[parts[i]] = {};
+            }
+            current = current[parts[i]];
+        }
+        current[parts[parts.length - 1]] = value;
+    }
+
+    // ── Reactivity via Proxy & Array Trapping ─────────────────────────────────
 
     function makeReactive(obj, callback) {
+        if (Array.isArray(obj)) {
+            var arrayMethods = ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse'];
+            arrayMethods.forEach(function(method) {
+                var original = Array.prototype[method];
+                Object.defineProperty(obj, method, {
+                    value: function() {
+                        var args = Array.prototype.slice.call(arguments);
+                        for (var i = 0; i < args.length; i++) {
+                            if (args[i] !== null && typeof args[i] === 'object') {
+                                args[i] = makeReactive(args[i], callback);
+                            }
+                        }
+                        var result = original.apply(this, args);
+                        callback();
+                        return result;
+                    }
+                });
+            });
+            for (var i = 0; i < obj.length; i++) {
+                if (obj[i] !== null && typeof obj[i] === 'object') {
+                    obj[i] = makeReactive(obj[i], callback);
+                }
+            }
+            return obj;
+        }
         return new Proxy(obj, {
             set: function(target, key, value) {
                 target[key] = value;
@@ -87,7 +130,7 @@ const GlideJS = `
             },
             get: function(target, key) {
                 var val = target[key];
-                if (val !== null && typeof val === 'object' && !Array.isArray(val)) {
+                if (val !== null && typeof val === 'object') {
                     return makeReactive(val, callback);
                 }
                 return val;
@@ -97,7 +140,6 @@ const GlideJS = `
 
     // ── Scope Boundary Check ──────────────────────────────────────────────────
     // Returns true only if el's nearest [gs-data] ancestor IS rootEl.
-    // This prevents outer scopes from processing inner nested scopes.
 
     function isDirectChild(el, rootEl) {
         var parent = el.parentElement;
@@ -108,21 +150,71 @@ const GlideJS = `
         return true;
     }
 
+    // ── Transition Support ────────────────────────────────────────────────────
+
+    function toggleElement(el, show) {
+        var isTransition = el.hasAttribute('gs-transition');
+        
+        if (!isTransition) {
+            if (show) {
+                el.classList.remove('gs-hidden');
+                el.style.display = '';
+                el.style.visibility = '';
+            } else {
+                el.classList.add('gs-hidden');
+                el.style.display = 'none';
+                el.style.visibility = 'hidden';
+            }
+            return;
+        }
+        
+        if (show) {
+            el.classList.remove('gs-hidden');
+            el.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
+            el.style.transform = 'scale(0.95)';
+            el.style.opacity = '0';
+            el.style.display = '';
+            el.style.visibility = '';
+            el.offsetHeight; // force reflow
+            requestAnimationFrame(function() {
+                el.style.transform = 'scale(1)';
+                el.style.opacity = '1';
+            });
+        } else {
+            el.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
+            el.style.transform = 'scale(1)';
+            el.style.opacity = '1';
+            requestAnimationFrame(function() {
+                el.style.transform = 'scale(0.95)';
+                el.style.opacity = '0';
+            });
+            var onTransitionEnd = function(e) {
+                if (e.target !== el) return;
+                el.classList.add('gs-hidden');
+                el.style.display = 'none';
+                el.style.visibility = 'hidden';
+                el.removeEventListener('transitionend', onTransitionEnd);
+            };
+            el.addEventListener('transitionend', onTransitionEnd);
+        }
+    }
+
     // ── DOM Update Pass ───────────────────────────────────────────────────────
 
+    // Define inside scope to allow hoist functions
     function updateScope(rootEl, data, eachMeta) {
         // gs-if
         rootEl.querySelectorAll('[gs-if]').forEach(function(el) {
             if (!isDirectChild(el, rootEl)) return;
-            var result = evaluate(el.getAttribute('gs-if'), data);
-            el.style.display = result ? '' : 'none';
+            var result = !!evaluate(el.getAttribute('gs-if'), data);
+            toggleElement(el, result);
         });
 
         // gs-show
         rootEl.querySelectorAll('[gs-show]').forEach(function(el) {
             if (!isDirectChild(el, rootEl)) return;
-            var result = evaluate(el.getAttribute('gs-show'), data);
-            el.style.visibility = result ? '' : 'hidden';
+            var result = !!evaluate(el.getAttribute('gs-show'), data);
+            toggleElement(el, result);
         });
 
         // gs-text
@@ -161,7 +253,16 @@ const GlideJS = `
             }
         });
 
-        // gs-model — sync current data value → input DOM value
+        // gs-effect
+        rootEl.querySelectorAll('[gs-effect]').forEach(function(el) {
+            if (!isDirectChild(el, rootEl)) return;
+            evaluate(el.getAttribute('gs-effect'), data);
+        });
+        if (rootEl.hasAttribute('gs-effect')) {
+            evaluate(rootEl.getAttribute('gs-effect'), data);
+        }
+
+        // gs-model
         rootEl.querySelectorAll('[gs-model]').forEach(function(el) {
             if (!isDirectChild(el, rootEl)) return;
             var key = el.getAttribute('gs-model');
@@ -223,12 +324,14 @@ const GlideJS = `
         });
     }
 
-    // Apply directives to a cloned element tree (used for gs-each clones)
     function applyDirectivesToNode(el, data) {
         if (!el || el.nodeType !== 1) return;
 
         if (el.hasAttribute('gs-if')) {
-            el.style.display = evaluate(el.getAttribute('gs-if'), data) ? '' : 'none';
+            toggleElement(el, evaluate(el.getAttribute('gs-if'), data));
+        }
+        if (el.hasAttribute('gs-show')) {
+            toggleElement(el, evaluate(el.getAttribute('gs-show'), data));
         }
         if (el.hasAttribute('gs-text')) {
             var r = evaluate(el.getAttribute('gs-text'), data);
@@ -254,9 +357,14 @@ const GlideJS = `
                 });
             }
         }
+        if (el.hasAttribute('gs-effect')) {
+            evaluate(el.getAttribute('gs-effect'), data);
+        }
         if (el.hasAttribute('gs-click')) {
             var stmt = el.getAttribute('gs-click');
-            el.addEventListener('click', function() { execute(stmt, data); });
+            el.addEventListener('click', function(e) {
+                execute(stmt, data, { $event: e, event: e, $el: el });
+            });
         }
 
         Array.from(el.children).forEach(function(child) {
@@ -266,7 +374,7 @@ const GlideJS = `
 
     // ── Event Binding ─────────────────────────────────────────────────────────
 
-    function bindEvents(rootEl, reactive) {
+    function bindEvents(rootEl, reactive, refs) {
         // gs-click
         rootEl.querySelectorAll('[gs-click]').forEach(function(el) {
             if (el._glideClick) return;
@@ -274,11 +382,11 @@ const GlideJS = `
             el._glideClick = true;
             var stmt = el.getAttribute('gs-click');
             el.addEventListener('click', function(e) {
-                execute(stmt, reactive);
+                execute(stmt, reactive, { $event: e, event: e, $el: el, $refs: refs });
             });
         });
 
-        // gs-model (input → data)
+        // gs-model
         rootEl.querySelectorAll('[gs-model]').forEach(function(el) {
             if (el._glideModel) return;
             if (!isDirectChild(el, rootEl)) return;
@@ -286,13 +394,15 @@ const GlideJS = `
             var key = el.getAttribute('gs-model');
             var eventType = (el.type === 'checkbox' || el.tagName === 'SELECT') ? 'change' : 'input';
             el.addEventListener(eventType, function() {
+                var val;
                 if (el.type === 'checkbox') {
-                    reactive[key] = el.checked;
+                    val = el.checked;
                 } else if (el.type === 'number' || el.type === 'range') {
-                    reactive[key] = parseFloat(el.value);
+                    val = parseFloat(el.value);
                 } else {
-                    reactive[key] = el.value;
+                    val = el.value;
                 }
+                setPath(reactive, key, val);
             });
         });
 
@@ -304,7 +414,7 @@ const GlideJS = `
             var stmt = el.getAttribute('gs-submit');
             el.addEventListener('submit', function(e) {
                 e.preventDefault();
-                execute(stmt, reactive);
+                execute(stmt, reactive, { $event: e, event: e, $el: el, $refs: refs });
             });
         });
 
@@ -314,8 +424,8 @@ const GlideJS = `
             if (!isDirectChild(el, rootEl)) return;
             el._glideChange = true;
             var stmt = el.getAttribute('gs-change');
-            el.addEventListener('change', function() {
-                execute(stmt, reactive);
+            el.addEventListener('change', function(e) {
+                execute(stmt, reactive, { $event: e, event: e, $el: el, $refs: refs });
             });
         });
     }
@@ -323,11 +433,41 @@ const GlideJS = `
     // ── Scope Initializer ─────────────────────────────────────────────────────
 
     function initScope(rootEl) {
-        var plainData = parseData(rootEl.getAttribute('gs-data'));
+        var persistedKeys = {};
+        
+        var extraContext = {
+            persist: function(key, defaultValue) {
+                persistedKeys[key] = true;
+                var saved = localStorage.getItem('gs_' + key);
+                if (saved !== null) {
+                    try { return JSON.parse(saved); } catch(e) { return saved; }
+                }
+                localStorage.setItem('gs_' + key, JSON.stringify(defaultValue));
+                return defaultValue;
+            }
+        };
+
+        var plainData = parseData(rootEl.getAttribute('gs-data'), extraContext);
         var eachMeta  = new Map();
 
-        // Pre-process gs-each: anchor each template with a comment placeholder
-        // and hide the original element (used only as the Map key)
+        // Scan references
+        var refs = {};
+        rootEl.querySelectorAll('[gs-ref]').forEach(function(el) {
+            if (!isDirectChild(el, rootEl)) return;
+            refs[el.getAttribute('gs-ref')] = el;
+        });
+        if (rootEl.hasAttribute('gs-ref')) {
+            refs[rootEl.getAttribute('gs-ref')] = rootEl;
+        }
+
+        var extraExec = {
+            $refs: refs,
+            $dispatch: function(name, detail) {
+                rootEl.dispatchEvent(new CustomEvent(name, { bubbles: true, detail: detail }));
+            }
+        };
+
+        // Pre-process gs-each
         rootEl.querySelectorAll('[gs-each]').forEach(function(tplEl) {
             if (!isDirectChild(tplEl, rootEl)) return;
 
@@ -339,7 +479,6 @@ const GlideJS = `
                 placeholder: placeholder
             });
 
-            // Hide the original; clones will appear after the placeholder
             tplEl.style.display = 'none';
         });
 
@@ -350,18 +489,57 @@ const GlideJS = `
             pending = true;
             requestAnimationFrame(function() {
                 pending = false;
+                
+                // Save persisted keys to localStorage
+                Object.keys(persistedKeys).forEach(function(key) {
+                    localStorage.setItem('gs_' + key, JSON.stringify(plainData[key]));
+                });
+
                 updateScope(rootEl, plainData, eachMeta);
-                bindEvents(rootEl, reactive);
+                bindEvents(rootEl, reactive, refs);
             });
         }
 
         var reactive = makeReactive(plainData, scheduleUpdate);
 
-        // Initial render
+        // Initial render & bind
         updateScope(rootEl, plainData, eachMeta);
-        bindEvents(rootEl, reactive);
+        bindEvents(rootEl, reactive, refs);
 
-        // Expose for devtools: element._glide.data
+        // gs-init Lifecycle
+        rootEl.querySelectorAll('[gs-init]').forEach(function(el) {
+            if (!isDirectChild(el, rootEl)) return;
+            execute(el.getAttribute('gs-init'), reactive, Object.assign({ $el: el }, extraExec));
+        });
+        if (rootEl.hasAttribute('gs-init')) {
+            execute(rootEl.getAttribute('gs-init'), reactive, Object.assign({ $el: rootEl }, extraExec));
+        }
+
+        // gs-intersect Observer
+        if (typeof IntersectionObserver !== 'undefined') {
+            rootEl.querySelectorAll('[gs-intersect]').forEach(function(el) {
+                if (!isDirectChild(el, rootEl)) return;
+                var observer = new IntersectionObserver(function(entries) {
+                    entries.forEach(function(entry) {
+                        if (entry.isIntersecting) {
+                            execute(el.getAttribute('gs-intersect'), reactive, Object.assign({ $el: el }, extraExec));
+                        }
+                    });
+                });
+                observer.observe(el);
+            });
+            if (rootEl.hasAttribute('gs-intersect')) {
+                var observer = new IntersectionObserver(function(entries) {
+                    entries.forEach(function(entry) {
+                        if (entry.isIntersecting) {
+                            execute(rootEl.getAttribute('gs-intersect'), reactive, Object.assign({ $el: rootEl }, extraExec));
+                        }
+                    });
+                });
+                observer.observe(rootEl);
+            }
+        }
+
         rootEl._glide = { data: reactive, refresh: scheduleUpdate };
     }
 
@@ -376,7 +554,6 @@ const GlideJS = `
         });
     }
 
-    // Watch for dynamically injected scopes (server-side partials, HTMX swaps, etc.)
     if (typeof MutationObserver !== 'undefined') {
         var observer = new MutationObserver(function(mutations) {
             var needsScan = false;
@@ -405,6 +582,30 @@ const GlideJS = `
         version: '1.0.0',
         init:    scanAndInit,
         eval:    evaluate
+    };
+
+    // Global Modal Helpers
+    global.GoStack = {
+        closeModal: function(id) {
+            var el = document.getElementById('gs-modal-' + id);
+            if (el) {
+                if (el.hasAttribute('gs-transition')) {
+                    toggleElement(el, false);
+                } else {
+                    el.classList.add('gs-hidden');
+                }
+            }
+        },
+        showModal: function(id) {
+            var el = document.getElementById('gs-modal-' + id);
+            if (el) {
+                if (el.hasAttribute('gs-transition')) {
+                    toggleElement(el, true);
+                } else {
+                    el.classList.remove('gs-hidden');
+                }
+            }
+        }
     };
 
 })(typeof window !== 'undefined' ? window : this);

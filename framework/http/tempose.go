@@ -4,8 +4,11 @@
 package http
 
 import (
+	"bytes"
 	"fmt"
+	"github.com/charledeon77/gostack-framework/framework/ui"
 	"io"
+	"strings"
 )
 
 // ViewFunc defines the functional signature for a compiled view.
@@ -51,6 +54,9 @@ func (t *Tempose) Register(name string, fn ViewFunc) {
 // It does not touch HTTP status codes, keeping it decoupled and 
 // usable in any I/O context (e.g., CLI, Email, HTTP).
 //
+// If a closing </head> tag is detected in the rendered view, Tempose automatically
+// injects the Master Asset Block (CSS & GlideJS runtime) right before </head> to hydrate the page.
+//
 // Returns an error if the requested view name has not been registered.
 func (t *Tempose) Render(w io.Writer, name string, data any) error {
 	view, ok := t.views[name]
@@ -58,5 +64,29 @@ func (t *Tempose) Render(w io.Writer, name string, data any) error {
 		return fmt.Errorf("tempose: view '%s' not registered in the system", name)
 	}
 	
-	return view(w, data)
+	var buf bytes.Buffer
+	if err := view(&buf, data); err != nil {
+		return err
+	}
+	
+	html := buf.String()
+	if idx := strings.Index(strings.ToLower(html), "</head>"); idx != -1 {
+		// Write everything up to </head>
+		if _, err := io.WriteString(w, html[:idx]); err != nil {
+			return err
+		}
+		// Write the master asset block (base styles + components CSS + GlideJS + component scripts)
+		ui.WriteMasterAssetBlock(w)
+		// Write the rest of the HTML (including the closing </head> tag)
+		if _, err := io.WriteString(w, html[idx:]); err != nil {
+			return err
+		}
+	} else {
+		// Fragment rendering (e.g. HTMX swaps or partials) — just stream straight to the writer
+		if _, err := io.WriteString(w, html); err != nil {
+			return err
+		}
+	}
+	
+	return nil
 }

@@ -21,7 +21,7 @@ This ledger details the step-by-step history, architectural justifications, and 
 | **SocialHub** | OAuth Social Login | `framework/socialhub` |
 | **GoDash** | Admin Panel | `framework/admin` |
 | **Tempose** | AOT UI Component Compiler | `framework/ui` |
-| **Glide** | Client-Side Reactive Runtime | `framework/http/runtime.go` |
+| **Glide** | Client-Side Reactive Runtime | `framework/ui/glide.go` |
 | **Gost** | CLI Command Runner | `framework/console` |
 | **Contract** | Interface Definitions | `framework/contract` |
 | **GoCon** | Environment Config Manager | `framework/config` |
@@ -29,12 +29,41 @@ This ledger details the step-by-step history, architectural justifications, and 
 | **Nexus** | Neo4j Graph Database Integration | `framework/database/neo4j` |
 | **Aether** | Cassandra Wide-Column Database Integration | `framework/database/cassandra` |
 
+## [v1.0.6] - Unified Glide Reactivity Engine & Automatic Layout Injection
+*Released in July 2026*
+
+### Client-Side Reactivity Layer & Glide Engine
+*   **Unified Reactive Runtime**: Merged competing runtimes and deprecated the simpler `GoStackRuntimeJS` class runtime in `framework/http/runtime.go` to avoid legacy code bloat. Exclusively standardise on the Proxy-based **Glide** engine in `framework/ui/glide.go`.
+*   **Breaking Syntax Cleanup**: Broke backward compatibility to clean up code baggage. Directives are unified:
+    *   **`gs-data`** (replaces `gs-state`) for state declarations.
+    *   **`gs-click`** (replaces `gs-on:click`) for click events.
+*   **Core Reactivity Fixes**:
+    *   *Expression Sandbox*: Rewrote statements execution using `with(scope)` sandbox without strict mode to correctly update primitive values (like `count++`) directly on the reactive state.
+    *   *Nested Model Bindings*: Supported dot-notation keys (e.g., `gs-model="form.email"`) to bind nested values correctly.
+    *   *Deep Array Reactivity*: Trapped array methods (`push`, `pop`, `splice`, etc.) to trigger visual DOM updates automatically on array mutations.
+    *   *Native Event Access*: Passed triggering browser event inside expressions as `$event` and `event`.
+*   **Premium Svelte & Alpine-Inspired Features**:
+    *   *`gs-init`*: Custom initialization code executed automatically on component hydration, with `$el` access.
+    *   *`gs-persist`*: Automatic load/save of state values directly to and from browser `localStorage`.
+    *   *`gs-intersect`*: IntersectionObserver-backed viewport detection for trigger logic (e.g. lazy-loading, infinite scrolling).
+    *   *`gs-transition`*: Hardware-accelerated fade-and-scale animations applied automatically when toggling elements.
+    *   *`gs-effect`*: Reactive side-effects that execute automatically whenever any dependency state changes.
+    *   *`gs-ref` & `$refs`*: Direct DOM element references to bypass manual query selectors.
+    *   *`$dispatch`*: Custom event dispatching to allow parent/child components to communicate easily.
+*   **Global Modal Helpers**: Exposed global `window.GoStack.showModal(id)` and `window.GoStack.closeModal(id)` helpers natively.
+*   **Component Updates**: Updated all framework default components (`counter`, `button`, `modal`) to use the new standard syntax.
+
+### HTTP View Engine
+*   **Automatic Layout Asset Injection**: Upgraded `Tempose.Render` in `framework/http/tempose.go` to automatically detect `</head>` in full-page renders and inject the compiled stylesheet and Glide runtime automatically right before it.
+
+---
+
 ## [v1.0.5] - Schema Builder Raw SQL Migration Support
 *Released in July 2026*
 
 ### Database migrations & DDL
-*   **Raw SQL in Migrations**: Added the [Exec](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/database/schema.go#L215-L220) and [Raw](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/database/schema.go#L223-L228) methods on the schema [Builder](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/database/schema.go#L185) struct, enabling migration files to run custom transactional SQL queries like `ALTER TABLE` or `CREATE INDEX`.
-*   **Verification Tests**: Covered compilation and query execution logic via [TestBuilderExecAndRaw](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/database/schema_test.go#L90-L126).
+*   **Raw SQL in Migrations**: Added the `Exec` and `Raw` methods on the schema `Builder` struct, enabling migration files to run custom transactional SQL queries like `ALTER TABLE` or `CREATE INDEX`.
+*   **Verification Tests**: Covered compilation and query execution logic via `TestBuilderExecAndRaw`.
 
 ---
 
@@ -42,17 +71,17 @@ This ledger details the step-by-step history, architectural justifications, and 
 *Released in July 2026*
 
 ### IoC Container Core Integration
-*   **Container-driven Kernel**: Refactored the core [NewKernel](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/foundation/kernel.go#L39-L48) to inject a service [Container](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/foundation/kernel.go#L23-L24) rather than a direct database adapter. Dependencies like `"db"` and `"tempose"` are now resolved dynamically.
-*   **Entrypoints Update**: Bootstrapped [cmd/app/main.go](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/cmd/app/main.go) and [_examples/app/main.go](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/_examples/app/main.go) to pass the dependency container.
+*   **Container-driven Kernel**: Refactored the core `NewKernel` to inject a service `Container` rather than a direct database adapter. Dependencies like `"db"` and `"tempose"` are now resolved dynamically.
+*   **Entrypoints Update**: Bootstrapped `cmd/app/main.go` and `_examples/app/main.go` to pass the dependency container.
 
 ### Persistence & Session Store
-*   **Redis-Backed Session Store**: Added [session_store_redis.go](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/http/session_store_redis.go) implementing the `contract.SessionStore` interface to persist sessions securely in Redis.
-*   **Tests**: Verified session loading, saving, and deletion using `miniredis` in [session_store_redis_test.go](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/http/session_store_redis_test.go).
+*   **Redis-Backed Session Store**: Added `session_store_redis.go` implementing the `contract.SessionStore` interface to persist sessions securely in Redis.
+*   **Tests**: Verified session loading, saving, and deletion using `miniredis` in `session_store_redis_test.go`.
 
 ### Multi-Channel Notification System
-*   **Unified Notification Engine**: Introduced the [framework/notification/](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/notification) package to decouple notification structures from delivery channels.
-*   **Mail Channel**: Configured [MailChannel](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/notification/channel_mail.go#L23) for SMTP email alerts.
-*   **Database Channel**: Configured [DatabaseChannel](file:///c:/Users/USER/Desktop/GoStack%20miscellaneous/GoStack%20Antigravity/GoStack(In%20Dev)/GoStack/framework/notification/channel_database.go#L27) to store notification logs inside a SQL-backed `notifications` table.
+*   **Unified Notification Engine**: Introduced the `framework/notification/` package to decouple notification structures from delivery channels.
+*   **Mail Channel**: Configured `MailChannel` for SMTP email alerts.
+*   **Database Channel**: Configured `DatabaseChannel` to store notification logs inside a SQL-backed `notifications` table.
 
 ---
 

@@ -4,7 +4,6 @@
 package main
 
 import (
-	"fmt"
 	"github.com/charledeon77/gostack-framework/framework/http"
 	"github.com/charledeon77/gostack-framework/framework/ui"
 	"io"
@@ -12,6 +11,63 @@ import (
 
 // RegisterComponents binds all compiled component views, styles, and scripts.
 func RegisterComponents(t *http.Tempose) {
+	ui.RegisterComponentStyle("button", `gostack-root [gs-component="button"] .gs-btn {
+display: inline-flex;
+align-items: center;
+justify-content: center;
+padding: 0.5rem 1rem;
+font-size: 0.875rem;
+font-weight: 500;
+border-radius: 0.375rem;
+border: none;
+cursor: pointer;
+transition: all 0.2s ease-in-out;
+}
+gostack-root [gs-component="button"] .gs-btn-primary {
+background-color: #0f172a;
+color: #ffffff;
+}
+gostack-root [gs-component="button"] .gs-btn-primary:hover {
+background-color: #334155;
+}
+gostack-root [gs-component="button"] .gs-btn-secondary {
+background-color: #f1f5f9;
+color: #0f172a;
+border: 1px solid #e2e8f0;
+}
+gostack-root [gs-component="button"] .gs-btn-secondary:hover {
+background-color: #e2e8f0;
+}
+gostack-root [gs-component="button"] .gs-btn-danger {
+background-color: #ef4444;
+color: #ffffff;
+}
+gostack-root [gs-component="button"] .gs-btn-danger:hover {
+background-color: #dc2626;
+}`)
+
+	t.Register("button", func(w io.Writer, data any) error {
+		if _, err := io.WriteString(w, `<div gs-component="button">
+<div gs-component="button">
+    <!-- 
+        Accepts variables:
+        - variant: 'primary', 'secondary', 'danger'
+        - text: Button text 
+    -->
+    <button class="gs-btn gs-btn-`); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "variant"))); err != nil { return err }
+		if _, err := io.WriteString(w, `" gs-click="`); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "onClick"))); err != nil { return err }
+		if _, err := io.WriteString(w, `">
+        `); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "text"))); err != nil { return err }
+		if _, err := io.WriteString(w, `
+    </button>
+</div>
+</div>`); err != nil { return err }
+		return nil
+	})
+
 	ui.RegisterComponentStyle("counter", `gostack-root [gs-component="counter"] button {
 background-color: #0076ff;
 color: white;
@@ -35,10 +91,10 @@ console.log('Counter component hydrated successfully');
 
 	t.Register("counter", func(w io.Writer, data any) error {
 		if _, err := io.WriteString(w, `<div gs-component="counter">
-<div gs-state='{"count": 0}'>
-    <button gs-on:click="count--">-</button>
+<div gs-data='{"count": 0}'>
+    <button gs-click="count--">-</button>
     <span gs-text="count">0</span>
-    <button gs-on:click="count++">+</button>
+    <button gs-click="count++">+</button>
 </div>
 </div>`); err != nil { return err }
 		return nil
@@ -135,7 +191,7 @@ text-decoration: underline;
 	<h2>Login</h2>
 	<form action="/login" method="POST">
 		<input type="hidden" name="_token" value="`); err != nil { return err }
-		if _, err := io.WriteString(w, fmt.Sprint(ui.Evaluate(data, "csrf_token"))); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "csrf_token"))); err != nil { return err }
 		if _, err := io.WriteString(w, `" />
 		<div class="form-group">
 			<label>Email Address</label>
@@ -146,11 +202,117 @@ text-decoration: underline;
 			<input type="password" name="password" required />
 		</div>
 		<div class="alert alert-danger">`); err != nil { return err }
-		if _, err := io.WriteString(w, fmt.Sprint(ui.Evaluate(data, "error"))); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "error"))); err != nil { return err }
 		if _, err := io.WriteString(w, `</div>
 		<button type="submit" class="btn">Sign In</button>
 	</form>
 	<p class="auth-switch">Don't have an account? <a href="/register">Register</a></p>
+</div>
+</div>`); err != nil { return err }
+		return nil
+	})
+
+	ui.RegisterComponentStyle("modal", `gostack-root [gs-component="modal"] .gs-modal-overlay {
+position: fixed;
+top: 0;
+left: 0;
+width: 100vw;
+height: 100vh;
+background-color: rgba(0, 0, 0, 0.5);
+display: flex;
+align-items: center;
+justify-content: center;
+z-index: 50;
+}
+gostack-root [gs-component="modal"] .gs-modal-content {
+background-color: #ffffff;
+border-radius: 0.5rem;
+box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+width: 100%;
+max-width: 32rem;
+padding: 1.5rem;
+display: flex;
+flex-direction: column;
+gap: 1rem;
+animation: gs-modal-in 0.2s ease-out forwards;
+}
+gostack-root [gs-component="modal"] .gs-modal-header {
+display: flex;
+justify-content: space-between;
+align-items: center;
+}
+gostack-root [gs-component="modal"] .gs-modal-title {
+font-size: 1.125rem;
+font-weight: 600;
+margin: 0;
+}
+gostack-root [gs-component="modal"] .gs-modal-close {
+background: none;
+border: none;
+font-size: 1.5rem;
+line-height: 1;
+cursor: pointer;
+color: #64748b;
+transition: color 0.2s;
+}
+gostack-root [gs-component="modal"] .gs-modal-close:hover {
+color: #0f172a;
+}
+gostack-root [gs-component="modal"] .gs-modal-body {
+font-size: 0.875rem;
+color: #475569;
+}
+gostack-root [gs-component="modal"] .gs-modal-footer {
+display: flex;
+justify-content: flex-end;
+gap: 0.5rem;
+margin-top: 0.5rem;
+}
+gostack-root [gs-component="modal"] .gs-hidden {
+display: none !important;
+}
+@keyframes gs-modal-in {
+gostack-root [gs-component="modal"] from {
+opacity: 0;
+transform: scale(0.95);
+}
+gostack-root [gs-component="modal"] to {
+opacity: 1;
+transform: scale(1);
+}
+}`)
+
+	t.Register("modal", func(w io.Writer, data any) error {
+		if _, err := io.WriteString(w, `<div gs-component="modal">
+<div gs-component="modal">
+    <!-- Overlay -->
+    <div class="gs-modal-overlay gs-hidden" id="gs-modal-`); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "id"))); err != nil { return err }
+		if _, err := io.WriteString(w, `">
+        <!-- Modal Dialog -->
+        <div class="gs-modal-content">
+            <div class="gs-modal-header">
+                <h3 class="gs-modal-title">`); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "title"))); err != nil { return err }
+		if _, err := io.WriteString(w, `</h3>
+                <button class="gs-modal-close" gs-click="GoStack.closeModal('`); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "id"))); err != nil { return err }
+		if _, err := io.WriteString(w, `')">&times;</button>
+            </div>
+            
+            <div class="gs-modal-body">
+                `); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "content"))); err != nil { return err }
+		if _, err := io.WriteString(w, `
+            </div>
+            
+            <div class="gs-modal-footer">
+                `); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "footer"))); err != nil { return err }
+		if _, err := io.WriteString(w, `
+            </div>
+        </div>
+    </div>
 </div>
 </div>`); err != nil { return err }
 		return nil
@@ -247,7 +409,7 @@ text-decoration: underline;
 	<h2>Register</h2>
 	<form action="/register" method="POST">
 		<input type="hidden" name="_token" value="`); err != nil { return err }
-		if _, err := io.WriteString(w, fmt.Sprint(ui.Evaluate(data, "csrf_token"))); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "csrf_token"))); err != nil { return err }
 		if _, err := io.WriteString(w, `" />
 		<div class="form-group">
 			<label>Email Address</label>
@@ -258,7 +420,7 @@ text-decoration: underline;
 			<input type="password" name="password" required />
 		</div>
 		<div class="alert alert-danger">`); err != nil { return err }
-		if _, err := io.WriteString(w, fmt.Sprint(ui.Evaluate(data, "error"))); err != nil { return err }
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "error"))); err != nil { return err }
 		if _, err := io.WriteString(w, `</div>
 		<button type="submit" class="btn">Create Account</button>
 	</form>

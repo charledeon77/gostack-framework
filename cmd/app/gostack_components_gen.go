@@ -56,7 +56,7 @@ background-color: #dc2626;
     -->
     <button class="gs-btn gs-btn-`); err != nil { return err }
 		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "variant"))); err != nil { return err }
-		if _, err := io.WriteString(w, `" gs-on:click="`); err != nil { return err }
+		if _, err := io.WriteString(w, `" gs-click="`); err != nil { return err }
 		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "onClick"))); err != nil { return err }
 		if _, err := io.WriteString(w, `">
         `); err != nil { return err }
@@ -91,10 +91,10 @@ console.log('Counter component hydrated successfully');
 
 	t.Register("counter", func(w io.Writer, data any) error {
 		if _, err := io.WriteString(w, `<div gs-component="counter">
-<div gs-state='{"count": 0}'>
-    <button gs-on:click="count--">-</button>
+<div gs-data='{"count": 0}'>
+    <button gs-click="count--">-</button>
     <span gs-text="count">0</span>
-    <button gs-on:click="count++">+</button>
+    <button gs-click="count++">+</button>
 </div>
 </div>`); err != nil { return err }
 		return nil
@@ -295,7 +295,7 @@ transform: scale(1);
                 <h3 class="gs-modal-title">`); err != nil { return err }
 		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "title"))); err != nil { return err }
 		if _, err := io.WriteString(w, `</h3>
-                <button class="gs-modal-close" gs-on:click="GoStack.closeModal('`); err != nil { return err }
+                <button class="gs-modal-close" gs-click="GoStack.closeModal('`); err != nil { return err }
 		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "id"))); err != nil { return err }
 		if _, err := io.WriteString(w, `')">&times;</button>
             </div>
