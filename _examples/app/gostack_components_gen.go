@@ -11,6 +11,127 @@ import (
 
 // RegisterComponents binds all compiled component views, styles, and scripts.
 func RegisterComponents(t *http.Tempose) {
+	ui.RegisterComponentStyle("accordion", `gostack-root [gs-component="accordion"] .gostack-components-accordion {
+width: 100%;
+max-width: 500px;
+background: var(--bg-surface-elevated);
+border: 1px solid var(--border-color);
+border-radius: var(--radius-md);
+overflow: hidden;
+}
+gostack-root [gs-component="accordion"] .gostack-components-accordion-item {
+border-bottom: 1px solid var(--border-color);
+}
+gostack-root [gs-component="accordion"] .gostack-components-accordion-item:last-child {
+border-bottom: none;
+}
+gostack-root [gs-component="accordion"] .gostack-components-accordion-trigger {
+width: 100%;
+background: transparent;
+border: none;
+padding: 18px 20px;
+text-align: left;
+color: var(--text-primary);
+font-family: var(--font-sans);
+font-weight: 600;
+font-size: 15px;
+cursor: pointer;
+display: flex;
+justify-content: space-between;
+align-items: center;
+transition: var(--transition);
+}
+gostack-root [gs-component="accordion"] .gostack-components-accordion-trigger:hover {
+background: rgba(255, 255, 255, 0.02);
+}
+gostack-root [gs-component="accordion"] .gostack-components-accordion-icon {
+transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+color: var(--text-muted);
+}
+gostack-root [gs-component="accordion"] .gostack-components-accordion-content {
+max-height: 0;
+overflow: hidden;
+transition: max-height 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+background: rgba(0, 0, 0, 0.1);
+}
+gostack-root [gs-component="accordion"] .gostack-components-accordion-content-inner {
+padding: 0 20px 20px 20px;
+color: var(--text-secondary);
+font-size: 14px;
+line-height: 1.6;
+}
+gostack-root [gs-component="accordion"] .gostack-components-accordion-item.active .gostack-components-accordion-content {
+max-height: 200px;
+}
+gostack-root [gs-component="accordion"] .gostack-components-accordion-item.active .gostack-components-accordion-icon {
+transform: rotate(180deg);
+color: var(--accent);
+}`)
+
+	ui.RegisterComponentScript("accordion", `// Toggle accordion logic
+function toggleAccordion(trigger) {
+  const item = trigger.parentElement;
+  const content = item.querySelector('.gostack-components-accordion-content');
+  
+  if (item.classList.contains('active')) {
+    item.classList.remove('active');
+    content.style.maxHeight = '0px';
+  } else {
+    document.querySelectorAll('.gostack-components-accordion-item').forEach(el => {
+      el.classList.remove('active');
+      el.querySelector('.gostack-components-accordion-content').style.maxHeight = '0px';
+    });
+    item.classList.add('active');
+    content.style.maxHeight = '200px';
+  }
+}`)
+
+	t.Register("accordion", func(w io.Writer, data any, t http.ViewTranslator) error {
+		trans := func(key string, replace ...map[string]string) string {
+			if t == nil { return ui.Escape(key) }
+			return ui.Escape(t.Trans(key, replace...))
+		}
+		transRaw := func(key string, replace ...map[string]string) string {
+			if t == nil { return key }
+			return t.Trans(key, replace...)
+		}
+		transChoice := func(key string, count int, replace ...map[string]string) string {
+			if t == nil { return ui.Escape(key) }
+			return ui.Escape(t.TransChoice(key, count, replace...))
+		}
+		_ = trans
+		_ = transRaw
+		_ = transChoice
+		if _, err := io.WriteString(w, `<div gs-component="accordion">
+<!-- #1 Accordion HTML -->
+            <div class="gostack-components-accordion">
+              <div class="gostack-components-accordion-item active">
+                <button class="gostack-components-accordion-trigger" onclick="toggleAccordion(this)">
+                  <span>Premium System Architecture</span>
+                  <span class="gostack-components-accordion-icon">▼</span>
+                </button>
+                <div class="gostack-components-accordion-content" style="max-height: 200px;">
+                  <div class="gostack-components-accordion-content-inner">
+                    A highly optimized serverless rendering pattern engineered to yield millisecond response states across all nodes.
+                  </div>
+                </div>
+              </div>
+              <div class="gostack-components-accordion-item">
+                <button class="gostack-components-accordion-trigger" onclick="toggleAccordion(this)">
+                  <span>Decentralized Databases</span>
+                  <span class="gostack-components-accordion-icon">▼</span>
+                </button>
+                <div class="gostack-components-accordion-content">
+                  <div class="gostack-components-accordion-content-inner">
+                    Multi-region automated replications preserving structural integrity and keeping dynamic operations fully resilient.
+                  </div>
+                </div>
+              </div>
+            </div>
+</div>`); err != nil { return err }
+		return nil
+	})
+
 	ui.RegisterComponentStyle("button", `gostack-root [gs-component="button"] .gs-btn {
 display: inline-flex;
 align-items: center;
@@ -46,7 +167,22 @@ gostack-root [gs-component="button"] .gs-btn-danger:hover {
 background-color: #dc2626;
 }`)
 
-	t.Register("button", func(w io.Writer, data any) error {
+	t.Register("button", func(w io.Writer, data any, t http.ViewTranslator) error {
+		trans := func(key string, replace ...map[string]string) string {
+			if t == nil { return ui.Escape(key) }
+			return ui.Escape(t.Trans(key, replace...))
+		}
+		transRaw := func(key string, replace ...map[string]string) string {
+			if t == nil { return key }
+			return t.Trans(key, replace...)
+		}
+		transChoice := func(key string, count int, replace ...map[string]string) string {
+			if t == nil { return ui.Escape(key) }
+			return ui.Escape(t.TransChoice(key, count, replace...))
+		}
+		_ = trans
+		_ = transRaw
+		_ = transChoice
 		if _, err := io.WriteString(w, `<div gs-component="button">
 <div gs-component="button">
     <!-- 
@@ -89,7 +225,22 @@ font-weight: bold;
 console.log('Counter component hydrated successfully');
 `)
 
-	t.Register("counter", func(w io.Writer, data any) error {
+	t.Register("counter", func(w io.Writer, data any, t http.ViewTranslator) error {
+		trans := func(key string, replace ...map[string]string) string {
+			if t == nil { return ui.Escape(key) }
+			return ui.Escape(t.Trans(key, replace...))
+		}
+		transRaw := func(key string, replace ...map[string]string) string {
+			if t == nil { return key }
+			return t.Trans(key, replace...)
+		}
+		transChoice := func(key string, count int, replace ...map[string]string) string {
+			if t == nil { return ui.Escape(key) }
+			return ui.Escape(t.TransChoice(key, count, replace...))
+		}
+		_ = trans
+		_ = transRaw
+		_ = transChoice
 		if _, err := io.WriteString(w, `<div gs-component="counter">
 <div gs-data='{"count": 0}'>
     <button gs-click="count--">-</button>
@@ -185,7 +336,22 @@ text-decoration: underline;
 
 	ui.RegisterComponentScript("login", `// Login client scripts`)
 
-	t.Register("login", func(w io.Writer, data any) error {
+	t.Register("login", func(w io.Writer, data any, t http.ViewTranslator) error {
+		trans := func(key string, replace ...map[string]string) string {
+			if t == nil { return ui.Escape(key) }
+			return ui.Escape(t.Trans(key, replace...))
+		}
+		transRaw := func(key string, replace ...map[string]string) string {
+			if t == nil { return key }
+			return t.Trans(key, replace...)
+		}
+		transChoice := func(key string, count int, replace ...map[string]string) string {
+			if t == nil { return ui.Escape(key) }
+			return ui.Escape(t.TransChoice(key, count, replace...))
+		}
+		_ = trans
+		_ = transRaw
+		_ = transChoice
 		if _, err := io.WriteString(w, `<div gs-component="login">
 <div class="auth-card">
 	<h2>Login</h2>
@@ -282,7 +448,22 @@ transform: scale(1);
 }
 }`)
 
-	t.Register("modal", func(w io.Writer, data any) error {
+	t.Register("modal", func(w io.Writer, data any, t http.ViewTranslator) error {
+		trans := func(key string, replace ...map[string]string) string {
+			if t == nil { return ui.Escape(key) }
+			return ui.Escape(t.Trans(key, replace...))
+		}
+		transRaw := func(key string, replace ...map[string]string) string {
+			if t == nil { return key }
+			return t.Trans(key, replace...)
+		}
+		transChoice := func(key string, count int, replace ...map[string]string) string {
+			if t == nil { return ui.Escape(key) }
+			return ui.Escape(t.TransChoice(key, count, replace...))
+		}
+		_ = trans
+		_ = transRaw
+		_ = transChoice
 		if _, err := io.WriteString(w, `<div gs-component="modal">
 <div gs-component="modal">
     <!-- Overlay -->
@@ -403,7 +584,22 @@ text-decoration: underline;
 
 	ui.RegisterComponentScript("register", `// Register client scripts`)
 
-	t.Register("register", func(w io.Writer, data any) error {
+	t.Register("register", func(w io.Writer, data any, t http.ViewTranslator) error {
+		trans := func(key string, replace ...map[string]string) string {
+			if t == nil { return ui.Escape(key) }
+			return ui.Escape(t.Trans(key, replace...))
+		}
+		transRaw := func(key string, replace ...map[string]string) string {
+			if t == nil { return key }
+			return t.Trans(key, replace...)
+		}
+		transChoice := func(key string, count int, replace ...map[string]string) string {
+			if t == nil { return ui.Escape(key) }
+			return ui.Escape(t.TransChoice(key, count, replace...))
+		}
+		_ = trans
+		_ = transRaw
+		_ = transChoice
 		if _, err := io.WriteString(w, `<div gs-component="register">
 <div class="auth-card">
 	<h2>Register</h2>

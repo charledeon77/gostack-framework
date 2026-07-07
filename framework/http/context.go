@@ -64,7 +64,7 @@ func (c *Context) Get(key string) any {
 //   - An error if template reading, compilation, or streaming fails.
 func (c *Context) Render(viewName string, data any) error {
 	c.Writer.WriteHeader(http.StatusOK)
-	return c.Tempose.Render(c.Writer, viewName, data)
+	return c.Tempose.Render(c.Writer, viewName, data, c)
 }
 
 // JSON standardizes the API response delivery pipeline.
@@ -107,11 +107,34 @@ func (c *Context) Post(key string) string {
 	return c.Request.PostFormValue(key)
 }
 
-// Locale extracts the client language preference, checking the URL query parameter
-// and falling back to the standard HTTP Accept-Language header.
+// Locale extracts the client language preference, resolving it in priority order:
+// 1. Request-scoped context overrides.
+// 2. URL query parameter (e.g. ?lang=es).
+// 3. Active session context (if initialized).
+// 4. Client cookies ("locale").
+// 5. Standard HTTP Accept-Language header.
+// 6. Fallback default ("en").
 func (c *Context) Locale() string {
+	if langVal := c.Get("locale"); langVal != nil {
+		if lang, ok := langVal.(string); ok && lang != "" {
+			return lang
+		}
+	}
 	if lang := c.Query("lang"); lang != "" {
 		return lang
+	}
+	if sessVal := c.Get("session"); sessVal != nil {
+		type sessionInterface interface {
+			Get(key string) any
+		}
+		if sess, ok := sessVal.(sessionInterface); ok {
+			if lang, ok := sess.Get("locale").(string); ok && lang != "" {
+				return lang
+			}
+		}
+	}
+	if cookie, err := c.Request.Cookie("locale"); err == nil && cookie.Value != "" {
+		return cookie.Value
 	}
 	if accept := c.Request.Header.Get("Accept-Language"); accept != "" {
 		if len(accept) >= 2 {
@@ -119,6 +142,20 @@ func (c *Context) Locale() string {
 		}
 	}
 	return "en"
+}
+
+// SetLocale overrides the request-scoped locale and attempts to persist it
+// in the active session and client cookies if available.
+func (c *Context) SetLocale(locale string) {
+	c.Set("locale", locale)
+	if sessVal := c.Get("session"); sessVal != nil {
+		type sessionInterface interface {
+			Set(key string, val any)
+		}
+		if sess, ok := sessVal.(sessionInterface); ok {
+			sess.Set("locale", locale)
+		}
+	}
 }
 
 // Trans translates a message key using the registered translator interface
@@ -140,6 +177,27 @@ func (c *Context) Trans(key string, replace ...map[string]string) string {
 		repl = replace[0]
 	}
 	return t.Trans(c.Locale(), key, repl)
+}
+
+// TransChoice translates a message key using pluralization options
+// based on a count, interpolating variables.
+func (c *Context) TransChoice(key string, count int, replace ...map[string]string) string {
+	transVal := c.Get("translator")
+	if transVal == nil {
+		return key
+	}
+	type choiceTranslator interface {
+		TransChoice(locale string, key string, count int, replace map[string]string) string
+	}
+	t, ok := transVal.(choiceTranslator)
+	if !ok {
+		return key
+	}
+	var repl map[string]string
+	if len(replace) > 0 {
+		repl = replace[0]
+	}
+	return t.TransChoice(c.Locale(), key, count, repl)
 }
 
 // Param retrieves a path/wildcard parameter extracted from the matched URL pattern (e.g. for /users/:id).

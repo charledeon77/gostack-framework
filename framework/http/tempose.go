@@ -11,13 +11,19 @@ import (
 	"strings"
 )
 
+// ViewTranslator defines the translation interface that compiled templates consume.
+type ViewTranslator interface {
+	Trans(key string, replace ...map[string]string) string
+	TransChoice(key string, count int, replace ...map[string]string) string
+}
+
 // ViewFunc defines the functional signature for a compiled view.
 // In GoStack, we treat HTML templates as executable Go functions rather than 
 // interpreted strings. This provides two massive advantages:
 // 1. Compile-time safety: Any syntax error in logic is caught during the build.
 // 2. Performance: Avoiding reflection and parsing at runtime ensures O(1) 
 //    dispatching, reaching parity with the world's fastest web frameworks.
-type ViewFunc func(w io.Writer, data any) error
+type ViewFunc func(w io.Writer, data any, t ViewTranslator) error
 
 // Tempose acts as a centralized registry for all application views.
 //
@@ -58,14 +64,14 @@ func (t *Tempose) Register(name string, fn ViewFunc) {
 // injects the Master Asset Block (CSS & GlideJS runtime) right before </head> to hydrate the page.
 //
 // Returns an error if the requested view name has not been registered.
-func (t *Tempose) Render(w io.Writer, name string, data any) error {
+func (t *Tempose) Render(w io.Writer, name string, data any, trans ViewTranslator) error {
 	view, ok := t.views[name]
 	if !ok {
 		return fmt.Errorf("tempose: view '%s' not registered in the system", name)
 	}
 	
 	var buf bytes.Buffer
-	if err := view(&buf, data); err != nil {
+	if err := view(&buf, data, trans); err != nil {
 		return err
 	}
 	

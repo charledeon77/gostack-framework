@@ -113,6 +113,9 @@ func (t *FileTranslator) Trans(locale string, key string, replace map[string]str
 			}
 		}
 		if !exists {
+			if os.Getenv("APP_ENV") != "production" {
+				fmt.Printf("[Transios Warning] Missing translation key: %q for locale: %q\n", key, locale)
+			}
 			return key
 		}
 	}

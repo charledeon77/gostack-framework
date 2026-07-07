@@ -55,11 +55,11 @@ Modern **Web development** in **Go** is fragmented by design. A typical Go Web p
 
 **GoStack** is the first complete end-to-end framework solution for building **FullStack Web applications** in Go. It handles the:
 
-1.) ✅ **Server** *(Citadel)* — IoC service container and unified bootstrapping kernel.
+1.) ✅ **Server & Container** *(Citadel & Anchor)* — unified bootstrapping kernel and IoC service container.
 
 2.) ✅ **Middleware** *(Navigator)* — pipeline-aware routing engine with onion-style middleware.
 
-3.) ✅ **ORM** *(Crafter)* — compile-time safe Active Record ORM with model hooks and hydration.
+3.) ✅ **ORM & Relations** *(Crafter & Conflex)* — compile-time safe Active Record ORM with model hooks, hydration, and relationship mapping.
 
 4.) ✅ **Schema Builder** *(Grapher)* — declarative fluent schema builder for database definitions.
 
@@ -89,7 +89,13 @@ Modern **Web development** in **Go** is fragmented by design. A typical Go Web p
 
 17.) ✅ **Config** *(GoCon)* — environment-based configuration management.
 
-18.) ✅ **Everything** else in-between, and the glue that connects them — all within the **Go** ecosystem.
+18.) ✅ **Validation** *(Validator)* — rule-based request payload validator middleware.
+
+19.) ✅ **Real-Time WebSockets** *(GowSocket)* — bi-directional WebSocket communication hub.
+
+20.) ✅ **Internationalization** *(Transios)* — dynamic localization and translation engine.
+
+21.) ✅ **Everything** else in-between, and the glue that connects them — all within the **Go** ecosystem.
 
 Everything in **One binary, One mental model, One language**.   
 
@@ -161,29 +167,34 @@ Every major capability in GoStack has a branded name:
 
 | Branded Name | What It Is | Package |
 | :--- | :--- | :--- |
-| **Citadel** | Application Container & DI Bootstrap | `framework/foundation` |
+| **Citadel** | Application Bootloader & Unified Kernel | `framework/foundation` |
+| **Anchor** | IoC Service Container & Dependency Injection | `framework/foundation` |
 | **Navigator** | HTTP Router | `framework/http` |
 | **Bridge** | Middleware Pipeline (Onion Architecture) | `framework/http` |
-| **Crafter** | Query Builder & Reflective Hydrator | `framework/query` |
-| **Traveller** | Database Migration Engine | `framework/migrate` |
-| **Grapher** | Schema Builder (fluent column definitions) | `framework/schema` |
+| **Crafter** | Query Builder & Reflective Hydrator | `framework/database` |
+| **Conflex** | ORM Relationship Mapper | `framework/database` |
+| **Traveller** | Database Migration Engine | `framework/database/migrate` |
+| **Grapher** | Schema Builder (fluent column definitions) | `framework/database` |
 | **Guard** | Authentication (session-based) | `framework/auth` |
 | **Mory** | Generic-typed In-Memory Cache | `framework/cache` |
-| **Sequence** | Background Job Queue | `framework/queue` |
-| **Spark** | Pub/Sub Event Dispatcher | `framework/events` |
+| **Sequence** | Background Job Queue | `framework/worker/queue` |
+| **Spark** | Pub/Sub Event Dispatcher | `framework/foundation/events` |
 | **GoMail** | SMTP Mailer | `framework/mail` |
 | **Vault** | File Storage (Local + S3) | `framework/storage` |
-| **Planner** | Cron Task Scheduler | `framework/schedule` |
-| **SocialHub** | OAuth Social Login | `framework/socialhub` |
+| **Planner** | Cron Task Scheduler | `framework/worker/schedule` |
+| **SocialHub** | OAuth Social Login | `framework/http/socialhub` |
 | **GoDash** | Admin Panel & Sequence Monitor | `framework/admin` |
 | **Tempose** | AOT UI Component Compiler | `framework/ui` |
-| **Glide** | Client-Side Reactive Runtime (`gs-*` directives) | `framework/http/runtime.go` |
+| **Glide** | Client-Side Reactive Runtime (`gs-*` directives) | `framework/ui/glide.go` |
 | **Gost** | CLI Command Runner | `framework/console` |
 | **Contract** | Interface Definitions (driver contracts) | `framework/contract` |
-| **GoCon** | Environment Config Manager (`.env` parser) | `framework/config` |
-| **GoMon** | MongoDB Integration (NoSQL Document Store) | `framework/database/mongodb` |
-| **Nexus** | Neo4j Graph Database Integration | `framework/database/neo4j` |
-| **Aether** | Cassandra Wide-Column Database Integration | `framework/database/cassandra` |
+| **GoCon** | Environment Config Manager (`.env` parser) | `framework/foundation/config` |
+| **Validator** | Request Validation Engine | `framework/http` |
+| **GowSocket** | Real-Time WebSocket Hub | `framework/http` |
+| **Transios** | Localization & Translation Engine | `framework/foundation/lang` |
+| **GoMon** | MongoDB Integration (NoSQL Document Store) | `framework/database` |
+| **Nexus** | Neo4j Graph Database Integration | `framework/database` |
+| **Aether** | Cassandra Wide-Column Database Integration | `framework/database` |
 
 ## 📦 Official Extensions
 

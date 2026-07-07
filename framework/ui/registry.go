@@ -222,7 +222,7 @@ func WriteMasterAssetBlock(w io.Writer) {
 
 	// ── Styles: core base CSS + all component-scoped styles ──
 	_, _ = io.WriteString(w, "<style id=\"gostack-core-styles\">\n")
-	_, _ = io.WriteString(w, CoreBaseCSS)
+	_, _ = io.WriteString(w, GoStackCoreCSS)
 	_, _ = io.WriteString(w, "\n")
 	for _, css := range styleRegistry {
 		_, _ = io.WriteString(w, css)

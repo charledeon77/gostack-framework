@@ -303,4 +303,7 @@ type Translator interface {
 	// Trans resolves the localized string for a key in a given locale.
 	// The replace map holds key-value placeholders to dynamically interpolate (e.g. replacing {{name}} with value).
 	Trans(locale string, key string, replace map[string]string) string
+
+	// TransChoice resolves a pluralized translation key based on a numeric count.
+	TransChoice(locale string, key string, count int, replace map[string]string) string
 }

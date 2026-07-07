@@ -5,29 +5,50 @@ This ledger details the step-by-step history, architectural justifications, and 
 ### GoStack Subsystem Brand Registry
 | Brand | Subsystem | Package |
 | :--- | :--- | :--- |
-| **Citadel** | Application Container & DI Bootstrap | `framework/foundation` |
+| **Citadel** | Application Bootloader & Unified Kernel | `framework/foundation` |
+| **Anchor** | IoC Service Container & Dependency Injection | `framework/foundation` |
 | **Navigator** | HTTP Router | `framework/http` |
-| **Bridge** | Middleware Pipeline | `framework/http` |
-| **Crafter** | Query Builder & Hydrator | `framework/query` |
-| **Traveller** | Migration Engine | `framework/migrate` |
-| **Grapher** | Schema Builder | `framework/schema` |
-| **Guard** | Authentication | `framework/auth` |
-| **Mory** | In-Memory Cache | `framework/cache` |
-| **Sequence** | Background Job Queue | `framework/queue` |
-| **Spark** | Pub/Sub Event Dispatcher | `framework/events` |
+| **Bridge** | Middleware Pipeline (Onion Architecture) | `framework/http` |
+| **Crafter** | Query Builder & Reflective Hydrator | `framework/database` |
+| **Conflex** | ORM Relationship Mapper | `framework/database` |
+| **Traveller** | Database Migration Engine | `framework/database/migrate` |
+| **Grapher** | Schema Builder (fluent column definitions) | `framework/database` |
+| **Guard** | Authentication (session-based) | `framework/auth` |
+| **Mory** | Generic-typed In-Memory Cache | `framework/cache` |
+| **Sequence** | Background Job Queue | `framework/worker/queue` |
+| **Spark** | Pub/Sub Event Dispatcher | `framework/foundation/events` |
 | **GoMail** | SMTP Mailer | `framework/mail` |
-| **Vault** | File Storage | `framework/storage` |
-| **Planner** | Cron Task Scheduler | `framework/schedule` |
-| **SocialHub** | OAuth Social Login | `framework/socialhub` |
-| **GoDash** | Admin Panel | `framework/admin` |
+| **Vault** | File Storage (Local + S3) | `framework/storage` |
+| **Planner** | Cron Task Scheduler | `framework/worker/schedule` |
+| **SocialHub** | OAuth Social Login | `framework/http/socialhub` |
+| **GoDash** | Admin Panel & Sequence Monitor | `framework/admin` |
 | **Tempose** | AOT UI Component Compiler | `framework/ui` |
-| **Glide** | Client-Side Reactive Runtime | `framework/ui/glide.go` |
+| **Glide** | Client-Side Reactive Runtime (`gs-*` directives) | `framework/ui/glide.go` |
 | **Gost** | CLI Command Runner | `framework/console` |
-| **Contract** | Interface Definitions | `framework/contract` |
-| **GoCon** | Environment Config Manager | `framework/config` |
-| **GoMon** | MongoDB Integration Subsystem | `framework/database/mongodb` |
-| **Nexus** | Neo4j Graph Database Integration | `framework/database/neo4j` |
-| **Aether** | Cassandra Wide-Column Database Integration | `framework/database/cassandra` |
+| **Contract** | Interface Definitions (driver contracts) | `framework/contract` |
+| **GoCon** | Environment Config Manager (`.env` parser) | `framework/foundation/config` |
+| **Validator** | Request Validation Engine | `framework/http` |
+| **GowSocket** | Real-Time WebSocket Hub | `framework/http` |
+| **Transios** | Localization & Translation Engine | `framework/foundation/lang` |
+| **GoMon** | MongoDB Integration (NoSQL Document Store) | `framework/database` |
+| **Nexus** | Neo4j Graph Database Integration | `framework/database` |
+| **Aether** | Cassandra Wide-Column Database Integration | `framework/database` |
+
+## [v1.0.7] - Transios Internationalization Subsystem & Preview CLI Cleanup
+*Released in July 2026*
+
+### Internationalization (Transios)
+*   **Request-Scoped Engine**: Integrated request-scoped language resolver middleware intercepting Accept-Language, query strings, sessions, and cookies.
+*   **Template Interpolation**: Built AOT-compiled local translation functions (`trans`, `transChoice`, `transRaw`) directly inside component render contexts.
+*   **Pluralization Ranges**: Supported plural range selector gates (e.g. `{0} no items|[1,10] a few items|[11,*] many items`).
+*   **Missing Key Warnings**: Added development warning flags to log missing translation keys in the console, falling back to raw keys in production.
+
+### Component Preview Cleanup
+*   **Decoupled Preview Server**: Removed the local preview subcommand and dependencies to make the GoStack core framework completely standalone.
+
+### Subsystem Registry & Branding
+*   **Subsystem Brand Names**: Registered official brand definitions for **Anchor** (IoC container), **Conflex** (relationship mapper), **Validator** (validation middleware), and **GowSocket** (WebSockets).
+*   **Interactive CLI Lookup (`gost lang:search`)**: Created a command utilizing the standard Unicode CLDR libraries and dynamic flag generators to search language codes and emojis directly in the console.
 
 ## [v1.0.6] - Unified Glide Reactivity Engine & Automatic Layout Injection
 *Released in July 2026*

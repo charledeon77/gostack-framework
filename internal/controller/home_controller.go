@@ -23,6 +23,11 @@ func NewHomeController(db contract.Database) *HomeController {
 	}
 }
 
+// Index renders the landing page of the application.
+func (c *HomeController) Index(ctx *http.Context) {
+	_ = ctx.Render("landing", nil)
+}
+
 // Users processes requests for the user list resource.
 // It acts as the final handler for the "/users" endpoint.
 //

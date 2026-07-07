@@ -1,0 +1,56 @@
+.gostack-components-accordion {
+      width: 100%;
+      max-width: 500px;
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+    }
+    .gostack-components-accordion-item {
+      border-bottom: 1px solid var(--border-color);
+    }
+    .gostack-components-accordion-item:last-child {
+      border-bottom: none;
+    }
+    .gostack-components-accordion-trigger {
+      width: 100%;
+      background: transparent;
+      border: none;
+      padding: 18px 20px;
+      text-align: left;
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      font-weight: 600;
+      font-size: 15px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: var(--transition);
+    }
+    .gostack-components-accordion-trigger:hover {
+      background: rgba(255, 255, 255, 0.02);
+    }
+    .gostack-components-accordion-icon {
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      color: var(--text-muted);
+    }
+    .gostack-components-accordion-content {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      background: rgba(0, 0, 0, 0.1);
+    }
+    .gostack-components-accordion-content-inner {
+      padding: 0 20px 20px 20px;
+      color: var(--text-secondary);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .gostack-components-accordion-item.active .gostack-components-accordion-content {
+      max-height: 200px;
+    }
+    .gostack-components-accordion-item.active .gostack-components-accordion-icon {
+      transform: rotate(180deg);
+      color: var(--accent);
+    }

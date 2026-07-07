@@ -117,7 +117,24 @@ func (c *AssetCompiler) Run() error {
 			if hasFmt {
 				needsFmt = true
 			}
-			registrations.WriteString(fmt.Sprintf("\tt.Register(\"%s\", func(w io.Writer, data any) error {\n%s\t\treturn nil\n\t})\n\n", name, compiledHTML))
+			registrations.WriteString(fmt.Sprintf(
+				"\tt.Register(\"%s\", func(w io.Writer, data any, t http.ViewTranslator) error {\n"+
+				"\t\ttrans := func(key string, replace ...map[string]string) string {\n"+
+				"\t\t\tif t == nil { return ui.Escape(key) }\n"+
+				"\t\t\treturn ui.Escape(t.Trans(key, replace...))\n"+
+				"\t\t}\n"+
+				"\t\ttransRaw := func(key string, replace ...map[string]string) string {\n"+
+				"\t\t\tif t == nil { return key }\n"+
+				"\t\t\treturn t.Trans(key, replace...)\n"+
+				"\t\t}\n"+
+				"\t\ttransChoice := func(key string, count int, replace ...map[string]string) string {\n"+
+				"\t\t\tif t == nil { return ui.Escape(key) }\n"+
+				"\t\t\treturn ui.Escape(t.TransChoice(key, count, replace...))\n"+
+				"\t\t}\n"+
+				"\t\t_ = trans\n"+
+				"\t\t_ = transRaw\n"+
+				"\t\t_ = transChoice\n"+
+				"%s\t\treturn nil\n\t})\n\n", name, compiledHTML))
 		}
 	}
 

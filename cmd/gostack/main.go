@@ -51,7 +51,7 @@ func main() {
 	kernel := console.NewKernel()
 	kernel.Register(&console.NewCommand{})
 	kernel.Register(&console.ServeCommand{})
-	kernel.Register(&console.PreviewCommand{})
+	kernel.Register(&console.LangSearchCommand{})
 	kernel.Register(&console.MigrateCommand{})
 	kernel.Register(&console.RollbackCommand{})
 	kernel.Register(&console.MakeMigrationCommand{})
