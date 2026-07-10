@@ -34,6 +34,18 @@ This ledger details the step-by-step history, architectural justifications, and 
 | **Nexus** | Neo4j Graph Database Integration | `framework/database` |
 | **Aether** | Cassandra Wide-Column Database Integration | `framework/database` |
 
+## [v1.0.8] - UI Component CSS Scoping Engine Fix & Encapsulation Restore
+*Released in July 2026*
+
+### UI Compiler Scoping & Performance Recovery
+*   **Encapsulation Restoration**: Corrected the styling compiler scoping prefix from the non-existent `gostack-root [gs-component="componentName"]` to the wrapper attribute selector `[gs-component="componentName"]`. This resolves a critical mismatch that broke CSS scoping out-of-the-box.
+*   **Production & UX Protection**: Solved the production rendering bug where all scoped component styles were discarded by browsers. This eliminates layout breakage and styled component failures across client viewports.
+*   **Single-Binary & Asset Bundle Scalability**: Restored GoStack's O(1) single-binary performance philosophy. Developers no longer need to bypass the compiler by linking raw static files manually, reducing HTTP connection overhead, network latency, and preventing Flash of Unstyled Content (FOUC).
+*   **Style Engine Matching Performance**: Replaced arbitrary tag lookups with attribute-based sibling-descendant matches (`[gs-component="name"] selector`), allowing browser engines to leverage fast internal CSS hash tables for O(1) selector lookup during paint steps.
+*   **Automated Scoping Verification**: Added unit test coverage `TestAssetCompiler_ScopeCSS` to prevent regression.
+
+---
+
 ## [v1.0.7] - Transios Internationalization Subsystem & Preview CLI Cleanup
 *Released in July 2026*
 

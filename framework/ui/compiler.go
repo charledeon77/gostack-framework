@@ -523,7 +523,7 @@ func (c *AssetCompiler) preprocessLayouts(rawHTML string) (string, error) {
 // selector prefix to every rule block, preventing styles from leaking globally.
 func (c *AssetCompiler) scopeCSS(componentName, rawCSS string) string {
 	var scoped []string
-	prefix := fmt.Sprintf("gostack-root [gs-component=\"%s\"]", componentName)
+	prefix := fmt.Sprintf("[gs-component=\"%s\"]", componentName)
 
 	lines := strings.Split(rawCSS, "\n")
 	for _, line := range lines {

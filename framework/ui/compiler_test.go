@@ -73,3 +73,16 @@ func TestAssetCompiler_CompileHTMLDirectives(t *testing.T) {
 		t.Errorf("Expected compiled output to contain local scope variables injection, got:\n%s", compiledForeach)
 	}
 }
+
+func TestAssetCompiler_ScopeCSS(t *testing.T) {
+	c := NewAssetCompiler("", "")
+	rawCSS := `.btn { color: red; }
+#title { font-size: 20px; }`
+	expected := `[gs-component="test"] .btn { color: red; }
+[gs-component="test"] #title { font-size: 20px; }`
+
+	scoped := c.scopeCSS("test", rawCSS)
+	if strings.TrimSpace(scoped) != strings.TrimSpace(expected) {
+		t.Errorf("Expected scoped CSS to be:\n%s\n\nGot:\n%s", expected, scoped)
+	}
+}

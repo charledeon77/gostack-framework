@@ -11,7 +11,7 @@ import (
 
 // RegisterComponents binds all compiled component views, styles, and scripts.
 func RegisterComponents(t *http.Tempose) {
-	ui.RegisterComponentStyle("accordion", `gostack-root [gs-component="accordion"] .gostack-components-accordion {
+	ui.RegisterComponentStyle("accordion", `[gs-component="accordion"] .gostack-components-accordion {
 width: 100%;
 max-width: 500px;
 background: var(--bg-surface-elevated);
@@ -19,13 +19,13 @@ border: 1px solid var(--border-color);
 border-radius: var(--radius-md);
 overflow: hidden;
 }
-gostack-root [gs-component="accordion"] .gostack-components-accordion-item {
+[gs-component="accordion"] .gostack-components-accordion-item {
 border-bottom: 1px solid var(--border-color);
 }
-gostack-root [gs-component="accordion"] .gostack-components-accordion-item:last-child {
+[gs-component="accordion"] .gostack-components-accordion-item:last-child {
 border-bottom: none;
 }
-gostack-root [gs-component="accordion"] .gostack-components-accordion-trigger {
+[gs-component="accordion"] .gostack-components-accordion-trigger {
 width: 100%;
 background: transparent;
 border: none;
@@ -41,29 +41,29 @@ justify-content: space-between;
 align-items: center;
 transition: var(--transition);
 }
-gostack-root [gs-component="accordion"] .gostack-components-accordion-trigger:hover {
+[gs-component="accordion"] .gostack-components-accordion-trigger:hover {
 background: rgba(255, 255, 255, 0.02);
 }
-gostack-root [gs-component="accordion"] .gostack-components-accordion-icon {
+[gs-component="accordion"] .gostack-components-accordion-icon {
 transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 color: var(--text-muted);
 }
-gostack-root [gs-component="accordion"] .gostack-components-accordion-content {
+[gs-component="accordion"] .gostack-components-accordion-content {
 max-height: 0;
 overflow: hidden;
 transition: max-height 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 background: rgba(0, 0, 0, 0.1);
 }
-gostack-root [gs-component="accordion"] .gostack-components-accordion-content-inner {
+[gs-component="accordion"] .gostack-components-accordion-content-inner {
 padding: 0 20px 20px 20px;
 color: var(--text-secondary);
 font-size: 14px;
 line-height: 1.6;
 }
-gostack-root [gs-component="accordion"] .gostack-components-accordion-item.active .gostack-components-accordion-content {
+[gs-component="accordion"] .gostack-components-accordion-item.active .gostack-components-accordion-content {
 max-height: 200px;
 }
-gostack-root [gs-component="accordion"] .gostack-components-accordion-item.active .gostack-components-accordion-icon {
+[gs-component="accordion"] .gostack-components-accordion-item.active .gostack-components-accordion-icon {
 transform: rotate(180deg);
 color: var(--accent);
 }`)
@@ -132,7 +132,7 @@ function toggleAccordion(trigger) {
 		return nil
 	})
 
-	ui.RegisterComponentStyle("button", `gostack-root [gs-component="button"] .gs-btn {
+	ui.RegisterComponentStyle("button", `[gs-component="button"] .gs-btn {
 display: inline-flex;
 align-items: center;
 justify-content: center;
@@ -144,26 +144,26 @@ border: none;
 cursor: pointer;
 transition: all 0.2s ease-in-out;
 }
-gostack-root [gs-component="button"] .gs-btn-primary {
+[gs-component="button"] .gs-btn-primary {
 background-color: #0f172a;
 color: #ffffff;
 }
-gostack-root [gs-component="button"] .gs-btn-primary:hover {
+[gs-component="button"] .gs-btn-primary:hover {
 background-color: #334155;
 }
-gostack-root [gs-component="button"] .gs-btn-secondary {
+[gs-component="button"] .gs-btn-secondary {
 background-color: #f1f5f9;
 color: #0f172a;
 border: 1px solid #e2e8f0;
 }
-gostack-root [gs-component="button"] .gs-btn-secondary:hover {
+[gs-component="button"] .gs-btn-secondary:hover {
 background-color: #e2e8f0;
 }
-gostack-root [gs-component="button"] .gs-btn-danger {
+[gs-component="button"] .gs-btn-danger {
 background-color: #ef4444;
 color: #ffffff;
 }
-gostack-root [gs-component="button"] .gs-btn-danger:hover {
+[gs-component="button"] .gs-btn-danger:hover {
 background-color: #dc2626;
 }`)
 
@@ -204,7 +204,7 @@ background-color: #dc2626;
 		return nil
 	})
 
-	ui.RegisterComponentStyle("counter", `gostack-root [gs-component="counter"] button {
+	ui.RegisterComponentStyle("counter", `[gs-component="counter"] button {
 background-color: #0076ff;
 color: white;
 border: none;
@@ -212,10 +212,10 @@ padding: 0.5rem 1rem;
 border-radius: 4px;
 cursor: pointer;
 }
-gostack-root [gs-component="counter"] button:hover {
+[gs-component="counter"] button:hover {
 background-color: #0056b3;
 }
-gostack-root [gs-component="counter"] span {
+[gs-component="counter"] span {
 font-size: 1.5rem;
 margin: 0 1rem;
 font-weight: bold;
@@ -251,7 +251,7 @@ console.log('Counter component hydrated successfully');
 		return nil
 	})
 
-	ui.RegisterComponentStyle("login", `gostack-root [gs-component="login"] .auth-card {
+	ui.RegisterComponentStyle("login", `[gs-component="login"] .auth-card {
 max-width: 400px;
 margin: 50px auto;
 padding: 30px;
@@ -260,24 +260,24 @@ border-radius: 12px;
 box-shadow: 0 4px 20px rgba(0,0,0,0.08);
 font-family: 'Inter', sans-serif;
 }
-gostack-root [gs-component="login"] .auth-card h2 {
+[gs-component="login"] .auth-card h2 {
 margin-top: 0;
 margin-bottom: 24px;
 color: #1a1a1a;
 font-weight: 700;
 text-align: center;
 }
-gostack-root [gs-component="login"] .form-group {
+[gs-component="login"] .form-group {
 margin-bottom: 20px;
 }
-gostack-root [gs-component="login"] .form-group label {
+[gs-component="login"] .form-group label {
 display: block;
 margin-bottom: 8px;
 font-size: 14px;
 font-weight: 500;
 color: #4a4a4a;
 }
-gostack-root [gs-component="login"] .form-group input {
+[gs-component="login"] .form-group input {
 width: 100%;
 padding: 12px 16px;
 border: 1px solid #dcdcdc;
@@ -286,11 +286,11 @@ box-sizing: border-box;
 font-size: 15px;
 transition: border-color 0.2s;
 }
-gostack-root [gs-component="login"] .form-group input:focus {
+[gs-component="login"] .form-group input:focus {
 outline: none;
 border-color: #4f46e5;
 }
-gostack-root [gs-component="login"] .btn {
+[gs-component="login"] .btn {
 display: block;
 width: 100%;
 padding: 14px;
@@ -303,34 +303,34 @@ font-weight: 600;
 cursor: pointer;
 transition: background-color 0.2s;
 }
-gostack-root [gs-component="login"] .btn:hover {
+[gs-component="login"] .btn:hover {
 background: #4338ca;
 }
-gostack-root [gs-component="login"] .alert {
+[gs-component="login"] .alert {
 padding: 12px;
 border-radius: 8px;
 margin-bottom: 20px;
 font-size: 14px;
 }
-gostack-root [gs-component="login"] .alert:empty {
+[gs-component="login"] .alert:empty {
 display: none;
 }
-gostack-root [gs-component="login"] .alert-danger {
+[gs-component="login"] .alert-danger {
 background: #fee2e2;
 color: #991b1b;
 }
-gostack-root [gs-component="login"] .auth-switch {
+[gs-component="login"] .auth-switch {
 margin-top: 24px;
 text-align: center;
 font-size: 14px;
 color: #6b7280;
 }
-gostack-root [gs-component="login"] .auth-switch a {
+[gs-component="login"] .auth-switch a {
 color: #4f46e5;
 text-decoration: none;
 font-weight: 500;
 }
-gostack-root [gs-component="login"] .auth-switch a:hover {
+[gs-component="login"] .auth-switch a:hover {
 text-decoration: underline;
 }`)
 
@@ -378,7 +378,7 @@ text-decoration: underline;
 		return nil
 	})
 
-	ui.RegisterComponentStyle("modal", `gostack-root [gs-component="modal"] .gs-modal-overlay {
+	ui.RegisterComponentStyle("modal", `[gs-component="modal"] .gs-modal-overlay {
 position: fixed;
 top: 0;
 left: 0;
@@ -390,7 +390,7 @@ align-items: center;
 justify-content: center;
 z-index: 50;
 }
-gostack-root [gs-component="modal"] .gs-modal-content {
+[gs-component="modal"] .gs-modal-content {
 background-color: #ffffff;
 border-radius: 0.5rem;
 box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
@@ -402,17 +402,17 @@ flex-direction: column;
 gap: 1rem;
 animation: gs-modal-in 0.2s ease-out forwards;
 }
-gostack-root [gs-component="modal"] .gs-modal-header {
+[gs-component="modal"] .gs-modal-header {
 display: flex;
 justify-content: space-between;
 align-items: center;
 }
-gostack-root [gs-component="modal"] .gs-modal-title {
+[gs-component="modal"] .gs-modal-title {
 font-size: 1.125rem;
 font-weight: 600;
 margin: 0;
 }
-gostack-root [gs-component="modal"] .gs-modal-close {
+[gs-component="modal"] .gs-modal-close {
 background: none;
 border: none;
 font-size: 1.5rem;
@@ -421,28 +421,28 @@ cursor: pointer;
 color: #64748b;
 transition: color 0.2s;
 }
-gostack-root [gs-component="modal"] .gs-modal-close:hover {
+[gs-component="modal"] .gs-modal-close:hover {
 color: #0f172a;
 }
-gostack-root [gs-component="modal"] .gs-modal-body {
+[gs-component="modal"] .gs-modal-body {
 font-size: 0.875rem;
 color: #475569;
 }
-gostack-root [gs-component="modal"] .gs-modal-footer {
+[gs-component="modal"] .gs-modal-footer {
 display: flex;
 justify-content: flex-end;
 gap: 0.5rem;
 margin-top: 0.5rem;
 }
-gostack-root [gs-component="modal"] .gs-hidden {
+[gs-component="modal"] .gs-hidden {
 display: none !important;
 }
 @keyframes gs-modal-in {
-gostack-root [gs-component="modal"] from {
+[gs-component="modal"] from {
 opacity: 0;
 transform: scale(0.95);
 }
-gostack-root [gs-component="modal"] to {
+[gs-component="modal"] to {
 opacity: 1;
 transform: scale(1);
 }
@@ -499,7 +499,7 @@ transform: scale(1);
 		return nil
 	})
 
-	ui.RegisterComponentStyle("register", `gostack-root [gs-component="register"] .auth-card {
+	ui.RegisterComponentStyle("register", `[gs-component="register"] .auth-card {
 max-width: 400px;
 margin: 50px auto;
 padding: 30px;
@@ -508,24 +508,24 @@ border-radius: 12px;
 box-shadow: 0 4px 20px rgba(0,0,0,0.08);
 font-family: 'Inter', sans-serif;
 }
-gostack-root [gs-component="register"] .auth-card h2 {
+[gs-component="register"] .auth-card h2 {
 margin-top: 0;
 margin-bottom: 24px;
 color: #1a1a1a;
 font-weight: 700;
 text-align: center;
 }
-gostack-root [gs-component="register"] .form-group {
+[gs-component="register"] .form-group {
 margin-bottom: 20px;
 }
-gostack-root [gs-component="register"] .form-group label {
+[gs-component="register"] .form-group label {
 display: block;
 margin-bottom: 8px;
 font-size: 14px;
 font-weight: 500;
 color: #4a4a4a;
 }
-gostack-root [gs-component="register"] .form-group input {
+[gs-component="register"] .form-group input {
 width: 100%;
 padding: 12px 16px;
 border: 1px solid #dcdcdc;
@@ -534,11 +534,11 @@ box-sizing: border-box;
 font-size: 15px;
 transition: border-color 0.2s;
 }
-gostack-root [gs-component="register"] .form-group input:focus {
+[gs-component="register"] .form-group input:focus {
 outline: none;
 border-color: #4f46e5;
 }
-gostack-root [gs-component="register"] .btn {
+[gs-component="register"] .btn {
 display: block;
 width: 100%;
 padding: 14px;
@@ -551,34 +551,34 @@ font-weight: 600;
 cursor: pointer;
 transition: background-color 0.2s;
 }
-gostack-root [gs-component="register"] .btn:hover {
+[gs-component="register"] .btn:hover {
 background: #4338ca;
 }
-gostack-root [gs-component="register"] .alert {
+[gs-component="register"] .alert {
 padding: 12px;
 border-radius: 8px;
 margin-bottom: 20px;
 font-size: 14px;
 }
-gostack-root [gs-component="register"] .alert:empty {
+[gs-component="register"] .alert:empty {
 display: none;
 }
-gostack-root [gs-component="register"] .alert-danger {
+[gs-component="register"] .alert-danger {
 background: #fee2e2;
 color: #991b1b;
 }
-gostack-root [gs-component="register"] .auth-switch {
+[gs-component="register"] .auth-switch {
 margin-top: 24px;
 text-align: center;
 font-size: 14px;
 color: #6b7280;
 }
-gostack-root [gs-component="register"] .auth-switch a {
+[gs-component="register"] .auth-switch a {
 color: #4f46e5;
 text-decoration: none;
 font-weight: 500;
 }
-gostack-root [gs-component="register"] .auth-switch a:hover {
+[gs-component="register"] .auth-switch a:hover {
 text-decoration: underline;
 }`)
 
