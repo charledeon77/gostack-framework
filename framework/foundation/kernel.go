@@ -96,6 +96,23 @@ func (k *Kernel) Run(addr string) error {
 		viewEngine = ghttp.NewTempose()
 	}
 
+	if os.Getenv("APP_ENV") != "production" {
+		k.Router.Get("/__gostack_reload", func(ctx *ghttp.Context) {
+			ctx.Writer.Header().Set("Content-Type", "text/event-stream")
+			ctx.Writer.Header().Set("Cache-Control", "no-cache")
+			ctx.Writer.Header().Set("Connection", "keep-alive")
+			ctx.Writer.Header().Set("X-Accel-Buffering", "no")
+			ctx.Writer.WriteHeader(http.StatusOK)
+
+			_, _ = ctx.Writer.Write([]byte("data: connected\n\n"))
+			if flusher, ok := ctx.Writer.(http.Flusher); ok {
+				flusher.Flush()
+			}
+
+			<-ctx.Request.Context().Done()
+		})
+	}
+
 	runtimeEngine := ghttp.NewEngine(k.Router, viewEngine)
 
 	srv := &http.Server{

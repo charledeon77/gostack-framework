@@ -34,6 +34,20 @@ This ledger details the step-by-step history, architectural justifications, and 
 | **Nexus** | Neo4j Graph Database Integration | `framework/database` |
 | **Aether** | Cassandra Wide-Column Database Integration | `framework/database` |
 
+## [v1.0.9] - Local Development Hot-Reload Command & EventSource Orchestrator
+*Released on 10 July, 2026*
+
+### Developer Experience & Subprocesses
+*   **Dev Command (`gost dev`)**: Introduced a local development server runner that performs initial component compilation, builds the application to a temporary executable (`tmp_server`), and runs it.
+*   **Zero-Dependency File Watcher**: Implemented a background scanner using standard library polling (every 500ms) to check for template (`templates/components/`) and Go source changes, avoiding external Cgo/fsnotify dependencies.
+*   **Subprocess Protection**: Implemented strict process killing and temporary file deletion on Unix and Windows platforms, preventing locked port errors when restarting.
+
+### Foundation & UI Subsystems
+*   **Auto-Registered SSE Route**: Registered `GET /__gostack_reload` route in `foundation/kernel.go` automatically when `APP_ENV != "production"`.
+*   **Auto-Injected Browser Script**: Injected an EventSource client reloader block inside `ui.WriteMasterAssetBlock` automatically during non-production builds. The browser client automatically detects server restarts and refreshes when the server is back online.
+
+---
+
 ## [v1.0.8] - UI Component CSS Scoping Engine Fix & Encapsulation Restore
 *Released in July 2026*
 

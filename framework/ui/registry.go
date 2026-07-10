@@ -7,6 +7,7 @@ import (
 	"html"
 	"html/template"
 	"io"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -239,6 +240,35 @@ func WriteMasterAssetBlock(w io.Writer) {
 		_, _ = io.WriteString(w, "\n")
 	}
 	_, _ = io.WriteString(w, "</script>\n")
+
+	// ── Development Hot Reload Client script ──
+	if os.Getenv("APP_ENV") != "production" {
+		_, _ = io.WriteString(w, `<script id="gostack-hot-reload">
+  if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+    let disconnected = false;
+    function connectSSE() {
+      const es = new EventSource('/__gostack_reload');
+      es.onmessage = (e) => {
+        if (e.data === 'reload') {
+          location.reload();
+        }
+      };
+      es.onopen = () => {
+        if (disconnected) {
+          location.reload();
+        }
+      };
+      es.onerror = () => {
+        disconnected = true;
+        es.close();
+        setTimeout(connectSSE, 1000);
+      };
+    }
+    connectSSE();
+  }
+</script>
+`)
+	}
 }
 
 // Evaluate performs a safe runtime reflection lookup of a field name on a given data object.

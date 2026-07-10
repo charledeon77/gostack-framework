@@ -107,7 +107,7 @@ function toggleAccordion(trigger) {
             <div class="gostack-components-accordion">
               <div class="gostack-components-accordion-item active">
                 <button class="gostack-components-accordion-trigger" onclick="toggleAccordion(this)">
-                  <span>Premium System Architecture</span>
+                  <span>Premium System Architecture Hot-Reloaded!</span>
                   <span class="gostack-components-accordion-icon">▼</span>
                 </button>
                 <div class="gostack-components-accordion-content" style="max-height: 200px;">
