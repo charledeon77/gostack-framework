@@ -318,7 +318,7 @@ Every major framework layer has been branded and fully integrated via the dynami
 
 *   **Crafter** (ORM / Query Builder), **Conflex** (Relations Mapper), and **Grapher** (Schema Builder) automate database logic with full support for SQL dialects (PostgreSQL, MySQL, CockroachDB, SQLite) and NoSQL databases (MongoDB, Neo4j, Cassandra).
 
-*   [**Glide**](./Glide.md) (*Reactive Runtime*) and **Tempose** (AOT UI Compiler) provide reactive UI rendering compiled directly into Go source code, completely removing node/npm dependencies from production binaries.
+*   [**Glide**](./GLIDE.md) (*Reactive Runtime*) and **Tempose** (AOT UI Compiler) provide reactive UI rendering compiled directly into Go source code, completely removing node/npm dependencies from production binaries.
 
 ### 2. Crucial Production-Grade Hardening & Security Features
 Several major updates were implemented to secure and optimize the framework specifically for production environments (*detailed in* **`CHANGELOG.md`**).
