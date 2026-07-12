@@ -55,33 +55,61 @@ And that's just the backend. If you need a modern frontend:
 **GoStack** is the first complete end-to-end framework solution for building **FullStack Web applications** in Go. It handles:
 
 01.) ✅ **Kernel Bootloader** *(Citadel)* — Unified service registration and framework orchestration boot system.
+
 02.) ✅ **Service Container** *(Anchor)* — Fast, lock-shielded, thread-safe Dependency Injection & IoC container.
+
 03.) ✅ **HTTP Router** *(Navigator)* — Ultra-fast, zero-allocation routing with automated path parameter binding.
+
 04.) ✅ **Middleware Pipeline** *(Bridge)* — Onion-style middleware pipeline for request filtering and interception.
+
 05.) ✅ **Query Builder & Hydrator** *(Crafter)* — Active Record query builder that hydrates database results into Go structs.
+
 06.) ✅ **ORM Relationships** *(Conflex)* — Native resolver mapping HasOne, HasMany, and BelongsTo database relations.
+
 07.) ✅ **Database Migrations** *(Traveller)* — Transaction-shielded, versioned database schema migration runner.
+
 08.) ✅ **Schema Builder** *(Grapher)* — Fluent programmatic definition for columns, indexes, and constraints.
+
 09.) ✅ **Authentication** *(Guard)* — Fully-baked session/token authentication with native CSRF protection.
+
 10.) ✅ **In-Memory Cache** *(Mory)* — Generic-typed key-value caching layer with local and Redis memory adapters.
+
 11.) ✅ **Background Queues** *(Sequence)* — Deferred job queue worker supporting delays, retries, and job chaining.
+
 12.) ✅ **Event Dispatcher** *(Spark)* — Synchronous and asynchronous Pub/Sub event communication system.
+
 13.) ✅ **SMTP HTML Mailer** *(GoMail)* — Rich HTML email formatting, template engines, and attachment delivery.
+
 14.) ✅ **File Storage** *(Vault)* — Path-traversal secure storage engine supporting local and AWS S3 environments.
+
 15.) ✅ **Notification Router** *(Alert)* — Decoupled, multi-channel alerting (Email, Database, SMS) dispatch engine.
+
 16.) ✅ **Cron Task Scheduler** *(Planner)* — Native, in-app cron job scheduler replacing external system crontabs.
+
 17.) ✅ **Social Logins** *(SocialHub)* — Plug-and-play OAuth2 login flow with Google, GitHub, and custom providers.
+
 18.) ✅ **Admin Dashboard** *(GoDash)* — Auto-generated backoffice interface with real-time job and system monitors.
+
 19.) ✅ **AOT UI Compiler** *(Tempose)* — Ahead-of-Time compiler translating HTML/CSS/JS components directly into Go source code.
+
 20.) ✅ **Reactive Client Runtime** *(Glide)* — Zero-dependency DOM reactivity engine (Alpine/Svelte equivalent) running without Node.js.
+
 21.) ✅ **CLI Assistant** *(Gost)* — Scaffolding runner for database models, migrations, and controller templates.
+
 22.) ✅ **Driver Contracts** *(Contract)* — Interchangeable interface contracts decoupling framework drivers from core services.
+
 23.) ✅ **Config Manager** *(GoCon)* — Clean, strongly-typed environment `.env` configuration file loader.
+
 24.) ✅ **Request Validation** *(Validator)* — Declarative rule-based payload validation middleware for requests.
+
 25.) ✅ **Real-Time WebSockets** *(GowSocket)* — Bi-directional, multi-group WebSocket communication hub.
+
 26.) ✅ **Translation Engine** *(Transios)* — Localization manager supporting language dictionaries and formatting templates.
+
 27.) ✅ **NoSQL MongoDB** *(GoMon)* — Active Record engine support mapping NoSQL document stores to Go models.
+
 28.) ✅ **Graph Database** *(Nexus)* — Native Cypher query mapping and relation graph nodes for Neo4j database instances.
+
 29.) ✅ **Wide-Column Cassandra** *(Aether)* — Distributed CQL query mapper and table optimizer for Apache Cassandra database structures.
 
 ---
@@ -192,37 +220,37 @@ By consolidating these 16 libraries into **one binary, one programming language,
 
 Every major capability in GoStack is a fully tested, co-developed, and branded subsystem:
 
-| Branded Name | Subsystem Capability | Description |
-| :--- | :--- | :--- |
-| **Citadel** | Application Bootloader & Unified Kernel | Coordinates GoStack's application lifecycle by executing registration and boot phases across all modules. It guarantees that critical resources (like database pools and routers) are fully initialized before the framework starts serving requests. |
-| **Anchor** | IoC Service Container & Dependency Injection | A thread-safe, lock-shielded Inversion of Control storage container. By resolving service blueprints on demand, it completely eliminates dependency-ordering bugs and compile-time code generation bloat. |
-| **Navigator** | HTTP Router | A high-performance, parameter-binding HTTP routing tree. It parses URL patterns, matches incoming paths, and passes request scopes directly to target handlers with zero dynamic runtime allocations. |
-| **Bridge** | Middleware Pipeline (Onion Architecture) | Implements a sequential onion-style middleware pipeline. It intercepts requests to perform cross-cutting tasks (like CSRF protection, CORS handling, or sessions) before letting target handlers execute, supporting early-exit abort flows. |
-| **Crafter** | Query Builder & Reflective Hydrator | Dynamically generates clean, optimized SQL and database calls. It utilizes a runtime reflection cache to safely translate raw database records into strongly-typed Go entities, shielding developer code from raw SQL boilerplate. |
-| **Conflex** | ORM Relationship Mapper | Resolves relational model schemas (`HasOne`, `HasMany`, `BelongsTo`). It tracks and loads child connections, caching retrieved structures to eliminate costly N+1 query execution bottlenecks. |
-| **Traveller** | Database Migration Engine | Performs transaction-shielded, versioned database schema updates. It maps applied migrations inside system ledgers to keep local development environments and production servers perfectly in sync. |
-| **Grapher** | Schema Builder (fluent column definitions) | Provides a fluent, programmatic builder interface for setting up database columns, indexes, and constraints. It translates Go definitions into native DDL statements, avoiding raw schema script errors. |
-| **Guard** | Authentication (session-based) | Manages secure user session cookies, token issuance, and CSRF token generation. It acts as the secure entry guard, shielding internal routes from unauthenticated actors. |
-| **Mory** | Generic-typed In-Memory Cache | A high-speed, generic-typed key-value caching layer. It stores heavily accessed data models in local memory to speed up response times and reduce database querying overhead. |
-| **Sequence** | Background Job Queue | Manages background queue workers to run deferred tasks (like report compiles or API calls). It supports retries, custom delays, and job chains, ensuring the main HTTP request thread remains fast. |
-| **Spark** | Pub/Sub Event Dispatcher | Dispatches synchronous and asynchronous events across application modules. It allows developers to completely decouple actions (e.g. "UserRegistered") from side-effects (e.g. "SendWelcomeEmail"). |
-| **GoMail** | SMTP Mailer | A zero-dependency SMTP client built on standard Go packages. It handles HTML mail formatting, attachment rendering, and template loading, enabling professional email delivery. |
-| **Vault** | File Storage (Local + S3) | Provides a secure, path-traversal shielded file storage gateway. It allows developers to swap local folder storage for cloud storage (like AWS S3) transparently by modifying a single environment variable. |
-| **Alert** | Multi-Channel Notification System | Routes notifications across multiple delivery channels (Email, Database, SMS). It decouples notification messages from delivery platforms using a unified, fluent dispatcher structure. |
-| **Planner** | Cron Task Scheduler | A background schedule scheduler that runs cron-style tasks. It eliminates the need for external system-level crontabs, letting developers configure recurrent jobs inside compile-safe Go code. |
-| **SocialHub** | OAuth Social Login | Handles third-party OAuth2 authorization flows (like Google or GitHub). It validates secure callbacks, retrieves user profile metadata, and integrates credentials with the Guard subsystem. |
-| **GoDash** | Admin Panel & Sequence Monitor | Provides an auto-generated admin interface and background queue monitoring screen. It allows developers to visualize active tasks, search database records, and debug jobs out of the box. |
-| **Tempose** | AOT UI Component Compiler | Compiles HTML component templates, styles, and scripts into static Go code. It completely eliminates disk IO overhead at runtime, allowing templates to render at Go's compiled speed. |
-| **Glide** | Client-Side Reactive Runtime | A zero-dependency reactive directive engine served directly inside page bundles. It parses dynamic HTML attributes (like `gs-model`, `gs-show`) to manage reactivity, spa router morphs, and transitions without Node.js toolchains. |
-| **Gost** | CLI Command Runner | Powers the command-line interface. It registers custom console scripts, executes database migration scripts, and generates scaffolded components using Go's exact dependency tree. |
-| **Contract** | Interface Definitions (driver contracts) | Defines the core interface contracts that decouple framework drivers from your application logic. It ensures that system implementations (like cache backends) remain fully interchangeable. |
-| **GoCon** | Environment Config Manager (`.env` parser) | Scans, parses, and loads `.env` variables into application state at boot time. It converts configuration keys into strongly-typed structures, protecting startup routines from missing keys. |
-| **Validator** | Request Validation Engine | Evaluates incoming request JSON payloads or form data against declared rules. It acts as the gateway validation layer, mapping error details onto contexts before reaching controller logic. |
-| **GowSocket** | Real-Time WebSocket Hub | Orchestrates bi-directional, persistent WebSocket client connections. It manages socket groups, processes message frames, and runs real-time pushes with native Go channels. |
-| **Transios** | Localization & Translation Engine | Dynamically formats dates, currencies, and localized strings based on user languages. It reads translation directories at boot time, mapping language templates for client renderers. |
-| **GoMon** | MongoDB Integration (NoSQL Document Store) | Provides native NoSQL document store mappings. It extends Crafter's hydration engine to parse BSON objects, enabling schema-less database operations alongside relational models. |
-| **Nexus** | Neo4j Graph Database Integration | Bridges GoStack with Neo4j graph nodes. It supports execution of Cypher query patterns, mapping complex relational graphs onto Go models. |
-| **Aether** | Cassandra Wide-Column Database Integration | Cassandra Wide-Column Database Integration. It optimizes CQL queries and handles massive, distributed tables, mapping wide-column records into structured entities. |
+| # | Branded Name | Subsystem Capability | Description |
+| :--- | :--- | :--- | :--- |
+| 1 | **Citadel** | Application Bootloader & Unified Kernel | Coordinates GoStack's application lifecycle by executing registration and boot phases across all modules. It guarantees that critical resources (like database pools and routers) are fully initialized before the framework starts serving requests. |
+| 2 | **Anchor** | IoC Service Container & Dependency Injection | A thread-safe, lock-shielded Inversion of Control storage container. By resolving service blueprints on demand, it completely eliminates dependency-ordering bugs and compile-time code generation bloat. |
+| 3 | **Navigator** | HTTP Router | A high-performance, parameter-binding HTTP routing tree. It parses URL patterns, matches incoming paths, and passes request scopes directly to target handlers with zero dynamic runtime allocations. |
+| 4 | **Bridge** | Middleware Pipeline (Onion Architecture) | Implements a sequential onion-style middleware pipeline. It intercepts requests to perform cross-cutting tasks (like CSRF protection, CORS handling, or sessions) before letting target handlers execute, supporting early-exit abort flows. |
+| 5 | **Crafter** | Query Builder & Reflective Hydrator | Dynamically generates clean, optimized SQL and database calls. It utilizes a runtime reflection cache to safely translate raw database records into strongly-typed Go entities, shielding developer code from raw SQL boilerplate. |
+| 6 | **Conflex** | ORM Relationship Mapper | Resolves relational model schemas (`HasOne`, `HasMany`, `BelongsTo`). It tracks and loads child connections, caching retrieved structures to eliminate costly N+1 query execution bottlenecks. |
+| 7 | **Traveller** | Database Migration Engine | Performs transaction-shielded, versioned database schema updates. It maps applied migrations inside system ledgers to keep local development environments and production servers perfectly in sync. |
+| 8 | **Grapher** | Schema Builder (fluent column definitions) | Provides a fluent, programmatic builder interface for setting up database columns, indexes, and constraints. It translates Go definitions into native DDL statements, avoiding raw schema script errors. |
+| 9 | **Guard** | Authentication (session-based) | Manages secure user session cookies, token issuance, and CSRF token generation. It acts as the secure entry guard, shielding internal routes from unauthenticated actors. |
+| 10 | **Mory** | Generic-typed In-Memory Cache | A high-speed, generic-typed key-value caching layer. It stores heavily accessed data models in local memory to speed up response times and reduce database querying overhead. |
+| 11 | **Sequence** | Background Job Queue | Manages background queue workers to run deferred tasks (like report compiles or API calls). It supports retries, custom delays, and job chains, ensuring the main HTTP request thread remains fast. |
+| 12 | **Spark** | Pub/Sub Event Dispatcher | Dispatches synchronous and asynchronous events across application modules. It allows developers to completely decouple actions (e.g. "UserRegistered") from side-effects (e.g. "SendWelcomeEmail"). |
+| 13 | **GoMail** | SMTP Mailer | A zero-dependency SMTP client built on standard Go packages. It handles HTML mail formatting, attachment rendering, and template loading, enabling professional email delivery. |
+| 14 | **Vault** | File Storage (Local + S3) | Provides a secure, path-traversal shielded file storage gateway. It allows developers to swap local folder storage for cloud storage (like AWS S3) transparently by modifying a single environment variable. |
+| 15 | **Alert** | Multi-Channel Notification System | Routes notifications across multiple delivery channels (Email, Database, SMS). It decouples notification messages from delivery platforms using a unified, fluent dispatcher structure. |
+| 16 | **Planner** | Cron Task Scheduler | A background schedule scheduler that runs cron-style tasks. It eliminates the need for external system-level crontabs, letting developers configure recurrent jobs inside compile-safe Go code. |
+| 17 | **SocialHub** | OAuth Social Login | Handles third-party OAuth2 authorization flows (like Google or GitHub). It validates secure callbacks, retrieves user profile metadata, and integrates credentials with the Guard subsystem. |
+| 18 | **GoDash** | Admin Panel & Sequence Monitor | Provides an auto-generated admin interface and background queue monitoring screen. It allows developers to visualize active tasks, search database records, and debug jobs out of the box. |
+| 19 | **Tempose** | AOT UI Component Compiler | Compiles HTML component templates, styles, and scripts into static Go code. It completely eliminates disk IO overhead at runtime, allowing templates to render at Go's compiled speed. |
+| 20 | **Glide** | Client-Side Reactive Runtime | A zero-dependency reactive directive engine served directly inside page bundles. It parses dynamic HTML attributes (like `gs-model`, `gs-show`) to manage reactivity, spa router morphs, and transitions without Node.js toolchains. |
+| 21 | **Gost** | CLI Command Runner | Powers the command-line interface. It registers custom console scripts, executes database migration scripts, and generates scaffolded components using Go's exact dependency tree. |
+| 22 | **Contract** | Interface Definitions (driver contracts) | Defines the core interface contracts that decouple framework drivers from your application logic. It ensures that system implementations (like cache backends) remain fully interchangeable. |
+| 23 | **GoCon** | Environment Config Manager (`.env` parser) | Scans, parses, and loads `.env` variables into application state at boot time. It converts configuration keys into strongly-typed structures, protecting startup routines from missing keys. |
+| 24 | **Validator** | Request Validation Engine | Evaluates incoming request JSON payloads or form data against declared rules. It acts as the gateway validation layer, mapping error details onto contexts before reaching controller logic. |
+| 25 | **GowSocket** | Real-Time WebSocket Hub | Orchestrates bi-directional, persistent WebSocket client connections. It manages socket groups, processes message frames, and runs real-time pushes with native Go channels. |
+| 26 | **Transios** | Localization & Translation Engine | Dynamically formats dates, currencies, and localized strings based on user languages. It reads translation directories at boot time, mapping language templates for client renderers. |
+| 27 | **GoMon** | MongoDB Integration (NoSQL Document Store) | Provides native NoSQL document store mappings. It extends Crafter's hydration engine to parse BSON objects, enabling schema-less database operations alongside relational models. |
+| 28 | **Nexus** | Neo4j Graph Database Integration | Bridges GoStack with Neo4j graph nodes. It supports execution of Cypher query patterns, mapping complex relational graphs onto Go models. |
+| 29 | **Aether** | Cassandra Wide-Column Database Integration | Cassandra Wide-Column Database Integration. It optimizes CQL queries and handles massive, distributed tables, mapping wide-column records into structured entities. |
 
 ---
 
