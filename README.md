@@ -305,7 +305,7 @@ GoStack was designed with a simple belief: **building web apps should feel like 
 
 ## 🛡️ Production Ready Assurance
 
-Over the past few release cycles (leading up to the current version **`v1.0.10`** released 11 July 2026), GoStack has transitioned from a lightweight full-stack prototype into a robust, enterprise-grade, and highly reliable framework. 
+Over the past few release cycles (*leading up to the current version **`v1.0.10`** released 11 July 2026*), **GoStack** has transitioned from a lightweight full-stack prototype into a robust, enterprise-grade, and highly reliable framework.
 
 Below is an overview of why GoStack is production-ready, its architecture, and its security details.
 
@@ -318,10 +318,10 @@ Every major framework layer has been branded and fully integrated via the dynami
 
 *   **Crafter** (ORM / Query Builder), **Conflex** (Relations Mapper), and **Grapher** (Schema Builder) automate database logic with full support for SQL dialects (PostgreSQL, MySQL, CockroachDB, SQLite) and NoSQL databases (MongoDB, Neo4j, Cassandra).
 
-*   **Glide** (Reactive Runtime) and **Tempose** (AOT UI Compiler) provide reactive UI rendering compiled directly into Go source code, completely removing node/npm dependencies from production binaries.
+*   [**Glide**](./Glide.md) (*Reactive Runtime*) and **Tempose** (AOT UI Compiler) provide reactive UI rendering compiled directly into Go source code, completely removing node/npm dependencies from production binaries.
 
 ### 2. Crucial Production-Grade Hardening & Security Features
-Several major updates were implemented to secure and optimize the framework specifically for production environments (detailed in **`CHANGELOG.md`**).
+Several major updates were implemented to secure and optimize the framework specifically for production environments (*detailed in* **`CHANGELOG.md`**).
 
 *   **CSS Scoping Fixed (`v1.0.8`)**: Resolved a critical compilation bug that previously caused scoped styles to be discarded in browser paint steps.
 
