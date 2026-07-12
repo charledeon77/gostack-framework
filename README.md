@@ -271,4 +271,4 @@ GoStack was designed with a simple belief: **building web apps should feel like 
 *   **The Guideline:** Include `gs-css` on components where you want GoStack's built-in styles, and leave it off where you want absolute creative freedom.
 
 ---
-*GoStack — The performance of Go, the speed of Laravel, the simplicity of Alpine. One binary. One language. Zero headaches.*
+*GoStack — The speed and performance of Go, the interconnected ecosystem of Laravel, the simplicity and reactivity of  AlpineJS, with the complete powers of React, Svelte and Vue combined. One binary. One language. Zero headaches.*
