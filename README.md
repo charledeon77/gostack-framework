@@ -344,6 +344,7 @@ Following GoStack's core design rules, complex plug-and-play features are decoup
 
 > [!IMPORTANT]
 > ***Why RBAC is an Extension***
+>
 > ***GoStack*** *natively supports multiple database paradigms—including SQL (PostgreSQL, MySQL, SQLite) and NoSQL (MongoDB, Cassandra). Keeping RBAC as an isolated extension allows developers using SQL databases to pull it in and run relational checks, while NoSQL developers are not forced to follow a specific database schema and can utilize custom resolver callbacks.*
 
 ### 4. 100% Green Test Suite
