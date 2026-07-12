@@ -19,6 +19,7 @@ This ledger details the step-by-step history, architectural justifications, and 
 | **Spark** | Pub/Sub Event Dispatcher | `framework/foundation/events` |
 | **GoMail** | SMTP Mailer | `framework/mail` |
 | **Vault** | File Storage (Local + S3) | `framework/storage` |
+| **Alert** | Multi-Channel Notification System | `framework/notification` |
 | **Planner** | Cron Task Scheduler | `framework/worker/schedule` |
 | **SocialHub** | OAuth Social Login | `framework/http/socialhub` |
 | **GoDash** | Admin Panel & Sequence Monitor | `framework/admin` |
@@ -33,6 +34,42 @@ This ledger details the step-by-step history, architectural justifications, and 
 | **GoMon** | MongoDB Integration (NoSQL Document Store) | `framework/database` |
 | **Nexus** | Neo4j Graph Database Integration | `framework/database` |
 | **Aether** | Cassandra Wide-Column Database Integration | `framework/database` |
+
+## [v1.0.10] - Complete Glide Reactivity Engine Revamp & SPA Architecture
+*Released on 10 July, 2026*
+
+### Core Client-Side Reactivity (Glide Engine)
+*   **True Conditional Mounting (`gs-if`)**: Implemented structural DOM unmounting using template caching and comment placeholders, replacing style-based toggles.
+*   **Generic Dynamic Bindings (`gs-bind` / `:`)**: Implemented attribute scanning to bind any element attribute (e.g. `:disabled`, `:href`) including class maps and style objects dynamically.
+*   **Generic Event Directives (`gs-on` / `@`)**: Traverses element attributes to dynamically bind any standard or custom DOM event listener (e.g. `@focus`, `@blur`, `@mouseenter`).
+*   **Event Modifiers Pipeline**: Supported chaining modifiers: `.stop` (stopPropagation), `.prevent` (preventDefault), `.self` (restrict target), `.once` (self-removing), `.window` / `.document` (global tracking), `.outside` (clicks outside bounds), and `.debounce.[ms]` / `.throttle.[ms]`.
+*   **Unified `gs-model` Binding**: Fully expanded two-way binding support to checkboxes (arrays), radio groups, selectors, and the scope root.
+*   **Component Synchronization (`gs-modelable`)**: Enabled synchronizing properties bidirectionally between child and parent scopes.
+*   **Teleportation Portals (`gs-teleport`)**: Supported physical node relocation to external targets (e.g. `body`) while retaining original scope reactivity.
+*   **Keyed Loop Reconciliation (`gs-each` with `:key`)**: Integrated a keyed DOM-diffing algorithm to reorder elements and preserve focus/state during list changes.
+*   **Subtree Bypass (`gs-ignore`)**: Added support for ignoring DOM subtrees to integrate third-party libraries.
+*   **Render Flicker Prevention (`gs-cloak`)**: Added CSS class hiding during startup to prevent layout shifts.
+
+### Animation & Layout Primitives
+*   **Core Svelte-Equivalent Animations**: Added native presets for `fade`, `slide` (with scrollHeight), `fly`, `scale`, and `blur` transitions.
+*   **Custom Transition Controls**: Enabled transition adjustments via `gs-transition:duration`, `gs-transition:delay`, `gs-transition:easing`, and enter/leave splitting.
+*   **Layout Reordering (`gs-animate="flip"`)**: Added FLIP projection layout animations on lists automatically.
+
+### Script Context & Utilities (Magics)
+*   **Utility Variable Injection**: Injected `$root` (scope boundary node), `$data` (raw state), `$event` (trigger details), `$id` (accessibility keygen), and `$persist` (localStorage syncing).
+*   **Programmatic Actions**: Exposed `$watch` for state change tracking and `$nextTick` for deferring operations.
+
+### Custom Extension APIs
+*   **Global Stores**: Introduced `Glide.store` to define global, reactive state schemas.
+*   **Plugins System**: Introduced `Glide.directive` and `Glide.magic` to dynamically register custom directives and magic helpers.
+
+### SPA Architecture & Client-Side Hydration
+*   **Glide SPA Router**: Added a client-side router intercepting clicks, prefetching HTML payloads, morphing body templates, and updating browser history.
+*   **Client Component Registration (`Glide.component`)**: Added custom HTML tag component support with prop forwarding and encapsulated reactivity.
+*   **Fast DOM Morphing**: Integrated idiomorph-based diffing to merge server-rendered HTML blocks with the current DOM state, preserving focus and input data.
+*   **Validation & Form Submission (`gs-validate`)**: Added automatic form validation, validation error binding, and background AJAX submissions.
+
+---
 
 ## [v1.0.9] - Local Development Hot-Reload Command & EventSource Orchestrator
 *Released on 10 July, 2026*
