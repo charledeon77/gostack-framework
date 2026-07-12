@@ -342,9 +342,9 @@ Following GoStack's core design rules, complex plug-and-play features are decoup
 
 *   🛡️ **Role-Based Access Control (RBAC)**: Defined in **`rbac.go`** — controls who is allowed to do what inside your application. You define roles (like `"admin"`, `"editor"`, `"viewer"`), assign them to users, and then restrict any page or action so that only users with the right role or permission can access it. Works with both SQL and NoSQL databases out of the box.
 
-> [!NOTE]  
-> **Why RBAC is an Extension**  
-> GoStack natively supports multiple database paradigms—including SQL (PostgreSQL, MySQL, SQLite) and NoSQL (MongoDB, Cassandra). Keeping RBAC as an isolated extension allows developers using SQL databases to pull it in and run relational checks, while NoSQL developers are not forced to follow a specific database schema and can utilize custom resolver callbacks.
+> [!IMPORTANT]
+> ***Why RBAC is an Extension***
+> ***GoStack*** *natively supports multiple database paradigms—including SQL (PostgreSQL, MySQL, SQLite) and NoSQL (MongoDB, Cassandra). Keeping RBAC as an isolated extension allows developers using SQL databases to pull it in and run relational checks, while NoSQL developers are not forced to follow a specific database schema and can utilize custom resolver callbacks.*
 
 ### 4. 100% Green Test Suite
 All test suites across the framework compile, build, and pass cleanly:
