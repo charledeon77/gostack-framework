@@ -305,7 +305,7 @@ GoStack was designed with a simple belief: **building web apps should feel like 
 
 ## 🛡️ Production Ready Assurance
 
-Over the past few release cycles (*leading up to the current version **`v1.0.10`** released 11 July 2026*), **GoStack** has transitioned from a lightweight full-stack prototype into a robust, enterprise-grade, and highly reliable framework.
+Over the past few release cycles (*leading up to the current version **`v1.0.11`** released 24 July 2026*), **GoStack** has transitioned from a lightweight full-stack prototype into a robust, enterprise-grade, and highly reliable framework.
 
 Below is an overview of why GoStack is production-ready, its architecture, and its security details.
 

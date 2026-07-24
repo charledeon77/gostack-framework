@@ -183,6 +183,124 @@ func TestHydratorWithMockDriver(t *testing.T) {
 	}
 }
 
+type embeddedMockRows struct {
+	cols   []string
+	data   [][]driver.Value
+	cursor int
+}
+
+func (m *embeddedMockRows) Columns() []string { return m.cols }
+func (m *embeddedMockRows) Close() error      { return nil }
+func (m *embeddedMockRows) Next(dest []driver.Value) error {
+	if m.cursor >= len(m.data) {
+		return io.EOF
+	}
+	for i, v := range m.data[m.cursor] {
+		dest[i] = v
+	}
+	m.cursor++
+	return nil
+}
+
+type embeddedMockDriver struct{}
+
+func (d *embeddedMockDriver) Open(name string) (driver.Conn, error) {
+	return &embeddedMockConn{}, nil
+}
+
+type embeddedMockConn struct{}
+
+func (c *embeddedMockConn) Prepare(query string) (driver.Stmt, error) {
+	return &embeddedMockStmt{}, nil
+}
+func (c *embeddedMockConn) Close() error               { return nil }
+func (c *embeddedMockConn) Begin() (driver.Tx, error) { return nil, nil }
+
+type embeddedMockStmt struct{}
+
+func (s *embeddedMockStmt) NumInput() int                                     { return -1 }
+func (s *embeddedMockStmt) Close() error                                      { return nil }
+func (s *embeddedMockStmt) Exec(args []driver.Value) (driver.Result, error) { return nil, nil }
+func (s *embeddedMockStmt) Query(args []driver.Value) (driver.Rows, error) {
+	return &embeddedMockRows{
+		cols: []string{"id", "email", "password", "failed_attempts"},
+		data: [][]driver.Value{
+			{int64(42), "embedded@gostack.io", "secret_pass", int64(3)},
+		},
+	}, nil
+}
+
+func init() {
+	sql.Register("gostack_embedded_hydrator_mock", &embeddedMockDriver{})
+}
+
+type TestEmbeddedInner struct {
+	Password string `db:"password"`
+}
+
+type TestEmbeddedOuter struct {
+	ID             int64  `db:"id"`
+	Email          string `db:"email"`
+	TestEmbeddedInner
+	FailedAttempts int    `db:"failed_attempts"`
+}
+
+type TestEmbeddedOuterPtr struct {
+	ID             int64  `db:"id"`
+	Email          string `db:"email"`
+	*TestEmbeddedInner
+	FailedAttempts int    `db:"failed_attempts"`
+}
+
+func TestHydratorWithEmbeddedStructs(t *testing.T) {
+	db, err := sql.Open("gostack_embedded_hydrator_mock", "")
+	if err != nil {
+		t.Fatalf("Failed to open mock connection: %v", err)
+	}
+	defer db.Close()
+
+	// 1. Test embedding by value
+	rows, err := db.Query("SELECT id, email, password, failed_attempts")
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	
+	var valueModels []TestEmbeddedOuter
+	if err := Hydrate(rows, &valueModels); err != nil {
+		t.Fatalf("Hydrate by value failed: %v", err)
+	}
+	rows.Close()
+
+	if len(valueModels) != 1 {
+		t.Fatalf("Expected 1 record, got %d", len(valueModels))
+	}
+	if valueModels[0].ID != 42 || valueModels[0].Email != "embedded@gostack.io" || valueModels[0].Password != "secret_pass" || valueModels[0].FailedAttempts != 3 {
+		t.Errorf("Value model hydration mismatch: %+v", valueModels[0])
+	}
+
+	// 2. Test embedding by pointer (with nil-pointer allocation)
+	rows, err = db.Query("SELECT id, email, password, failed_attempts")
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	defer rows.Close()
+
+	var ptrModels []TestEmbeddedOuterPtr
+	if err := Hydrate(rows, &ptrModels); err != nil {
+		t.Fatalf("Hydrate by pointer failed: %v", err)
+	}
+
+	if len(ptrModels) != 1 {
+		t.Fatalf("Expected 1 record, got %d", len(ptrModels))
+	}
+	if ptrModels[0].ID != 42 || ptrModels[0].Email != "embedded@gostack.io" || ptrModels[0].TestEmbeddedInner == nil || ptrModels[0].Password != "secret_pass" || ptrModels[0].FailedAttempts != 3 {
+		t.Errorf("Pointer model hydration mismatch: %+v", ptrModels[0])
+		if ptrModels[0].TestEmbeddedInner != nil {
+			t.Errorf("Embedded pointer value: %+v", ptrModels[0].TestEmbeddedInner)
+		}
+	}
+}
+
 // ─── Relations mock driver ────────────────────────────────────────────────────
 
 var (

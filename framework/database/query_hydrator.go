@@ -203,14 +203,54 @@ func mapRowToStruct(columns []string, values []sql.RawBytes, structVal reflect.V
 	return nil
 }
 
-func findFieldByTagName(structVal reflect.Value, columnName string) reflect.Value {
-	t := structVal.Type()
-	for i := 0; i < structVal.NumField(); i++ {
+// findFieldIndexByTagName searches the type metadata recursively for a matching 'db' tag,
+// returning the nested field index path (e.g., []int{0, 2}) if found.
+func findFieldIndexByTagName(t reflect.Type, columnName string) []int {
+	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		tag := field.Tag.Get("db")
 		if tag == columnName {
-			return structVal.Field(i)
+			return []int{i}
 		}
+		if field.Anonymous {
+			ft := field.Type
+			if ft.Kind() == reflect.Ptr {
+				ft = ft.Elem()
+			}
+			if ft.Kind() == reflect.Struct {
+				if subPath := findFieldIndexByTagName(ft, columnName); subPath != nil {
+					return append([]int{i}, subPath...)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// getFieldByPath traverses the index path, dynamically initializing nil pointers
+// along the way so they can be safely written to.
+func getFieldByPath(structVal reflect.Value, path []int) reflect.Value {
+	val := structVal
+	for _, idx := range path {
+		if val.Kind() == reflect.Ptr {
+			if val.IsNil() {
+				if !val.CanSet() {
+					return reflect.Value{}
+				}
+				val.Set(reflect.New(val.Type().Elem()))
+			}
+			val = val.Elem()
+		}
+		val = val.Field(idx)
+	}
+	return val
+}
+
+func findFieldByTagName(structVal reflect.Value, columnName string) reflect.Value {
+	t := structVal.Type()
+	if path := findFieldIndexByTagName(t, columnName); path != nil {
+		return getFieldByPath(structVal, path)
 	}
 	return structVal.FieldByName(columnName)
 }
+

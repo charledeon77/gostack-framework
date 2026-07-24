@@ -26,3 +26,6 @@
 # Go workspace file (optional local overrides)
 go.work
 go.work.sum
+
+# Temporary developer workspace files
+/scratch/

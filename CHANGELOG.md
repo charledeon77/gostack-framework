@@ -35,6 +35,13 @@ This ledger details the step-by-step history, architectural justifications, and 
 | **Nexus** | Neo4j Graph Database Integration | `framework/database` |
 | **Aether** | Cassandra Wide-Column Database Integration | `framework/database` |
 
+## [v1.0.11] - Robust Embedded Struct Hydration Support
+*Released on 24 July, 2026*
+
+### Database ORM & Hydrator (Crafter Subsystem)
+*   **Recursive Struct Tag Resolution**: Upgraded the reflective hydrator to recursively scan nested types for `db` tags inside embedded anonymous structs (value-based or pointer-based).
+*   **Dynamic Pointer Initialization**: Automatically initializes and attaches pointer-based embedded structs on-the-fly when matching database columns are found, preventing nil-pointer dereferences.
+
 ## [v1.0.10] - Complete Glide Reactivity Engine Revamp & SPA Architecture
 *Released on 10 July, 2026*
 
