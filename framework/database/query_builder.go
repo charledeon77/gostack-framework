@@ -1,4 +1,12 @@
 /*
+Crafter — GoStack Relational Query Builder & Active Record Subsystem.
+
+Naming Metaphor: Why Crafter?
+The GoStack Relational Query Builder was named Crafter because an artisan "crafter" meticulously
+shapes raw materials into refined, purposeful objects. Crafter takes raw clauses, criteria, and joins,
+and meticulously sculpts them into safe, parameterized, dialect-optimized SQL queries without
+exposing the developer to boilerplate string concatenation or injection hazards.
+
 Purpose:
 This file contains the QueryBuilder struct and its associated chainable helper methods
 for constructing and executing relational SQL queries within the GoStack framework.

@@ -1,4 +1,12 @@
 /*
+Grapher — GoStack Schema Definition & DDL Compiler Subsystem.
+
+Naming Metaphor: Why Grapher?
+The GoStack Schema Definition Subsystem was named Grapher because a "grapher" (or cartographer)
+charts and plots complex landscapes and structural blueprints. Grapher plots out tables, columns,
+constraints, keys, and indexes as a declarative map, translating clean programmatic diagrams into
+robust database tables across SQL dialects.
+
 Purpose:
 This file implements the Grapher Schema Builder and Table DDL compiler for the GoStack framework.
 It provides a fluent, driver-aware API for defining and compiling CREATE TABLE and DROP TABLE statements.
@@ -25,8 +33,9 @@ package database
 
 import (
 	"fmt"
-	"github.com/charledeon77/gostack-framework/framework/contract"
 	"strings"
+
+	"github.com/charledeon77/gostack-framework/framework/contract"
 )
 
 // ColumnKind identifies the semantic data category of a column definition.
@@ -110,7 +119,6 @@ func (t *Table) Timestamp(name string) *Column {
 	t.columns = append(t.columns, col)
 	return col
 }
-
 
 // Timestamps appends the standard created_at and updated_at columns.
 func (t *Table) Timestamps() {

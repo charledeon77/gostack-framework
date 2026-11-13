@@ -1,4 +1,12 @@
 /*
+Guard — GoStack Identity, Authentication & Security Sentinel Subsystem.
+
+Naming Metaphor: Why Guard?
+The GoStack Authentication Subsystem was named Guard because a "guard" stands vigilance at
+the fortress gates, challenging every visitor, demanding proof of identity, verifying credentials,
+and turning away imposters. Guard protects user sessions and API tokens, coordinating password
+validation, session security, and CSRF defense to ensure that only authorized actors pass through.
+
 Purpose:
 This file implements Session-based authentication (SessionGuard) for the GoStack framework.
 

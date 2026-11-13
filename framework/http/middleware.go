@@ -1,5 +1,12 @@
-// Package http (Navigator, Bridge, Tempose, and Glide) houses the pipeline, routing, and context tracking systems
-// governing the lifecycle of incoming web and API traffic.
+/*
+Bridge — GoStack Middleware Pipeline & Interceptor Subsystem.
+
+Naming Metaphor: Why Bridge?
+The GoStack Middleware Pipeline was named Bridge because a "bridge" is the connecting structure
+spanning the divide between raw incoming network traffic and the protected domain controllers.
+Every HTTP request must cross the Bridge, allowing security sentinels, rate limiters, session managers,
+and audit loggers to inspect and validate traffic before granting access to inner application logic.
+*/
 package http
 
 import (

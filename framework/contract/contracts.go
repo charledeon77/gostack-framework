@@ -1,4 +1,13 @@
 /*
+Contract — GoStack Core Driver Interface & Abstraction Subsystem.
+
+Naming Metaphor: Why Contract?
+The GoStack Interface Subsystem was named Contract because a legal "contract" binds two parties
+to an unshakeable agreement without either party needing to know the other's internal private mechanics.
+Contract enforces strict, immutable behavioral agreements across the entire ecosystem, allowing
+drivers (cache stores, database adapters, session engines, queue providers) to be swapped out
+seamlessly without breaking a single line of application code.
+
 Purpose:
 This file defines the abstract contract interfaces for the GoStack framework.
 It establishes unified behaviors for database connectivity, transactions, and session storage.

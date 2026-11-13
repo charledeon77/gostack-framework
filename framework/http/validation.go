@@ -1,4 +1,12 @@
 /*
+Validator — GoStack Request Payload Validation Engine Subsystem.
+
+Naming Metaphor: Why Validator?
+The GoStack Validation Subsystem was named Validator because it acts as an incorruptible inspector
+verifying the integrity, sanity, and format of every incoming data payload. By rejecting malformed,
+missing, or hostile inputs before they reach controller logic, Validator shields application models
+from corrupted state.
+
 Purpose:
 This file provides a lightweight, interface-driven validation layer for incoming HTTP request data,
 extended with a declarative rule composition engine for expressive, Laravel-style field validation.

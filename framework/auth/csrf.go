@@ -25,6 +25,7 @@ package auth
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"github.com/charledeon77/gostack-framework/framework/contract"
 	"github.com/charledeon77/gostack-framework/framework/http"
@@ -92,7 +93,7 @@ func CSRF(cookieName string) http.Middleware {
 			requestToken = ctx.Post("_token")
 		}
 
-		if requestToken == "" || requestToken != token {
+		if requestToken == "" || subtle.ConstantTimeCompare([]byte(requestToken), []byte(token)) != 1 {
 			ctx.Writer.WriteHeader(netHTTP.StatusForbidden)
 			_, _ = ctx.Writer.Write([]byte("403 Forbidden - CSRF Token Verification Failed"))
 			return nil

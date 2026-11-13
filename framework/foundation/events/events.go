@@ -1,4 +1,12 @@
 /*
+Spark — GoStack Event Dispatcher & Pub/Sub Subsystem.
+
+Naming Metaphor: Why Spark?
+The GoStack Event Dispatcher was named Spark because an electric "spark" instantly ignites
+a reaction without requiring physical coupling. In an enterprise system, domain actions (e.g. UserRegistered)
+should not directly call billing, email, or analytics modules. Instead, it emits a Spark, allowing
+decoupled listeners across the application to react synchronously or asynchronously.
+
 Purpose:
 This file implements the Spark EventDispatcher subsystem for the GoStack framework.
 It provides a synchronous and asynchronous Pub/Sub communication channel.

@@ -1,4 +1,12 @@
 /*
+Alert — GoStack Decoupled Multi-Channel Notification Subsystem.
+
+Naming Metaphor: Why Alert?
+The GoStack Notification Subsystem was named Alert because an "alert" is an immediate beacon
+that signals critical events to stakeholders across diverse channels. Alert allows an application
+to broadcast urgent user information simultaneously across Email, Database logs, and SMS channels
+through a clean, unified dispatch pipeline.
+
 Purpose:
 This file defines the core contracts and interfaces for GoStack's Multi-Channel Notification System.
 

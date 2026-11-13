@@ -9,6 +9,14 @@ import (
 )
 
 /*
+GowSocket — GoStack Real-Time Persistent WebSocket Hub Subsystem.
+
+Naming Metaphor: Why GowSocket?
+The GoStack Real-Time WebSocket Subsystem was named GowSocket as a playful blend of "Go" and "WebSocket"
+(whispering "Go Socket"). It transforms transient HTTP connections into persistent, bi-directional
+telecommunication lines, enabling instant chat, live indicators, and reactive updates to flow back and forth
+between client and server across native Go channels.
+
 Purpose:
 This file provides real-time, bi-directional WebSocket communication for GoStack applications.
 

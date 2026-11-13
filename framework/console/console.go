@@ -1,4 +1,12 @@
 /*
+Gost — GoStack Command-Line CLI Execution & Scaffolding Subsystem.
+
+Naming Metaphor: Why Gost?
+The GoStack CLI Tooling Subsystem was named Gost as a blend of "Go" and "Ghost" (or "Go Assistant").
+Like a quiet, efficient spirit working silently in the background, Gost handles all developer automation—
+scaffolding models, generating migration files, spinning up development servers, and executing batch
+tasks without getting in the developer's way.
+
 Purpose:
 This file defines the Gost CLI console execution subsystem for the GoStack framework.
 It provides the Command interface and the central console Kernel that registers,

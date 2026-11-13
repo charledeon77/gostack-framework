@@ -1,4 +1,12 @@
 /*
+Vault — GoStack Path-Traversal Secure Storage Subsystem.
+
+Naming Metaphor: Why Vault?
+The GoStack Storage Subsystem was named Vault because a bank "vault" is an impenetrable,
+reinforced safe that locks valuable assets behind strict security perimeters. Vault treats
+file uploads and disk writes like deposits into a reinforced chamber, strictly sanitizing and
+jailing file paths to completely shut down directory traversal attacks (`../../etc/passwd`).
+
 Purpose:
 This file implements the LocalStorage driver for the Vault storage subsystem of GoStack.
 It provides a standard file-system storage backend complying with the Storage interface.

@@ -1,5 +1,12 @@
-// Package http (Navigator, Bridge, Tempose, and Glide) houses the pipeline, routing, and context tracking systems
-// governing the lifecycle of incoming web and API traffic.
+/*
+Navigator — GoStack HTTP Router & Path Resolution Subsystem.
+
+Naming Metaphor: Why Navigator?
+The GoStack HTTP Router was named Navigator because a "navigator" charts courses through
+uncharted waters, calculating routes and guiding vessels swiftly and safely to their destination.
+Navigator inspects the incoming HTTP request stream, traverses radix route segments, resolves dynamic
+path parameters, and charts the execution journey straight to the designated presentation controller.
+*/
 package http
 
 import (

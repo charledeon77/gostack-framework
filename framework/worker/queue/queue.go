@@ -1,3 +1,28 @@
+/*
+Sequence — GoStack Deferred Background Queue Worker Subsystem.
+
+Naming Metaphor: Why Sequence?
+The GoStack Background Queue Subsystem was named Sequence because tasks and background jobs
+must be queued, orchestrated, and executed in an orderly, deterministic "sequence". Sequence
+ensures that time-intensive operations (sending transactional emails, processing video, generating
+PDFs) are deferred off the synchronous HTTP request path and dispatched through a resilient sequence
+of workers with automated retries and backoffs.
+
+Purpose: To provide an asynchronous job processing system (Sequence) for GoStack.
+Philosophy: A robust framework must handle long-running or failure-prone tasks outside
+the critical HTTP request-response cycle. By providing a generic, extensible queue
+interface, GoStack allows developers to seamlessly switch between local memory
+queues (for dev/testing) and distributed systems like Redis/RabbitMQ (for prod),
+without changing application logic.
+Architecture:
+- Job: An interface defining a processable unit of work (from contract.Job).
+- Queue: The interface for pushing and executing jobs (from contract.Queue).
+- MemoryQueue: A concurrent-safe, in-memory implementation of Queue.
+Choice:
+We use a simple `MemoryQueue` backed by a buffered channel for the default implementation.
+It provides excellent performance and requires zero configuration.
+A `sync.WaitGroup` is used in StartWorkers to safely manage worker goroutines.
+*/
 package queue
 
 import (
@@ -8,21 +33,6 @@ import (
 
 	"github.com/charledeon77/gostack-framework/framework/contract"
 )
-
-// Purpose: To provide an asynchronous job processing system (Sequence) for GoStack.
-// Philosophy: A robust framework must handle long-running or failure-prone tasks outside
-// the critical HTTP request-response cycle. By providing a generic, extensible queue
-// interface, GoStack allows developers to seamlessly switch between local memory
-// queues (for dev/testing) and distributed systems like Redis/RabbitMQ (for prod),
-// without changing application logic.
-// Architecture:
-// - Job: An interface defining a processable unit of work (from contract.Job).
-// - Queue: The interface for pushing and executing jobs (from contract.Queue).
-// - MemoryQueue: A concurrent-safe, in-memory implementation of Queue.
-// Choice:
-// We use a simple `MemoryQueue` backed by a buffered channel for the default implementation.
-// It provides excellent performance and requires zero configuration.
-// A `sync.WaitGroup` is used in StartWorkers to safely manage worker goroutines.
 
 var (
 	ErrQueueClosed = errors.New("queue is closed")

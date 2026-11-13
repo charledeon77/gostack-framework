@@ -1,4 +1,12 @@
 /*
+Conflex — GoStack ORM Relationship & Entity Resolver Subsystem.
+
+Naming Metaphor: Why Conflex?
+The GoStack ORM Relationship Subsystem was named Conflex as a fusion of "Connect" and "Flexibility".
+It provides an elastic yet resilient bridge connecting decoupled relational database rows into cohesive
+hierarchies of Go structs (`HasOne`, `HasMany`, `BelongsTo`, `ManyToMany`), eliminating N+1 performance
+penalties through intelligent, flexible batch resolutions.
+
 Purpose:
 This file implements the dynamic reflection-based ORM Relationship Management system
 for the GoStack framework. It supports eager loading for HasOne, HasMany, BelongsTo,

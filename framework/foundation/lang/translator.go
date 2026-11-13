@@ -1,3 +1,15 @@
+/*
+Transios — GoStack Localization & Translation Subsystem.
+
+Naming Metaphor: Why Transios?
+The GoStack Localization Subsystem was named Transios (from Latin "Transitio" and "Translate")
+because it serves as a universal translator, enabling applications to smoothly transition across
+different human languages, dialects, currencies, and cultural formats. Transios embeds core dictionaries
+directly into the application binary while welcoming custom override dictionaries from disk.
+
+Purpose:
+Transios provides a thread-safe, embedded localization and string translation engine.
+*/
 package lang
 
 import (

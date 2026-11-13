@@ -6,26 +6,11 @@ import (
 	"github.com/charledeon77/gostack-framework/framework/contract"
 	"github.com/charledeon77/gostack-framework/framework/database"
 	"github.com/charledeon77/gostack-framework/framework/mail"
-	"github.com/gocql/gocql"
-	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
-	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // DB holds the initialized global state application database driver adapter connection.
 // This is populated for relational SQL databases (MySQL, PostgreSQL, CockroachDB, SQLite).
 var DB contract.Database
-
-// Mongo is the global GoMon facade exposing the official MongoDB client.
-// This is populated when the application is initialized with a MongoDB connection.
-var Mongo *mongo.Client
-
-// Neo4j is the global Nexus facade exposing the official Neo4j graph database driver.
-// This is populated when the application is initialized with a Neo4j connection.
-var Neo4j neo4j.DriverWithContext
-
-// Cassandra is the global Aether facade exposing the official Cassandra session.
-// This is populated when the application is initialized with a Cassandra connection.
-var Cassandra *gocql.Session
 
 // Auth coordinates authentication strategies globally.
 var Auth *auth.AuthManager
@@ -36,7 +21,7 @@ var Mail contract.Mailer
 // InitDatabase provisions and activates the target relational database driver infrastructure.
 //
 // Supported drivers: "mysql", "postgres", "sqlite", "sqlite3", "cockroach", "cockroachdb".
-// For MongoDB, Neo4j, and Cassandra use InitMongo, InitNexus, and InitAether instead.
+// For MongoDB, Neo4j, and Cassandra, use their official gostack-extensions packages instead.
 //
 // Parameters:
 //   - driver: The database identifier string (e.g. "mysql", "postgres", "sqlite").
@@ -56,7 +41,7 @@ func InitDatabase(driver, dsn string) error {
 		}
 		db, err = database.NewSQLAdapter(effectiveDriver, dsn)
 	default:
-		return fmt.Errorf("database driver [%s] is not supported by InitDatabase. Use InitMongo, InitNexus, or InitAether for NoSQL/Graph databases", driver)
+		return fmt.Errorf("database driver [%s] is not supported by InitDatabase. For NoSQL/Graph databases, use the official gostack-extensions", driver)
 	}
 
 	if err != nil {
@@ -72,51 +57,6 @@ func InitDatabase(driver, dsn string) error {
 	}
 
 	DB = db
-	return nil
-}
-
-// InitMongo provisions and activates the GoMon MongoDB integration subsystem.
-// It connects to MongoDB using the provided URI and sets the global gostack.Mongo facade.
-//
-// Parameters:
-//   - uri: The MongoDB connection string (e.g. "mongodb://127.0.0.1:27017").
-func InitMongo(uri string) error {
-	client, err := database.InitGoMon(uri)
-	if err != nil {
-		return err
-	}
-	Mongo = client
-	return nil
-}
-
-// InitNexus provisions and activates the Nexus Neo4j graph database integration subsystem.
-// It connects using the official Neo4j driver and sets the global gostack.Neo4j facade.
-//
-// Parameters:
-//   - uri:      The Neo4j connection URI (e.g. "neo4j://localhost:7687").
-//   - username: The Neo4j username (typically "neo4j").
-//   - password: The Neo4j password.
-func InitNexus(uri, username, password string) error {
-	driver, err := database.InitNexus(uri, username, password)
-	if err != nil {
-		return err
-	}
-	Neo4j = driver
-	return nil
-}
-
-// InitAether provisions and activates the Aether Cassandra integration subsystem.
-// It connects to the Cassandra cluster and sets the global gostack.Cassandra facade.
-//
-// Parameters:
-//   - hosts:    A comma-separated string of Cassandra contact points (e.g. "127.0.0.1:9042").
-//   - keyspace: The Cassandra keyspace to bind the session to.
-func InitAether(hosts, keyspace string) error {
-	session, err := database.InitAether(hosts, keyspace)
-	if err != nil {
-		return err
-	}
-	Cassandra = session
 	return nil
 }
 

@@ -1,4 +1,11 @@
 /*
+GoCon — GoStack Environment Configuration Subsystem.
+
+Naming Metaphor: Why GoCon?
+The GoStack Configuration Subsystem was named GoCon as a clean fusion of "Go" and "Configuration".
+It serves as the master circuit breaker and environment coordinator, safely loading and parsing `.env`
+parameters into strongly-typed Go primitives so the application boots with full environmental awareness.
+
 Purpose:
 This file implements the GoCon environment configuration system. It parses a `.env`
 file and exposes typed getters used throughout the application.

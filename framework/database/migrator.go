@@ -1,4 +1,13 @@
 /*
+Traveller — GoStack Database Schema Migration Subsystem.
+
+Naming Metaphor: Why Traveller?
+The GoStack Database Schema Migration Subsystem was named Traveller because a "traveller"
+journeys forward and backward across different destinations and checkpoints. Traveller treats
+your database schema as a navigable timeline: it safely journeys forward into new schema versions
+via Up() transactions, and journeys back in time to earlier states via Rollback(), ensuring data
+integrity remains intact at every station.
+
 Purpose:
 This file implements the Traveller database migration registry and runner.
 

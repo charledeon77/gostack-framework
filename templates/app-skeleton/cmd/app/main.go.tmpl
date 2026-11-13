@@ -1,0 +1,45 @@
+package main
+
+import (
+	"fmt"
+	"log"
+
+	"github.com/charledeon77/gostack-framework"
+	"github.com/charledeon77/gostack-framework/framework/foundation"
+	"github.com/charledeon77/gostack-framework/framework/http"
+	"{{PROJECT_NAME}}/routes"
+)
+
+func main() {
+	// 1. Initialize Relational Database if configured
+	dbDriver := foundation.Get("DB_DRIVER", "sqlite")
+	dbDSN := foundation.Get("DB_DSN", "{{PROJECT_NAME}}.db")
+
+	if dbDSN != "" {
+		if err := gostack.InitDatabase(dbDriver, dbDSN); err != nil {
+			log.Printf("[GoStack App Warning] Database connection returned: %v\n", err)
+		}
+	}
+
+	// 2. Initialize Service Container
+	container := foundation.NewContainer()
+	if gostack.DB != nil {
+		container.BindSingleton("db", func(c *foundation.Container) any {
+			return gostack.DB
+		})
+	}
+
+	// 3. Initialize HTTP Router
+	router := http.NewRouter()
+	routes.RegisterWebRoutes(router)
+
+	// 4. Start Application Kernel
+	kernel := foundation.NewKernel(container, router)
+	port := ":" + foundation.Get("APP_PORT", "8080")
+	fmt.Printf("🚀 {{PROJECT_NAME}} running on http://localhost%s\n", port)
+
+	if err := kernel.Run(port); err != nil {
+		log.Fatalf("Server shutdown: %v", err)
+	}
+}
+

@@ -1,6 +1,16 @@
-// Package foundation (Citadel) provides the core orchestration layer for the Gostack framework.
-// It is responsible for booting the application, managing lifecycle events,
-// and coordinating between the HTTP and database layers.
+/*
+Citadel — GoStack Framework Kernel Bootloader Subsystem.
+
+Naming Metaphor: Why Citadel?
+The GoStack Framework Kernel was named Citadel because a "citadel" is a heavily fortified
+stronghold positioned to command and protect an entire city. As Citadel, this kernel guards
+the application's lifecycle, coordinates dependencies, orchestrates the boot sequence,
+and executes graceful teardowns to safeguard data in-flight when the system halts.
+
+Purpose:
+It is responsible for booting the application, managing lifecycle events,
+and coordinating between the HTTP and database layers.
+*/
 package foundation
 
 import (

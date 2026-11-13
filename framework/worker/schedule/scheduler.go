@@ -1,3 +1,16 @@
+/*
+Planner — GoStack Native Cron Task Scheduler Subsystem.
+
+Naming Metaphor: Why Planner?
+The GoStack Task Scheduler was named Planner because a "planner" organizes future time horizons,
+ensuring recurring commitments are met punctually without chaos. Planner replaces messy system
+crontabs by bringing cron expressions, timezone awareness, and overlap protection directly into the
+running Go application binary.
+
+Purpose: Native background task scheduling engine (Planner) for GoStack.
+Philosophy: Modern web apps shouldn't need an external cron daemon for periodic
+tasks. This engine uses Go's concurrent select loops — zero external dependencies.
+*/
 package schedule
 
 import (
@@ -9,10 +22,6 @@ import (
 	"sync/atomic"
 	"time"
 )
-
-// Purpose: Native background task scheduling engine (Planner) for GoStack.
-// Philosophy: Modern web apps shouldn't need an external cron daemon for periodic
-// tasks. This engine uses Go's concurrent select loops — zero external dependencies.
 //
 // New in this version:
 //   - Timezone support: jobs can run in any IANA time zone.

@@ -1,4 +1,12 @@
 /*
+Glide — GoStack Zero-Dependency Client-Side Reactivity Engine Subsystem.
+
+Naming Metaphor: Why Glide?
+The GoStack Client Reactivity Engine was named Glide because it provides smooth, frictionless
+interactivity that "glides" directly across existing DOM elements without the crushing mass or
+complexity of Node.js, Webpack, or npm dependencies. Like an ice skater gliding on ice, Glide brings
+declarative two-way bindings and animations to the browser effortlessly.
+
 Purpose:
 This file contains the Glide client-side reactive directive engine, embedded as a Go
 string constant so the entire runtime ships inside the binary — zero HTTP round-trips

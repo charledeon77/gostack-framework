@@ -1,4 +1,11 @@
 /*
+GoMail — GoStack SMTP HTML Mailer Subsystem.
+
+Naming Metaphor: Why GoMail?
+The GoStack SMTP HTML Mailer Subsystem was named GoMail to reflect a seamless, pure-Go
+communication channel. It pairs Go's robust `net/smtp` network capabilities with rich MIME/HTML
+templating, ensuring reliable, high-speed transactional message delivery without third-party bloat.
+
 Purpose:
 This file implements the GoMail email sending component. It provides an interface
 and implementation for sending rich text and HTML emails via SMTP.

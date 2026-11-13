@@ -1,0 +1,17 @@
+package routes
+
+import (
+	"github.com/charledeon77/gostack-framework/framework/http"
+	"{{PROJECT_NAME}}/app/controllers"
+)
+
+// RegisterWebRoutes defines application web routes.
+func RegisterWebRoutes(router *http.Router) {
+	home := controllers.NewHomeController()
+
+	// Apply global security headers and logging
+	router.Use(http.SecurityHeaders())
+
+	router.Get("/", home.Index, http.Logger)
+}
+

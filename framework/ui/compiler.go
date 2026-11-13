@@ -1,4 +1,12 @@
 /*
+Tempose — GoStack Ahead-of-Time (AOT) UI Component Compiler Subsystem.
+
+Naming Metaphor: Why Tempose?
+The GoStack UI Component Compiler was named Tempose as an elegant blend of "Tempo" (rhythm and speed)
+and "Compose" (building cohesive UI components). Tempose composes HTML markup, scoped CSS stylesheets,
+and client scripts into pure, lightning-fast Go byte streams at compile-time, delivering high-tempo
+rendering performance without runtime template parsing overhead.
+
 Purpose:
 This file implements the Tempose Ahead-of-Time (AOT) component compilation engine.
 

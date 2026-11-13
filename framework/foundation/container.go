@@ -1,5 +1,13 @@
-// Package foundation (Citadel) serves as the core booting and structural bedrock of the 
-// GoStack framework, managing low-level application lifecycles and diagnostics.
+/*
+Anchor — GoStack Inversion of Control (IoC) Service Container Subsystem.
+
+Naming Metaphor: Why Anchor?
+The GoStack Service Container was named Anchor because an "anchor" provides an immovable,
+steady foundation that moors a ship against shifting tides and currents. In a complex fullstack
+application, services, singletons, and storage adapters can easily float into chaotic circular
+dependencies; Anchor firmly grounds and binds every component recipe into a thread-safe registry,
+preventing architecture drift and race conditions.
+*/
 package foundation
 
 import (
