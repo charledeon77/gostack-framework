@@ -128,19 +128,19 @@ func (g *SessionGuard) User(r *http.Request) (contract.Authenticatable, bool) {
 	// 3. Extract the cached user ID
 	userID := sess.Get(g.sessionKey)
 	if userID == nil {
-		g.cacheUser(r, nil)
+		cacheUser(r, nil)
 		return nil, false
 	}
 
 	// 4. Resolve user via Provider contract
 	user, err := g.provider.RetrieveByID(userID)
 	if err != nil || user == nil {
-		g.cacheUser(r, nil)
+		cacheUser(r, nil)
 		return nil, false
 	}
 
 	// 5. Cache for subsequent calls within this request lifecycle
-	g.cacheUser(r, user)
+	cacheUser(r, user)
 	return user, true
 }
 
@@ -193,7 +193,7 @@ func (g *SessionGuard) Login(w http.ResponseWriter, r *http.Request, user contra
 			return saveErr
 		}
 	}
-	g.cacheUser(r, user)
+	cacheUser(r, user)
 	return nil
 }
 
@@ -233,7 +233,7 @@ func (g *SessionGuard) Logout(w http.ResponseWriter, r *http.Request) error {
 		MaxAge:   -1,
 	})
 
-	g.cacheUser(r, nil)
+	cacheUser(r, nil)
 	return nil
 }
 
@@ -247,13 +247,4 @@ func (g *SessionGuard) getSession(r *http.Request) (contract.Session, error) {
 		return nil, ErrSessionUninitialized
 	}
 	return sess, nil
-}
-
-func (g *SessionGuard) cacheUser(r *http.Request, user contract.Authenticatable) {
-	if cacheVal := r.Context().Value(contract.UserContextKey); cacheVal != nil {
-		if cache, ok := cacheVal.(*contract.AuthCache); ok {
-			cache.User = user
-			cache.Loaded = true
-		}
-	}
 }

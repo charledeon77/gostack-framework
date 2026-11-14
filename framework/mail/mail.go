@@ -73,7 +73,6 @@ type Message struct {
 	Subject     string
 	Body        string     // Plain-text body
 	HTMLBody    string     // HTML body (when non-empty, a multipart/alternative message is built)
-	IsHTML      bool       // Deprecated: prefer HTMLBody; kept for backward compatibility
 	Attachments []Attachment
 }
 
@@ -191,7 +190,7 @@ func (m *Mailer) Send(msg any) error {
 func (m *Mailer) BuildRaw(msg Message) []byte {
 	boundary := "==GoStack_MIME_Boundary=="
 	hasAttachments := len(msg.Attachments) > 0
-	hasHTML := msg.HTMLBody != "" || msg.IsHTML
+	hasHTML := msg.HTMLBody != ""
 
 	var b strings.Builder
 

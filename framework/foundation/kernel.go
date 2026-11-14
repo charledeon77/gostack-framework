@@ -24,6 +24,7 @@ import (
 
 	"github.com/charledeon77/gostack-framework/framework/contract"
 	ghttp "github.com/charledeon77/gostack-framework/framework/http"
+	"github.com/charledeon77/gostack-framework/framework/ui"
 )
 
 // Kernel acts as the heart of the framework. It holds the application's
@@ -107,19 +108,12 @@ func (k *Kernel) Run(addr string) error {
 	}
 
 	if os.Getenv("APP_ENV") != "production" {
+		compiler := ui.NewAssetCompiler("templates/components", "cmd/app")
+		watcher := ui.NewHotReloadWatcher(compiler, 500*time.Millisecond)
+		go watcher.Start(context.Background())
+
 		k.Router.Get("/__gostack_reload", func(ctx *ghttp.Context) {
-			ctx.Writer.Header().Set("Content-Type", "text/event-stream")
-			ctx.Writer.Header().Set("Cache-Control", "no-cache")
-			ctx.Writer.Header().Set("Connection", "keep-alive")
-			ctx.Writer.Header().Set("X-Accel-Buffering", "no")
-			ctx.Writer.WriteHeader(http.StatusOK)
-
-			_, _ = ctx.Writer.Write([]byte("data: connected\n\n"))
-			if flusher, ok := ctx.Writer.(http.Flusher); ok {
-				flusher.Flush()
-			}
-
-			<-ctx.Request.Context().Done()
+			watcher.ServeSSE(ctx.Writer, ctx.Request)
 		})
 	}
 

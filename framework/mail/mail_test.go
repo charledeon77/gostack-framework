@@ -131,10 +131,9 @@ func TestMailer_Send(t *testing.T) {
 
 	mailer := NewMailer(cfg)
 	msg := Message{
-		To:      []string{"recipient@example.com"},
-		Subject: "Test Email",
-		Body:    "<h1>Hello World</h1>",
-		IsHTML:  true,
+		To:       []string{"recipient@example.com"},
+		Subject:  "Test Email",
+		HTMLBody: "<h1>Hello World</h1>",
 	}
 
 	err := mailer.Send(msg)
@@ -155,7 +154,6 @@ func TestMailer_BuildRaw(t *testing.T) {
 		CC:      []string{"cc@example.com"},
 		Subject: "Subject",
 		Body:    "Plain Text Body",
-		IsHTML:  false,
 	}
 
 	raw := string(mailer.BuildRaw(msg))

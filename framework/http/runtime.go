@@ -97,6 +97,29 @@ func (e *Engine) ServeHTTP(w netHTTP.ResponseWriter, r *netHTTP.Request) {
 	effectiveMethod := r.Method
 	effectiveWriter := w
 
+	// HTTP Method Spoofing (PAR-10): Allow POST forms with _method=PUT/PATCH/DELETE
+	// or X-HTTP-Method-Override header to match the overridden HTTP method.
+	if r.Method == netHTTP.MethodPost {
+		var override string
+		if header := r.Header.Get("X-HTTP-Method-Override"); header != "" {
+			override = header
+		} else if query := r.URL.Query().Get("_method"); query != "" {
+			override = query
+		} else if r.PostForm != nil {
+			override = r.PostFormValue("_method")
+		} else if strings.Contains(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
+			_ = r.ParseForm()
+			override = r.PostFormValue("_method")
+		}
+
+		if override != "" {
+			upper := strings.ToUpper(override)
+			if upper == netHTTP.MethodPut || upper == netHTTP.MethodPatch || upper == netHTTP.MethodDelete {
+				effectiveMethod = upper
+			}
+		}
+	}
+
 	// Support HEAD method: route to GET if no explicit HEAD handler, discard response body (SEC-05)
 	if r.Method == "HEAD" {
 		if _, hasHead := e.Router.GetRoutes()["HEAD "+r.URL.Path]; !hasHead {

@@ -1501,6 +1501,80 @@ const GlideJS = `
             });
         });
 
+        // gs-enhance: Svelte-like seamless progressive AJAX form enhancement
+        rootEl.querySelectorAll('form[gs-enhance]').forEach(function(form) {
+            if (!isDirectChild(form, rootEl)) return;
+            if (form._glideEnhanced) return;
+            form._glideEnhanced = true;
+            form.addEventListener('submit', function(e) {
+                e.preventDefault();
+                form.classList.add('gs-submitting');
+                const action = form.getAttribute('action') || window.location.href;
+                const method = (form.getAttribute('method') || 'POST').toUpperCase();
+                const fd = new FormData(form);
+
+                form.dispatchEvent(new CustomEvent('glide:enhance-submit', {
+                    bubbles: true,
+                    cancelable: true,
+                    detail: { form: form, formData: fd }
+                }));
+
+                fetch(action, {
+                    method: method,
+                    body: fd,
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'Accept': 'application/json, text/html, */*'
+                    }
+                }).then(function(res) {
+                    const contentType = res.headers.get('content-type') || '';
+                    if (contentType.indexOf('application/json') !== -1) {
+                        return res.json().then(function(json) {
+                            return { isJson: true, ok: res.ok, status: res.status, data: json };
+                        });
+                    }
+                    return res.text().then(function(html) {
+                        return { isJson: false, ok: res.ok, status: res.status, html: html };
+                    });
+                }).then(function(result) {
+                    form.classList.remove('gs-submitting');
+                    if (result.ok) {
+                        if (result.isJson) {
+                            if (reactive) {
+                                reactive.$lastResponse = result.data;
+                            }
+                        } else {
+                            const targetSelector = form.getAttribute('gs-enhance-target');
+                            if (targetSelector) {
+                                const target = document.querySelector(targetSelector);
+                                if (target) target.innerHTML = result.html;
+                            }
+                        }
+                        form.dispatchEvent(new CustomEvent('glide:enhance-success', {
+                            bubbles: true,
+                            detail: result
+                        }));
+                    } else {
+                        if (result.isJson && result.data && result.data.errors && reactive) {
+                            reactive.$errors = result.data.errors;
+                        }
+                        form.dispatchEvent(new CustomEvent('glide:enhance-error', {
+                            bubbles: true,
+                            detail: result
+                        }));
+                    }
+                    scheduleUpdate();
+                }).catch(function(err) {
+                    form.classList.remove('gs-submitting');
+                    form.dispatchEvent(new CustomEvent('glide:enhance-error', {
+                        bubbles: true,
+                        detail: { error: err }
+                    }));
+                    scheduleUpdate();
+                });
+            });
+        });
+
         rootEl._glide = { data: reactive, refresh: scheduleUpdate };
     }
 
@@ -1530,6 +1604,68 @@ const GlideJS = `
                 initScope(el);
                 el.removeAttribute('gs-cloak');
             }
+        });
+
+        // Standalone gs-enhance forms (outside gs-data)
+        document.querySelectorAll('form[gs-enhance]:not([gs-data] form)').forEach(function(form) {
+            if (form._glideEnhanced) return;
+            form._glideEnhanced = true;
+            form.addEventListener('submit', function(e) {
+                e.preventDefault();
+                form.classList.add('gs-submitting');
+                const action = form.getAttribute('action') || window.location.href;
+                const method = (form.getAttribute('method') || 'POST').toUpperCase();
+                const fd = new FormData(form);
+
+                form.dispatchEvent(new CustomEvent('glide:enhance-submit', {
+                    bubbles: true,
+                    cancelable: true,
+                    detail: { form: form, formData: fd }
+                }));
+
+                fetch(action, {
+                    method: method,
+                    body: fd,
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'Accept': 'application/json, text/html, */*'
+                    }
+                }).then(function(res) {
+                    const contentType = res.headers.get('content-type') || '';
+                    if (contentType.indexOf('application/json') !== -1) {
+                        return res.json().then(function(json) {
+                            return { isJson: true, ok: res.ok, status: res.status, data: json };
+                        });
+                    }
+                    return res.text().then(function(html) {
+                        return { isJson: false, ok: res.ok, status: res.status, html: html };
+                    });
+                }).then(function(result) {
+                    form.classList.remove('gs-submitting');
+                    if (result.ok) {
+                        const targetSelector = form.getAttribute('gs-enhance-target');
+                        if (targetSelector && !result.isJson) {
+                            const target = document.querySelector(targetSelector);
+                            if (target) target.innerHTML = result.html;
+                        }
+                        form.dispatchEvent(new CustomEvent('glide:enhance-success', {
+                            bubbles: true,
+                            detail: result
+                        }));
+                    } else {
+                        form.dispatchEvent(new CustomEvent('glide:enhance-error', {
+                            bubbles: true,
+                            detail: result
+                        }));
+                    }
+                }).catch(function(err) {
+                    form.classList.remove('gs-submitting');
+                    form.dispatchEvent(new CustomEvent('glide:enhance-error', {
+                        bubbles: true,
+                        detail: { error: err }
+                    }));
+                });
+            });
         });
     }
 

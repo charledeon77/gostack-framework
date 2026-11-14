@@ -84,3 +84,13 @@ func (m *AuthManager) Login(w http.ResponseWriter, r *http.Request, user contrac
 func (m *AuthManager) Logout(w http.ResponseWriter, r *http.Request) error {
 	return m.Guard("").Logout(w, r)
 }
+
+// cacheUser writes the authenticated user into the request context's AuthCache (D4).
+func cacheUser(r *http.Request, user contract.Authenticatable) {
+	if cacheVal := r.Context().Value(contract.UserContextKey); cacheVal != nil {
+		if cache, ok := cacheVal.(*contract.AuthCache); ok {
+			cache.User = user
+			cache.Loaded = true
+		}
+	}
+}

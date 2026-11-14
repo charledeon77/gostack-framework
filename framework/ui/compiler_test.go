@@ -1,10 +1,14 @@
 package ui
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAssetCompilerRun(t *testing.T) {
@@ -230,5 +234,49 @@ func TestCompiler_SEC27_TraversalAndLayouts(t *testing.T) {
 	}
 	if !strings.Contains(compiled, `<header><nav>Navigation</nav></header>`) {
 		t.Errorf("Expected nested includes to be inlined, got compiled:\n%s", compiled)
+	}
+}
+
+func TestHotReloadWatcher_ServeSSE(t *testing.T) {
+	watcher := NewHotReloadWatcher(nil, 500*time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "/__gostack_reload", nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		watcher.ServeSSE(rec, req)
+		close(done)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Broadcast reload event
+	watcher.broadcast()
+	time.Sleep(50 * time.Millisecond)
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("ServeSSE did not terminate after context cancellation")
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, ": connected\n\n") {
+		t.Errorf("expected ': connected' in SSE stream, got %q", body)
+	}
+	if !strings.Contains(body, "data: reload\n\n") {
+		t.Errorf("expected 'data: reload' in SSE stream, got %q", body)
+	}
+	if rec.Header().Get("Content-Type") != "text/event-stream" {
+		t.Errorf("expected Content-Type text/event-stream, got %q", rec.Header().Get("Content-Type"))
 	}
 }

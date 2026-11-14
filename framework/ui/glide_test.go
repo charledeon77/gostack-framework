@@ -81,3 +81,26 @@ func TestGlide_SEC43_RouterOKAndOriginGuard(t *testing.T) {
 	}
 }
 
+func TestGlide_EnhanceDirective(t *testing.T) {
+	// 1. Verify gs-enhance directive is recognized
+	if !strings.Contains(GlideJS, "form[gs-enhance]") {
+		t.Errorf("Expected GlideJS to query for form[gs-enhance]")
+	}
+
+	// 2. Verify AJAX submission and event dispatching
+	if !strings.Contains(GlideJS, "glide:enhance-submit") {
+		t.Errorf("Expected GlideJS to dispatch glide:enhance-submit event")
+	}
+	if !strings.Contains(GlideJS, "glide:enhance-success") {
+		t.Errorf("Expected GlideJS to dispatch glide:enhance-success event")
+	}
+	if !strings.Contains(GlideJS, "glide:enhance-error") {
+		t.Errorf("Expected GlideJS to dispatch glide:enhance-error event")
+	}
+
+	// 3. Verify loading class
+	if !strings.Contains(GlideJS, "gs-submitting") {
+		t.Errorf("Expected GlideJS to toggle gs-submitting class")
+	}
+}
+

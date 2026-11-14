@@ -62,30 +62,30 @@ func (g *TokenGuard) User(r *http.Request) (contract.Authenticatable, bool) {
 	// 2. Extract token from Header or Query parameters
 	token := g.getToken(r)
 	if token == "" {
-		g.cacheUser(r, nil)
+		cacheUser(r, nil)
 		return nil, false
 	}
 
 	// 3. Resolve user using the Credentials hook
 	user, err := g.provider.RetrieveByCredentials(map[string]any{"token": token})
 	if err != nil || user == nil {
-		g.cacheUser(r, nil)
+		cacheUser(r, nil)
 		return nil, false
 	}
 
-	g.cacheUser(r, user)
+	cacheUser(r, user)
 	return user, true
 }
 
 // Login is a stateless no-op for TokenGuard.
 func (g *TokenGuard) Login(w http.ResponseWriter, r *http.Request, user contract.Authenticatable) error {
-	g.cacheUser(r, user)
+	cacheUser(r, user)
 	return nil
 }
 
 // Logout is a stateless no-op for TokenGuard.
 func (g *TokenGuard) Logout(w http.ResponseWriter, r *http.Request) error {
-	g.cacheUser(r, nil)
+	cacheUser(r, nil)
 	return nil
 }
 
@@ -98,13 +98,4 @@ func (g *TokenGuard) getToken(r *http.Request) string {
 		return r.URL.Query().Get("api_token")
 	}
 	return ""
-}
-
-func (g *TokenGuard) cacheUser(r *http.Request, user contract.Authenticatable) {
-	if cacheVal := r.Context().Value(contract.UserContextKey); cacheVal != nil {
-		if cache, ok := cacheVal.(*contract.AuthCache); ok {
-			cache.User = user
-			cache.Loaded = true
-		}
-	}
 }

@@ -38,6 +38,7 @@ package ui
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -899,38 +900,16 @@ func (w *HotReloadWatcher) subscribe() (chan struct{}, func()) {
 // ServeSSE writes an HTTP/SSE stream that sends a "reload" event whenever the
 // compiler detects a component change. Connect a browser EventSource to this
 // endpoint to get automatic page refreshes during development.
-func (w *HotReloadWatcher) ServeSSE(writer interface {
-	Header() interface{ Set(string, string) }
-	WriteHeader(int)
-	Write([]byte) (int, error)
-	Flush()
-}, req interface{ Context() interface{ Done() <-chan struct{} } }) {
-	type flusher interface {
-		Flush()
+func (w *HotReloadWatcher) ServeSSE(rw http.ResponseWriter, req *http.Request) {
+	rw.Header().Set("Content-Type", "text/event-stream")
+	rw.Header().Set("Cache-Control", "no-cache")
+	rw.Header().Set("Connection", "keep-alive")
+	rw.Header().Set("X-Accel-Buffering", "no")
+	rw.WriteHeader(http.StatusOK)
+	_, _ = rw.Write([]byte(": connected\n\n"))
+	if f, ok := rw.(http.Flusher); ok {
+		f.Flush()
 	}
-
-	// We use net/http types directly — the interface approach keeps this file
-	// free of an import cycle with framework/http.
-	type headerSetter interface {
-		Header() interface{ Set(string, string) }
-	}
-
-	// In practice callers pass *http.ResponseWriter — safe to cast.
-	type realWriter interface {
-		Header() interface {
-			Set(string, string)
-		}
-		WriteHeader(int)
-		Write([]byte) (int, error)
-		Flush()
-	}
-
-	writer.Header().Set("Content-Type", "text/event-stream")
-	writer.Header().Set("Cache-Control", "no-cache")
-	writer.Header().Set("X-Accel-Buffering", "no")
-	writer.WriteHeader(200)
-	writer.Write([]byte(": connected\n\n")) //nolint:errcheck
-	writer.Flush()
 
 	ch, unsub := w.subscribe()
 	defer unsub()
@@ -939,8 +918,10 @@ func (w *HotReloadWatcher) ServeSSE(writer interface {
 	for {
 		select {
 		case <-ch:
-			writer.Write([]byte("data: reload\n\n")) //nolint:errcheck
-			writer.Flush()
+			_, _ = rw.Write([]byte("data: reload\n\n"))
+			if f, ok := rw.(http.Flusher); ok {
+				f.Flush()
+			}
 		case <-done:
 			return
 		}

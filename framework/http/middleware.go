@@ -11,10 +11,13 @@ package http
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
 	netHTTP "net/http"
+	"strings"
 	"time"
 )
 
@@ -219,4 +222,53 @@ func TrailingSlashRedirectMiddleware() Middleware {
 		}
 		return next(ctx)
 	}
+}
+
+// MethodOverrideMiddleware enables HTTP method spoofing (PAR-10).
+// HTML forms only support GET and POST. When a POST request contains a "_method"
+// query parameter or form field (or "X-HTTP-Method-Override" header), this middleware
+// mutates ctx.Request.Method so the router matches PUT, PATCH, or DELETE route definitions.
+func MethodOverrideMiddleware() Middleware {
+	return func(ctx *Context, next NextHandler) error {
+		if ctx.Request.Method == netHTTP.MethodPost {
+			var override string
+			if header := ctx.Request.Header.Get("X-HTTP-Method-Override"); header != "" {
+				override = header
+			} else if query := ctx.Request.URL.Query().Get("_method"); query != "" {
+				override = query
+			} else if ctx.Request.PostForm != nil {
+				override = ctx.Request.PostFormValue("_method")
+			}
+
+			if override != "" {
+				upper := strings.ToUpper(override)
+				if upper == netHTTP.MethodPut || upper == netHTTP.MethodPatch || upper == netHTTP.MethodDelete {
+					ctx.Request.Method = upper
+				}
+			}
+		}
+		return next(ctx)
+	}
+}
+
+// RequestIDMiddleware injects an X-Request-ID correlation header (PAR-17).
+// If an incoming request already carries an X-Request-ID (e.g. from an API gateway),
+// it is preserved; otherwise, a unique hex identifier is generated.
+// The ID is attached to both the response headers and the request context.
+func RequestIDMiddleware() Middleware {
+	return func(ctx *Context, next NextHandler) error {
+		reqID := ctx.Request.Header.Get("X-Request-ID")
+		if reqID == "" {
+			reqID = generateRequestID()
+		}
+		ctx.Writer.Header().Set("X-Request-ID", reqID)
+		ctx.Set("request_id", reqID)
+		return next(ctx)
+	}
+}
+
+func generateRequestID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }

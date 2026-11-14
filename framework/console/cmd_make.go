@@ -1227,7 +1227,6 @@ func (m *{{.StructName}}) Build() mail.Message {
 	return mail.Message{
 		Subject: "Notification from GoStack",
 		Body:    "Hello " + m.RecipientName + ",\n\nThis is a notification email sent from GoStack.",
-		IsHTML:  false,
 	}
 }
 `

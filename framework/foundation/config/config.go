@@ -36,9 +36,11 @@ package config
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Manager holds the parsed environment configuration map.
@@ -152,4 +154,28 @@ func (m *Manager) GetBool(key string, fallback bool) bool {
 	default:
 		return fallback
 	}
+}
+
+// GetDuration returns the parsed time.Duration value for key (e.g. "5s", "10m", "1h"),
+// or fallback if the key is absent or cannot be parsed. (PAR-21)
+func (m *Manager) GetDuration(key string, fallback time.Duration) time.Duration {
+	v, ok := m.values[key]
+	if !ok || v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return fallback
+	}
+	return d
+}
+
+// MustGet returns the value for key or panics if the key is missing or empty (PAR-21).
+// Used for required production secrets and infrastructure URLs that must fail-closed at boot.
+func (m *Manager) MustGet(key string) string {
+	v, ok := m.values[key]
+	if !ok || strings.TrimSpace(v) == "" {
+		panic(fmt.Sprintf("config: required configuration key %q is missing or empty", key))
+	}
+	return v
 }

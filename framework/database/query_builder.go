@@ -74,19 +74,29 @@ func isValidDirection(dir string) bool {
 
 // QueryBuilder serves as the core state manager for SQL construction.
 type QueryBuilder struct {
-	table       string
-	columns     []string
-	where       []string
-	joins       []string
-	bindings    []any
-	db          contract.Database
-	tx          contract.Tx
-	relations   []string
-	orderBy     string // e.g. "created_at DESC"
-	limitVal    int    // 0 = no limit
-	offsetVal   int    // 0 = no offset
-	withTrashed bool
-	err         error
+	table           string
+	columns         []string
+	where           []string
+	joins           []string
+	bindings        []any
+	db              contract.Database
+	tx              contract.Tx
+	relations       []string
+	orderBy         string // e.g. "created_at DESC"
+	limitVal        int    // 0 = no limit
+	offsetVal       int    // 0 = no offset
+	withTrashed     bool
+	allowMassMutate bool   // PAR-12: opt-in for mass UPDATE/DELETE without WHERE
+	err             error
+}
+
+// AllowMassMutation opts in to allowing UPDATE or DELETE without a WHERE clause (PAR-12).
+// This is an explicit, dangerous override — by default GoStack rejects mass mutations.
+//
+//	gostack.Table("staging").AllowMassMutation().Delete()
+func (qb *QueryBuilder) AllowMassMutation() *QueryBuilder {
+	qb.allowMassMutate = true
+	return qb
 }
 
 func (qb *QueryBuilder) setErr(err error) {
@@ -590,6 +600,11 @@ func (qb *QueryBuilder) UpdateModel(model any, data map[string]any) error {
 		return nil
 	}
 
+	// PAR-12: Reject mass UPDATE without a WHERE clause unless explicitly opted in.
+	if len(qb.where) == 0 && !qb.allowMassMutate {
+		return fmt.Errorf("database: dangerous UPDATE without WHERE clause rejected; call AllowMassMutation() to force a full-table update")
+	}
+
 	for col := range data {
 		if !identRegex.MatchString(col) {
 			return fmt.Errorf("[Crafter] invalid column identifier in Update: %q", col)
@@ -641,6 +656,11 @@ func (qb *QueryBuilder) DeleteModel(model any) error {
 	}
 	if qb.db == nil && qb.tx == nil {
 		return fmt.Errorf("database connection is nil; ensure the QueryBuilder was initialized with a valid database adapter")
+	}
+
+	// PAR-12: Reject mass DELETE without a WHERE clause unless explicitly opted in.
+	if len(qb.where) == 0 && !qb.allowMassMutate {
+		return fmt.Errorf("database: dangerous DELETE without WHERE clause rejected; call AllowMassMutation() to force a full-table delete")
 	}
 
 	// Fire BeforeDelete hook.
@@ -818,6 +838,87 @@ func (qb *QueryBuilder) InsertModel(model any, data map[string]any) error {
 		}
 	}
 	return nil
+}
+
+// InsertGetId compiles and executes an INSERT statement and returns the generated primary key (PAR-13).
+// On PostgreSQL/CockroachDB it appends RETURNING id and reads from the query result.
+// On MySQL and SQLite it uses sql.Result.LastInsertId().
+func (qb *QueryBuilder) InsertGetId(data map[string]any) (int64, error) {
+	if qb.err != nil {
+		return 0, qb.err
+	}
+	if qb.db == nil {
+		return 0, fmt.Errorf("database connection is nil; InsertGetId requires a *SQLAdapter connection")
+	}
+	if len(data) == 0 {
+		return 0, fmt.Errorf("InsertGetId called with empty data map")
+	}
+
+	for col := range data {
+		if !identRegex.MatchString(col) {
+			return 0, fmt.Errorf("[Crafter] invalid column identifier in InsertGetId: %q", col)
+		}
+	}
+
+	var columns []string
+	var placeholders []string
+	var bindings []any
+
+	drv := qb.db.Driver()
+	isPostgres := drv == "postgres" || drv == "cockroach" || drv == "cockroachdb"
+
+	for col, val := range data {
+		columns = append(columns, col)
+		if isPostgres {
+			placeholders = append(placeholders, fmt.Sprintf("$%d", len(bindings)+1))
+		} else {
+			placeholders = append(placeholders, "?")
+		}
+		bindings = append(bindings, val)
+	}
+
+	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+		qb.table, strings.Join(columns, ", "), strings.Join(placeholders, ", "))
+
+	if isPostgres {
+		// Postgres: use RETURNING id and Query to retrieve the new ID.
+		query += " RETURNING id"
+		rows, err := qb.db.Query(query, bindings...)
+		if err != nil {
+			return 0, fmt.Errorf("InsertGetId: query failed: %w", err)
+		}
+		defer func() {
+			if rc, ok := rows.(interface{ Close() error }); ok {
+				_ = rc.Close()
+			}
+		}()
+		if sr, ok := rows.(interface {
+			Next() bool
+			Scan(dest ...any) error
+		}); ok && sr.Next() {
+			var id int64
+			if err := sr.Scan(&id); err != nil {
+				return 0, fmt.Errorf("InsertGetId: scan RETURNING id failed: %w", err)
+			}
+			return id, nil
+		}
+		return 0, fmt.Errorf("InsertGetId: no row returned from RETURNING id")
+	}
+
+	// MySQL / SQLite: use ExecResult to call LastInsertId.
+	adapter, ok := qb.db.(*SQLAdapter)
+	if !ok {
+		return 0, fmt.Errorf("InsertGetId: LastInsertId requires a *SQLAdapter (got %T)", qb.db)
+	}
+	result, err := adapter.ExecResult(query, bindings...)
+	if err != nil {
+		return 0, fmt.Errorf("InsertGetId: exec failed: %w", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("InsertGetId: LastInsertId failed: %w", err)
+	}
+	return id, nil
 }
 
 // PageMeta stores structural pagination attributes for API response formatting.

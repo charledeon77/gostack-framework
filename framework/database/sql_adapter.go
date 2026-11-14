@@ -114,6 +114,19 @@ func (a *SQLAdapter) Exec(sqlString string, args ...any) error {
 	return nil
 }
 
+// ExecResult executes a SQL statement and returns the sql.Result for retrieving LastInsertId (PAR-13).
+// This is used internally by InsertGetId and is not part of the contract.Database interface.
+func (a *SQLAdapter) ExecResult(sqlString string, args ...any) (sql.Result, error) {
+	if a == nil || a.db == nil {
+		return nil, fmt.Errorf("database connection is uninitialized")
+	}
+	result, err := a.db.Exec(sqlString, args...)
+	if err != nil {
+		return nil, fmt.Errorf("exec statement failed: %w", err)
+	}
+	return result, nil
+}
+
 // BeginTx opens a new database transaction and returns it wrapped in the contract.Tx interface.
 func (a *SQLAdapter) BeginTx() (contract.Tx, error) {
 	if a == nil || a.db == nil {
