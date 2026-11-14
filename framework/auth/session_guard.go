@@ -30,8 +30,12 @@ Implementation:
 package auth
 
 import (
-	"github.com/charledeon77/gostack-framework/framework/contract"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
+
+	"github.com/charledeon77/gostack-framework/framework/contract"
 )
 
 // SessionGuard handles authentication using cookie-based session state.
@@ -39,15 +43,65 @@ type SessionGuard struct {
 	name       string
 	provider   contract.UserProvider
 	sessionKey string
+	store      contract.SessionStore
+	cookieName string
 }
 
 // NewSessionGuard builds a new SessionGuard targeting a named guard context.
-func NewSessionGuard(name string, provider contract.UserProvider) *SessionGuard {
-	return &SessionGuard{
+func NewSessionGuard(name string, provider contract.UserProvider, storeAndCookie ...any) *SessionGuard {
+	sg := &SessionGuard{
 		name:       name,
 		provider:   provider,
 		sessionKey: "auth_" + name + "_user_id",
+		cookieName: "gostack_session",
 	}
+	if len(storeAndCookie) > 0 {
+		if s, ok := storeAndCookie[0].(contract.SessionStore); ok {
+			sg.store = s
+		}
+	}
+	if len(storeAndCookie) > 1 {
+		if cn, ok := storeAndCookie[1].(string); ok && cn != "" {
+			sg.cookieName = cn
+		}
+	}
+	return sg
+}
+
+// SetStore attaches a SessionStore instance directly to the guard.
+func (g *SessionGuard) SetStore(store contract.SessionStore) *SessionGuard {
+	g.store = store
+	return g
+}
+
+// SetCookieName sets the session cookie name used by this guard.
+func (g *SessionGuard) SetCookieName(name string) *SessionGuard {
+	g.cookieName = name
+	return g
+}
+
+func (g *SessionGuard) getStore(r *http.Request) contract.SessionStore {
+	if g.store != nil {
+		return g.store
+	}
+	if val := r.Context().Value(contract.SessionStoreContextKey); val != nil {
+		if store, ok := val.(contract.SessionStore); ok {
+			return store
+		}
+	}
+	return nil
+}
+
+func (g *SessionGuard) getCookieName(r *http.Request) string {
+	if g.cookieName != "" {
+		return g.cookieName
+	}
+	if val := r.Context().Value(contract.SessionCookieNameContextKey); val != nil {
+		if name, ok := val.(string); ok && name != "" {
+			return name
+		}
+	}
+	return "gostack_session"
 }
 
 // Check verifies if the incoming request contains an authenticated session user.
@@ -91,13 +145,54 @@ func (g *SessionGuard) User(r *http.Request) (contract.Authenticatable, bool) {
 }
 
 // Login commits user details to session, signing them in.
+// Rotates the session ID to prevent session fixation attacks (SEC-03).
 func (g *SessionGuard) Login(w http.ResponseWriter, r *http.Request, user contract.Authenticatable) error {
 	sess, err := g.getSession(r)
 	if err != nil {
 		return err
 	}
 
-	sess.Set(g.sessionKey, user.GetID())
+	store := g.getStore(r)
+	cookieName := g.getCookieName(r)
+
+	targetSess := sess
+	if store != nil {
+		newSess, rotateErr := store.Rotate(sess.ID())
+		if rotateErr != nil {
+			return rotateErr
+		}
+		targetSess = newSess
+
+		// Re-emit session cookie with newly rotated session ID
+		isSecure := true
+		appEnv := strings.ToLower(os.Getenv("APP_ENV"))
+		if appEnv == "local" || appEnv == "development" {
+			isSecure = r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+		}
+		maxAge := 7200
+		if lifetimeStr := os.Getenv("SESSION_LIFETIME"); lifetimeStr != "" {
+			if mins, parseErr := strconv.Atoi(lifetimeStr); parseErr == nil && mins > 0 {
+				maxAge = mins * 60
+			}
+		}
+
+		http.SetCookie(w, &http.Cookie{
+			Name:     cookieName,
+			Value:    targetSess.ID(),
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   isSecure,
+			SameSite: http.SameSiteLaxMode,
+			MaxAge:   maxAge,
+		})
+	}
+
+	targetSess.Set(g.sessionKey, user.GetID())
+	if store != nil {
+		if saveErr := store.Save(targetSess); saveErr != nil {
+			return saveErr
+		}
+	}
 	g.cacheUser(r, user)
 	return nil
 }
@@ -114,15 +209,30 @@ func (g *SessionGuard) Attempt(w http.ResponseWriter, r *http.Request, credentia
 	return g.Login(w, r, user)
 }
 
-
-// Logout deletes user ID from session.
+// Logout deletes user session, destroys it server-side, and clears the client cookie (SEC-03).
 func (g *SessionGuard) Logout(w http.ResponseWriter, r *http.Request) error {
 	sess, err := g.getSession(r)
 	if err != nil {
 		return err
 	}
 
-	sess.Delete(g.sessionKey)
+	store := g.getStore(r)
+	cookieName := g.getCookieName(r)
+
+	if store != nil {
+		_ = store.Destroy(sess.ID())
+	}
+	sess.Clear()
+
+	// Clear client-side cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     cookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   -1,
+	})
+
 	g.cacheUser(r, nil)
 	return nil
 }

@@ -10,10 +10,12 @@ and audit loggers to inspect and validate traffic before granting access to inne
 package http
 
 import (
+	"bufio"
 	"fmt"
-	"time"
-
+	"io"
+	"net"
 	netHTTP "net/http"
+	"time"
 )
 
 // Middleware defines the strict functional contract for all GoStack interceptor layers.
@@ -93,7 +95,8 @@ func (p *Pipeline) Run(ctx *Context, destination NextHandler) error {
 	return nexter(0)(ctx)
 }
 
-// statusCapture wraps http.ResponseWriter to intercept the written status code.
+// statusCapture wraps http.ResponseWriter to intercept the written status code
+// while transparently forwarding streaming capabilities (SEC-15).
 type statusCapture struct {
 	netHTTP.ResponseWriter
 	code int
@@ -102,6 +105,37 @@ type statusCapture struct {
 func (sc *statusCapture) WriteHeader(code int) {
 	sc.code = code
 	sc.ResponseWriter.WriteHeader(code)
+}
+
+func (sc *statusCapture) Flush() {
+	if f, ok := sc.ResponseWriter.(netHTTP.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (sc *statusCapture) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := sc.ResponseWriter.(netHTTP.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, fmt.Errorf("statusCapture: underlying ResponseWriter does not implement http.Hijacker")
+}
+
+func (sc *statusCapture) Push(target string, opts *netHTTP.PushOptions) error {
+	if p, ok := sc.ResponseWriter.(netHTTP.Pusher); ok {
+		return p.Push(target, opts)
+	}
+	return netHTTP.ErrNotSupported
+}
+
+func (sc *statusCapture) ReadFrom(r io.Reader) (int64, error) {
+	if rf, ok := sc.ResponseWriter.(io.ReaderFrom); ok {
+		return rf.ReadFrom(r)
+	}
+	return io.Copy(sc.ResponseWriter, r)
+}
+
+func (sc *statusCapture) Unwrap() netHTTP.ResponseWriter {
+	return sc.ResponseWriter
 }
 
 // Logger is a production-ready request logging middleware.

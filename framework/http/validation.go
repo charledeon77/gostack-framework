@@ -248,11 +248,16 @@ func MaxLength(n int) Rule {
 }
 
 // Matches returns a Rule that rejects values not matching the given regular expression.
+// SEC-28: Uses regexp.Compile instead of MustCompile so a malformed pattern returns
+// a validation error message rather than panicking the server process.
 //
 // Example: http.Matches(`^[a-zA-Z]+$`)
 func Matches(pattern string) Rule {
-	compiled := regexp.MustCompile(pattern)
+	compiled, compileErr := regexp.Compile(pattern)
 	return func(field, value string) (bool, string) {
+		if compileErr != nil {
+			return false, fmt.Sprintf("%s validation rule has an invalid pattern: %v", field, compileErr)
+		}
 		if !compiled.MatchString(value) {
 			return false, fmt.Sprintf("%s format is invalid", field)
 		}
@@ -264,6 +269,7 @@ func Matches(pattern string) Rule {
 //
 // Security: table and column names are validated against a strict alphanumeric+underscore allowlist
 // before being interpolated into the SQL query, preventing SQL injection attacks.
+// SEC-29: Uses driver-aware placeholder syntax ($1 for PostgreSQL, ? for MySQL/SQLite).
 func IsUnique(db contract.Database, table, column string) Rule {
 	return func(field, value string) (bool, string) {
 		// Guard against SQL injection: only allow safe identifier characters.
@@ -274,7 +280,12 @@ func IsUnique(db contract.Database, table, column string) Rule {
 			return false, fmt.Sprintf("%s uniqueness check failed: invalid column name", field)
 		}
 
-		query := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s = ?", table, column)
+		// SEC-29: Use driver-aware placeholder to support PostgreSQL and MySQL/SQLite.
+		placeholder := "?"
+		if drv := db.Driver(); drv == "postgres" || drv == "cockroach" || drv == "cockroachdb" {
+			placeholder = "$1"
+		}
+		query := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s = %s", table, column, placeholder)
 		result, err := db.Query(query, value)
 		if err != nil {
 			return false, fmt.Sprintf("%s uniqueness check failed: %v", field, err)

@@ -45,11 +45,11 @@ func TestMemoryQueue_PushAndProcess(t *testing.T) {
 	// wait for processing
 	time.Sleep(100 * time.Millisecond)
 
-	if job1.processed != 1 {
-		t.Errorf("Expected job1 to be processed once, got %d", job1.processed)
+	if atomic.LoadInt32(&job1.processed) != 1 {
+		t.Errorf("Expected job1 to be processed once, got %d", atomic.LoadInt32(&job1.processed))
 	}
-	if job2.processed != 1 {
-		t.Errorf("Expected job2 to be processed once, got %d", job2.processed)
+	if atomic.LoadInt32(&job2.processed) != 1 {
+		t.Errorf("Expected job2 to be processed once, got %d", atomic.LoadInt32(&job2.processed))
 	}
 
 	err = q.Close()

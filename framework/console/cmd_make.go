@@ -27,10 +27,59 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"text/template"
 	"time"
 )
+
+// SEC-38: Generator name validation preventing directory traversal, null bytes, and malicious filenames
+var validNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+
+func validateGeneratorName(name string) error {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return fmt.Errorf("name cannot be empty")
+	}
+	if strings.Contains(trimmed, "..") || strings.Contains(trimmed, "/") || strings.Contains(trimmed, "\\") || strings.Contains(trimmed, "\x00") {
+		return fmt.Errorf("invalid generator name %q: path traversal characters are forbidden", name)
+	}
+	if !validNameRegex.MatchString(trimmed) {
+		return fmt.Errorf("invalid generator name %q: must contain only alphanumeric characters and underscores", name)
+	}
+	return nil
+}
+
+func parseMakeArgs(args []string) (name string, force bool, err error) {
+	var positional []string
+	for _, a := range args {
+		if a == "--force" || a == "-f" {
+			force = true
+		} else {
+			positional = append(positional, a)
+		}
+	}
+	if len(positional) == 0 {
+		return "", false, fmt.Errorf("name argument is missing")
+	}
+	if err := validateGeneratorName(positional[0]); err != nil {
+		return "", false, err
+	}
+	return positional[0], force, nil
+}
+
+// SEC-39: Safe file writing preventing accidental overwrites unless --force is passed
+func writeGeneratedFile(filePath string, formatted []byte, force bool) error {
+	if !force {
+		if _, err := os.Stat(filePath); err == nil {
+			return fmt.Errorf("file %q already exists (use --force to overwrite)", filePath)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+	return os.WriteFile(filePath, formatted, 0644)
+}
 
 // ─── make:migration ────────────────────────────────────────────────────────────
 
@@ -76,11 +125,11 @@ func init() {
 
 // Execute runs the migration scaffolding pipeline.
 func (c *MakeMigrationCommand) Execute(args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("make:migration failed: migration name argument is missing. Example: make:migration create_posts_table")
+	rawName, force, err := parseMakeArgs(args)
+	if err != nil {
+		return fmt.Errorf("make:migration failed: %w", err)
 	}
 
-	rawName := args[0]
 	versionStr := time.Now().Format("20060102150405")
 	var versionInt int64
 	if _, err := fmt.Sscanf(versionStr, "%d", &versionInt); err != nil {
@@ -90,10 +139,6 @@ func (c *MakeMigrationCommand) Execute(args []string) error {
 	tableName := strings.TrimSuffix(strings.TrimPrefix(rawName, "create_"), "_table")
 	fileName := fmt.Sprintf("%s_%s.go", versionStr, rawName)
 	filePath := filepath.Join("database", "migrations", fileName)
-
-	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
 
 	tmpl, err := template.New("migration").Parse(migrationStub)
 	if err != nil {
@@ -110,7 +155,7 @@ func (c *MakeMigrationCommand) Execute(args []string) error {
 		return fmt.Errorf("failed to format generated source: %w", err)
 	}
 
-	if err := os.WriteFile(filePath, formatted, 0644); err != nil {
+	if err := writeGeneratedFile(filePath, formatted, force); err != nil {
 		return fmt.Errorf("failed to write migration file: %w", err)
 	}
 
@@ -161,11 +206,11 @@ func (c *{{.StructName}}) Index(ctx *http.Context) error {
 
 // Execute runs the controller scaffolding pipeline.
 func (c *MakeControllerCommand) Execute(args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("make:controller failed: controller name argument is missing")
+	rawName, force, err := parseMakeArgs(args)
+	if err != nil {
+		return fmt.Errorf("make:controller failed: %w", err)
 	}
 
-	rawName := args[0]
 	structName := toCamelCase(rawName)
 	if !strings.HasSuffix(structName, "Controller") {
 		structName += "Controller"
@@ -173,10 +218,6 @@ func (c *MakeControllerCommand) Execute(args []string) error {
 
 	fileName := toSnakeCase(structName) + ".go"
 	filePath := filepath.Join("internal", "controller", fileName)
-
-	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
 
 	tmpl, err := template.New("controller").Parse(controllerStub)
 	if err != nil {
@@ -193,7 +234,7 @@ func (c *MakeControllerCommand) Execute(args []string) error {
 		return fmt.Errorf("failed to format generated source: %w", err)
 	}
 
-	if err := os.WriteFile(filePath, formatted, 0644); err != nil {
+	if err := writeGeneratedFile(filePath, formatted, force); err != nil {
 		return fmt.Errorf("failed to write controller file: %w", err)
 	}
 
@@ -925,13 +966,8 @@ func (m *{{.StructName}}) GetID() any { return m.ID }
 
 // Execute runs the model scaffolding pipeline.
 func (c *MakeModelCommand) Execute(args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("make:model failed: model name argument is missing. Example: make:model Post")
-	}
-
-	// Strip --migration flag before processing the name.
 	withMigration := false
-	filteredArgs := args[:0]
+	var filteredArgs []string
 	for _, a := range args {
 		if a == "--migration" {
 			withMigration = true
@@ -939,21 +975,18 @@ func (c *MakeModelCommand) Execute(args []string) error {
 			filteredArgs = append(filteredArgs, a)
 		}
 	}
-	if len(filteredArgs) < 1 {
-		return fmt.Errorf("make:model failed: model name argument is missing")
+
+	rawName, force, err := parseMakeArgs(filteredArgs)
+	if err != nil {
+		return fmt.Errorf("make:model failed: %w", err)
 	}
 
-	rawName := filteredArgs[0]
 	structName := toCamelCase(rawName)
 	// Derive the snake_case plural table name (e.g. BlogPost → blog_posts).
 	tableName := toSnakeCase(structName) + "s"
 
 	fileName := toSnakeCase(structName) + ".go"
 	filePath := filepath.Join("internal", "model", fileName)
-
-	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
 
 	tmpl, err := template.New("model").Parse(modelStub)
 	if err != nil {
@@ -973,7 +1006,7 @@ func (c *MakeModelCommand) Execute(args []string) error {
 		return fmt.Errorf("failed to format generated source: %w", err)
 	}
 
-	if err := os.WriteFile(filePath, formatted, 0644); err != nil {
+	if err := writeGeneratedFile(filePath, formatted, force); err != nil {
 		return fmt.Errorf("failed to write model file: %w", err)
 	}
 
@@ -983,7 +1016,11 @@ func (c *MakeModelCommand) Execute(args []string) error {
 	if withMigration {
 		migrationName := fmt.Sprintf("create_%s_table", tableName)
 		migCmd := &MakeMigrationCommand{}
-		if err := migCmd.Execute([]string{migrationName}); err != nil {
+		migArgs := []string{migrationName}
+		if force {
+			migArgs = append(migArgs, "--force")
+		}
+		if err := migCmd.Execute(migArgs); err != nil {
 			return fmt.Errorf("failed to scaffold companion migration: %w", err)
 		}
 	}
@@ -1040,11 +1077,11 @@ func (r *{{.StructName}}) Validate() map[string]string {
 
 // Execute runs the request scaffolding pipeline.
 func (c *MakeRequestCommand) Execute(args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("make:request failed: request name argument is missing. Example: make:request StoreUserRequest")
+	rawName, force, err := parseMakeArgs(args)
+	if err != nil {
+		return fmt.Errorf("make:request failed: %w", err)
 	}
 
-	rawName := args[0]
 	structName := toCamelCase(rawName)
 	if !strings.HasSuffix(structName, "Request") {
 		structName += "Request"
@@ -1052,10 +1089,6 @@ func (c *MakeRequestCommand) Execute(args []string) error {
 
 	fileName := toSnakeCase(structName) + ".go"
 	filePath := filepath.Join("internal", "request", fileName)
-
-	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
 
 	tmpl, err := template.New("request").Parse(requestStub)
 	if err != nil {
@@ -1072,7 +1105,7 @@ func (c *MakeRequestCommand) Execute(args []string) error {
 		return fmt.Errorf("failed to format generated source: %w", err)
 	}
 
-	if err := os.WriteFile(filePath, formatted, 0644); err != nil {
+	if err := writeGeneratedFile(filePath, formatted, force); err != nil {
 		return fmt.Errorf("failed to write request file: %w", err)
 	}
 
@@ -1118,11 +1151,11 @@ func {{.FuncName}}(ctx *http.Context, next http.NextHandler) error {
 
 // Execute runs the middleware scaffolding pipeline.
 func (c *MakeMiddlewareCommand) Execute(args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("make:middleware failed: middleware name argument is missing. Example: make:middleware log_request")
+	rawName, force, err := parseMakeArgs(args)
+	if err != nil {
+		return fmt.Errorf("make:middleware failed: %w", err)
 	}
 
-	rawName := args[0]
 	funcName := toCamelCase(rawName)
 	if !strings.HasSuffix(funcName, "Middleware") {
 		funcName += "Middleware"
@@ -1130,10 +1163,6 @@ func (c *MakeMiddlewareCommand) Execute(args []string) error {
 
 	fileName := toSnakeCase(funcName) + ".go"
 	filePath := filepath.Join("internal", "middleware", fileName)
-
-	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
 
 	tmpl, err := template.New("middleware").Parse(middlewareStub)
 	if err != nil {
@@ -1150,7 +1179,7 @@ func (c *MakeMiddlewareCommand) Execute(args []string) error {
 		return fmt.Errorf("failed to format generated source: %w", err)
 	}
 
-	if err := os.WriteFile(filePath, formatted, 0644); err != nil {
+	if err := writeGeneratedFile(filePath, formatted, force); err != nil {
 		return fmt.Errorf("failed to write middleware file: %w", err)
 	}
 
@@ -1205,11 +1234,11 @@ func (m *{{.StructName}}) Build() mail.Message {
 
 // Execute runs the mail scaffolding pipeline.
 func (c *MakeMailCommand) Execute(args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("make:mail failed: mail class name argument is missing. Example: make:mail OrderShipped")
+	rawName, force, err := parseMakeArgs(args)
+	if err != nil {
+		return fmt.Errorf("make:mail failed: %w", err)
 	}
 
-	rawName := args[0]
 	structName := toCamelCase(rawName)
 	if !strings.HasSuffix(structName, "Mail") {
 		structName += "Mail"
@@ -1217,10 +1246,6 @@ func (c *MakeMailCommand) Execute(args []string) error {
 
 	fileName := toSnakeCase(structName) + ".go"
 	filePath := filepath.Join("internal", "mail", fileName)
-
-	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
 
 	tmpl, err := template.New("mail").Parse(mailStub)
 	if err != nil {
@@ -1237,7 +1262,7 @@ func (c *MakeMailCommand) Execute(args []string) error {
 		return fmt.Errorf("failed to format generated source: %w", err)
 	}
 
-	if err := os.WriteFile(filePath, formatted, 0644); err != nil {
+	if err := writeGeneratedFile(filePath, formatted, force); err != nil {
 		return fmt.Errorf("failed to write mail file: %w", err)
 	}
 
@@ -1291,11 +1316,11 @@ func (s *{{.StructName}}) Run() error {
 
 // Execute runs the seeder scaffolding pipeline.
 func (c *MakeSeederCommand) Execute(args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("make:seeder failed: seeder name argument is missing. Example: make:seeder UserSeeder")
+	rawName, force, err := parseMakeArgs(args)
+	if err != nil {
+		return fmt.Errorf("make:seeder failed: %w", err)
 	}
 
-	rawName := args[0]
 	structName := toCamelCase(rawName)
 	if !strings.HasSuffix(structName, "Seeder") {
 		structName += "Seeder"
@@ -1303,10 +1328,6 @@ func (c *MakeSeederCommand) Execute(args []string) error {
 
 	fileName := toSnakeCase(structName) + ".go"
 	filePath := filepath.Join("database", "seeders", fileName)
-
-	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
 
 	tmpl, err := template.New("seeder").Parse(seederStub)
 	if err != nil {
@@ -1323,7 +1344,7 @@ func (c *MakeSeederCommand) Execute(args []string) error {
 		return fmt.Errorf("failed to format generated source: %w", err)
 	}
 
-	if err := os.WriteFile(filePath, formatted, 0644); err != nil {
+	if err := writeGeneratedFile(filePath, formatted, force); err != nil {
 		return fmt.Errorf("failed to write seeder file: %w", err)
 	}
 

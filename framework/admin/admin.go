@@ -54,9 +54,9 @@ import (
 //	}
 var AuthGuard func(next http.Handler) http.Handler
 
-// LocalOnlyGuard is the default admin panel guard when no AuthGuard is configured.
-// It allows requests only from localhost or 127.0.0.1, blocking all remote clients
-// to prevent accidental exposure of the admin CRUD interface in production.
+// LocalOnlyGuard is the admin panel guard used in local/development environments.
+// It allows requests only from localhost or 127.0.0.1 based strictly on RemoteAddr (ignoring
+// any spoofable X-Forwarded-For headers from untrusted clients).
 func LocalOnlyGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host := r.RemoteAddr

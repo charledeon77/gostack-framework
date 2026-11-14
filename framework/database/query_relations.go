@@ -31,6 +31,47 @@ import (
 	"strings"
 )
 
+// whereInChunkSize is the maximum number of values per IN (...) clause.
+// SEC-35: Chunking prevents "too many placeholders" errors on MySQL/SQLite
+// and avoids extremely large query plans on PostgreSQL for big parent sets.
+const whereInChunkSize = 500
+
+// chunkWhereInGet queries a table using chunked WhereIn to safely handle
+// large parent ID sets. It appends all hydrated child rows into destSlicePtr.
+func (qb *QueryBuilder) chunkWhereInGet(table, column string, values []any, destSlicePtr any) error {
+	destVal := reflect.ValueOf(destSlicePtr)
+	if destVal.Kind() != reflect.Ptr || destVal.Elem().Kind() != reflect.Slice {
+		return fmt.Errorf("[GoStack Relation Engine] chunkWhereInGet: destination must be a pointer to a slice")
+	}
+	destSlice := destVal.Elem()
+	elemType := destSlice.Type().Elem()
+
+	for start := 0; start < len(values); start += whereInChunkSize {
+		end := start + whereInChunkSize
+		if end > len(values) {
+			end = len(values)
+		}
+		chunk := values[start:end]
+
+		chunkSlicePtr := reflect.New(reflect.SliceOf(elemType))
+		childQb := New(qb.db, table)
+		if qb.tx != nil {
+			childQb.WithTx(qb.tx)
+		}
+		childQb.WhereIn(column, chunk)
+		if err := childQb.Get(chunkSlicePtr.Interface()); err != nil {
+			return err
+		}
+		chunkSlice := chunkSlicePtr.Elem()
+		for i := 0; i < chunkSlice.Len(); i++ {
+			destSlice = reflect.Append(destSlice, chunkSlice.Index(i))
+		}
+	}
+
+	destVal.Elem().Set(destSlice)
+	return nil
+}
+
 func (qb *QueryBuilder) eagerLoadRelations(dest any) error {
 	destVal := reflect.ValueOf(dest)
 	if destVal.Kind() != reflect.Ptr || destVal.IsNil() {
@@ -187,18 +228,21 @@ func (qb *QueryBuilder) loadHasOne(sliceVal reflect.Value, relationName, fkTag, 
 
 	childSliceType := reflect.SliceOf(childType)
 	childSlicePtr := reflect.New(childSliceType)
-	childQb := New(qb.db, tableTag)
-	if qb.tx != nil {
-		childQb.WithTx(qb.tx)
-	}
-	childQb.WhereIn(fkTag, pkValues)
-	if err := childQb.Get(childSlicePtr.Interface()); err != nil {
+	// SEC-35: Chunk large parent sets to avoid "too many placeholders" on MySQL/SQLite.
+	if err := qb.chunkWhereInGet(tableTag, fkTag, pkValues, childSlicePtr.Interface()); err != nil {
 		return err
 	}
 	childSlice := childSlicePtr.Elem()
 
 	if err := qb.recursiveEagerLoad(childSlice, nestedPaths); err != nil {
 		return err
+	}
+
+	// SEC-36: Require the FK tag to be found on the child struct; silently falling back
+	// to Field(0) would produce data corruption for any struct where the first field is not the FK.
+	childFKFieldName, err := findFieldByDBTag(structChildType, fkTag)
+	if err != nil {
+		return fmt.Errorf("[GoStack Relation Engine] loadHasOne: could not map FK '%s' to struct field on %s: %w", fkTag, structChildType.Name(), err)
 	}
 
 	childByParent := make(map[string]reflect.Value)
@@ -208,10 +252,7 @@ func (qb *QueryBuilder) loadHasOne(sliceVal reflect.Value, relationName, fkTag, 
 		if childVal.Kind() == reflect.Ptr {
 			childStructVal = childVal.Elem()
 		}
-		fkVal := childStructVal.FieldByName(childStructVal.Type().Field(0).Name).Interface()
-		if fName, err := findFieldByDBTag(structChildType, fkTag); err == nil {
-			fkVal = childStructVal.FieldByName(fName).Interface()
-		}
+		fkVal := childStructVal.FieldByName(childFKFieldName).Interface()
 		normFKVal := normalizeKey(fkVal)
 		if _, exists := childByParent[normFKVal]; !exists {
 			childByParent[normFKVal] = childVal
@@ -284,12 +325,8 @@ func (qb *QueryBuilder) loadHasMany(sliceVal reflect.Value, relationName, fkTag,
 	}
 
 	childSlicePtr := reflect.New(childSliceType)
-	childQb := New(qb.db, tableTag)
-	if qb.tx != nil {
-		childQb.WithTx(qb.tx)
-	}
-	childQb.WhereIn(fkTag, pkValues)
-	if err := childQb.Get(childSlicePtr.Interface()); err != nil {
+	// SEC-35: Chunk large parent sets to avoid "too many placeholders" on MySQL/SQLite.
+	if err := qb.chunkWhereInGet(tableTag, fkTag, pkValues, childSlicePtr.Interface()); err != nil {
 		return err
 	}
 	childSlice := childSlicePtr.Elem()
@@ -389,12 +426,8 @@ func (qb *QueryBuilder) loadBelongsTo(sliceVal reflect.Value, relationName, fkTa
 
 	ownerSliceType := reflect.SliceOf(ownerType)
 	ownerSlicePtr := reflect.New(ownerSliceType)
-	ownerQb := New(qb.db, tableTag)
-	if qb.tx != nil {
-		ownerQb.WithTx(qb.tx)
-	}
-	ownerQb.WhereIn(ownerPKColumn, fkValues)
-	if err := ownerQb.Get(ownerSlicePtr.Interface()); err != nil {
+	// SEC-35: Chunk large FK value sets.
+	if err := qb.chunkWhereInGet(tableTag, ownerPKColumn, fkValues, ownerSlicePtr.Interface()); err != nil {
 		return err
 	}
 	ownerSlice := ownerSlicePtr.Elem()
@@ -559,12 +592,8 @@ func (qb *QueryBuilder) loadManyToMany(sliceVal reflect.Value, relationName, fkT
 	}
 
 	childSlicePtr := reflect.New(childSliceType)
-	childQb := New(qb.db, tableTag)
-	if qb.tx != nil {
-		childQb.WithTx(qb.tx)
-	}
-	childQb.WhereIn(childPKColumn, relatedKeys)
-	if err := childQb.Get(childSlicePtr.Interface()); err != nil {
+	// SEC-35: Chunk large related key sets.
+	if err := qb.chunkWhereInGet(tableTag, childPKColumn, relatedKeys, childSlicePtr.Interface()); err != nil {
 		return err
 	}
 	childSlice := childSlicePtr.Elem()
@@ -715,12 +744,8 @@ func (qb *QueryBuilder) loadHasManyThrough(sliceVal reflect.Value, relationName,
 	}
 
 	childSlicePtr := reflect.New(childSliceType)
-	childQb := New(qb.db, tableTag)
-	if qb.tx != nil {
-		childQb.WithTx(qb.tx)
-	}
-	childQb.WhereIn(farFK, throughIDs)
-	if err := childQb.Get(childSlicePtr.Interface()); err != nil {
+	// SEC-35: Chunk large through-ID sets.
+	if err := qb.chunkWhereInGet(tableTag, farFK, throughIDs, childSlicePtr.Interface()); err != nil {
 		return err
 	}
 	childSlice := childSlicePtr.Elem()

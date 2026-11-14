@@ -84,6 +84,17 @@ func (s *RedisSession) GetFlash(key string) any {
 	return val
 }
 
+// All returns a shallow copy of all key-value pairs stored in the session.
+func (s *RedisSession) All() map[string]any {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	res := make(map[string]any, len(s.data))
+	for k, v := range s.data {
+		res[k] = v
+	}
+	return res
+}
+
 func (s *RedisSession) serialise() ([]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -143,7 +154,38 @@ func (store *RedisSessionStore) Save(s contract.Session) error {
 	return store.client.Set(context.Background(), s.ID(), payload, store.ttl).Err()
 }
 
+// Exists reports whether the session exists in Redis and is not expired (SEC-16).
+func (store *RedisSessionStore) Exists(id string) bool {
+	if id == "" {
+		return false
+	}
+	n, err := store.client.Exists(context.Background(), id).Result()
+	return err == nil && n > 0
+}
+
 // Destroy removes a session from Redis.
 func (store *RedisSessionStore) Destroy(id string) error {
 	return store.client.Del(context.Background(), id).Err()
+}
+
+// Rotate generates a new ID, migrates data, and deletes the old record in Redis (SEC-04).
+func (store *RedisSessionStore) Rotate(oldID string) (contract.Session, error) {
+	oldSess, err := store.Load(oldID)
+	if err != nil {
+		return nil, err
+	}
+
+	newID := generateSessionID()
+	newSess := newRedisSession(newID)
+
+	for k, v := range oldSess.All() {
+		newSess.data[k] = v
+	}
+
+	_ = store.Destroy(oldID)
+	if err := store.Save(newSess); err != nil {
+		return nil, err
+	}
+
+	return newSess, nil
 }

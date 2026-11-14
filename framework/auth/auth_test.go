@@ -90,6 +90,13 @@ func (s *mockSession) Get(key string) any   { return s.data[key] }
 func (s *mockSession) Set(key string, v any) { s.data[key] = v }
 func (s *mockSession) Delete(key string)    { delete(s.data, key) }
 func (s *mockSession) Clear()               { s.data = make(map[string]any) }
+func (s *mockSession) All() map[string]any {
+	res := make(map[string]any, len(s.data))
+	for k, v := range s.data {
+		res[k] = v
+	}
+	return res
+}
 
 // ─── TESTS ───────────────────────────────────────────────────────────────────
 
@@ -173,6 +180,85 @@ func TestSessionGuard(t *testing.T) {
 	}
 }
 
+// TestSessionGuard_SEC03_LoginRotateAndLogoutDestroy verifies SEC-03 acceptance criteria.
+func TestSessionGuard_SEC03_LoginRotateAndLogoutDestroy(t *testing.T) {
+	provider := newMockUserProvider()
+	user := &mockUser{id: int64(99), email: "test@example.com"}
+	provider.users[int64(99)] = user
+
+	memStore := http.NewInMemoryStore()
+	initialSess, _ := memStore.Load("initial-session-id-12345678901234567890123456789012")
+	initialSess.Set("cart_count", 3)
+	_ = memStore.Save(initialSess)
+
+	guard := NewSessionGuard("web", provider, memStore, "gostack_session")
+
+	req := httptest.NewRequest("POST", "/login", nil)
+	ctx := context.WithValue(req.Context(), contract.SessionContextKey, initialSess)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	err := guard.Login(w, req, user)
+	if err != nil {
+		t.Fatalf("Login failed: %v", err)
+	}
+
+	// 1. Captured cookie differs from old ID, and old ID no longer resolves in store
+	cookies := w.Result().Cookies()
+	var sessionCookie *netHTTP.Cookie
+	for _, c := range cookies {
+		if c.Name == "gostack_session" {
+			sessionCookie = c
+			break
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatal("expected session cookie to be set on Login")
+	}
+	if sessionCookie.Value == "initial-session-id-12345678901234567890123456789012" {
+		t.Fatal("expected session cookie value to be rotated to a new ID on Login")
+	}
+	if memStore.Exists("initial-session-id-12345678901234567890123456789012") {
+		t.Fatal("expected old session ID to no longer exist in store after Login rotation")
+	}
+
+	// 2. Arbitrary data is still readable under the new ID (migration preserved it)
+	newSess, err := memStore.Load(sessionCookie.Value)
+	if err != nil {
+		t.Fatalf("failed to load new session: %v", err)
+	}
+	if newSess.Get("cart_count") != 3 {
+		t.Fatalf("expected migrated session data 'cart_count'=3, got %v", newSess.Get("cart_count"))
+	}
+	if newSess.Get("auth_web_user_id") != int64(99) {
+		t.Fatalf("expected authenticated user ID in new session, got %v", newSess.Get("auth_web_user_id"))
+	}
+
+	// 3. Logout destroys session server-side and clears cookie
+	wLogout := httptest.NewRecorder()
+	reqLogout := httptest.NewRequest("POST", "/logout", nil)
+	reqLogout = reqLogout.WithContext(context.WithValue(reqLogout.Context(), contract.SessionContextKey, newSess))
+	err = guard.Logout(wLogout, reqLogout)
+	if err != nil {
+		t.Fatalf("Logout failed: %v", err)
+	}
+
+	if memStore.Exists(newSess.ID()) {
+		t.Fatal("expected session to be destroyed from store on Logout")
+	}
+
+	var logoutCookie *netHTTP.Cookie
+	for _, c := range wLogout.Result().Cookies() {
+		if c.Name == "gostack_session" {
+			logoutCookie = c
+			break
+		}
+	}
+	if logoutCookie == nil || logoutCookie.MaxAge != -1 || logoutCookie.Value != "" {
+		t.Fatalf("expected cookie to be cleared on Logout, got: %+v", logoutCookie)
+	}
+}
+
 func TestTokenGuard(t *testing.T) {
 	provider := newMockUserProvider() // retrieves ID 42 for token "valid-token"
 	guard := NewTokenGuard(provider)
@@ -207,14 +293,23 @@ func TestTokenGuard(t *testing.T) {
 		t.Errorf("Expected token login user ID 42, got %v (ok=%v)", retrieved.GetID(), ok)
 	}
 
-	// 4. Query param api_token validation
+	// 4. Query param api_token is ignored by default (SEC-30)
 	req = httptest.NewRequest("GET", "/?api_token=valid-token", nil)
 	cache4 := &contract.AuthCache{}
 	req = req.WithContext(context.WithValue(req.Context(), contract.UserContextKey, cache4))
 
 	retrieved, ok = guard.User(req)
-	if !ok || retrieved.GetID() != int64(42) {
-		t.Errorf("Expected query param login user ID 42, got %v (ok=%v)", retrieved.GetID(), ok)
+	if ok || retrieved != nil {
+		t.Errorf("Expected query param login to be rejected by default (SEC-30), got ok=%v", ok)
+	}
+
+	// 5. Query param api_token succeeds when explicitly opted-in (SEC-30)
+	guard.AllowQueryToken(true)
+	cache5 := &contract.AuthCache{}
+	req = req.WithContext(context.WithValue(req.Context(), contract.UserContextKey, cache5))
+	retrieved, ok = guard.User(req)
+	if !ok || retrieved == nil || retrieved.GetID() != int64(42) {
+		t.Errorf("Expected opt-in query param login user ID 42, got %v (ok=%v)", retrieved, ok)
 	}
 }
 

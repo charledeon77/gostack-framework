@@ -27,9 +27,12 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	netHTTP "net/http"
+	"os"
+	"strings"
+
 	"github.com/charledeon77/gostack-framework/framework/contract"
 	"github.com/charledeon77/gostack-framework/framework/http"
-	netHTTP "net/http"
 )
 
 // CSRF builds middleware that enforces Cross-Site Request Forgery protection.
@@ -67,8 +70,12 @@ func CSRF(cookieName string) http.Middleware {
 		ctx.Set("csrf_token", token)
 
 		// Set companion XSRF cookie so frontend JS clients can read it.
-		// Secure is enabled automatically when the request is served over HTTPS.
-		isSecure := ctx.Request.TLS != nil || ctx.Request.Header.Get("X-Forwarded-Proto") == "https"
+		// Secure is enabled automatically in production, and for HTTPS/TLS requests in local/dev (SEC-02).
+		isSecure := true
+		appEnv := strings.ToLower(os.Getenv("APP_ENV"))
+		if appEnv == "local" || appEnv == "development" {
+			isSecure = ctx.Request.TLS != nil || ctx.Request.Header.Get("X-Forwarded-Proto") == "https"
+		}
 		netHTTP.SetCookie(ctx.Writer, &netHTTP.Cookie{
 			Name:     cookieName,
 			Value:    token,

@@ -25,10 +25,22 @@ package http
 
 import (
 	"fmt"
-	"github.com/charledeon77/gostack-framework/framework/contract"
 	netHTTP "net/http"
+	"os"
+	"regexp"
+	"strings"
 	"sync"
+	"time"
+
+	"github.com/charledeon77/gostack-framework/framework/contract"
 )
+
+var validSessionIDRegex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// IsValidSessionID validates that a session ID matches the required 64-character hexadecimal format.
+func IsValidSessionID(id string) bool {
+	return validSessionIDRegex.MatchString(id)
+}
 
 // MemorySession represents an active user session stored in local server memory.
 //
@@ -37,16 +49,18 @@ import (
 // to permit concurrent readers (e.g., loading multiple fields during rendering) while securing
 // write actions (e.g., logging in or adding items to a basket).
 type MemorySession struct {
-	id   string
-	mu   sync.RWMutex
-	data map[string]any
+	id           string
+	mu           sync.RWMutex
+	data         map[string]any
+	lastActivity time.Time
 }
 
 // NewMemorySession creates a fresh instanced MemorySession with the given ID.
 func NewMemorySession(id string) *MemorySession {
 	return &MemorySession{
-		id:   id,
-		data: make(map[string]any),
+		id:           id,
+		data:         make(map[string]any),
+		lastActivity: time.Now(),
 	}
 }
 
@@ -117,25 +131,96 @@ func (s *MemorySession) GetFlash(key string) any {
 	return val
 }
 
-// InMemoryStore implements the contract.SessionStore interface by keeping
-// active sessions stored in a thread-safe map in server RAM.
-//
-// WARNING:
-// Because the data is not written to disk or shared, restarting the server processes
-// will invalidate all active sessions, and multi-node clusters will not share session states.
-type InMemoryStore struct {
-	mu       sync.RWMutex
-	sessions map[string]*MemorySession
+// All returns a shallow copy of all key-value pairs stored in the session.
+func (s *MemorySession) All() map[string]any {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	res := make(map[string]any, len(s.data))
+	for k, v := range s.data {
+		res[k] = v
+	}
+	return res
 }
 
-// NewInMemoryStore returns a pointer to an initialized InMemoryStore.
-func NewInMemoryStore() *InMemoryStore {
-	return &InMemoryStore{
-		sessions: make(map[string]*MemorySession),
+// InMemoryStore implements the contract.SessionStore interface by keeping
+// active sessions stored in a thread-safe map in server RAM equipped with automatic TTL sweeping (SEC-14).
+type InMemoryStore struct {
+	mu          sync.RWMutex
+	sessions    map[string]contract.Session
+	activities  map[string]time.Time
+	ttl         time.Duration
+	stopSweeper chan struct{}
+}
+
+// NewInMemoryStore returns a pointer to an initialized InMemoryStore with active background TTL sweep.
+func NewInMemoryStore(lifetime ...time.Duration) *InMemoryStore {
+	ttl := 2 * time.Hour
+	if len(lifetime) > 0 && lifetime[0] > 0 {
+		ttl = lifetime[0]
+	}
+
+	store := &InMemoryStore{
+		sessions:    make(map[string]contract.Session),
+		activities:  make(map[string]time.Time),
+		ttl:         ttl,
+		stopSweeper: make(chan struct{}),
+	}
+
+	// Active background sweeper (SEC-14)
+	go store.sweeper()
+
+	return store
+}
+
+func (store *InMemoryStore) sweeper() {
+	ticker := time.NewTicker(store.ttl / 2)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			store.Sweep()
+		case <-store.stopSweeper:
+			return
+		}
 	}
 }
 
-// Load retrieves a session by its unique ID from the store. 
+// Sweep purges sessions that have exceeded their TTL.
+func (store *InMemoryStore) Sweep() {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	cutoff := time.Now().Add(-store.ttl)
+	for id, act := range store.activities {
+		if act.Before(cutoff) {
+			delete(store.sessions, id)
+			delete(store.activities, id)
+		}
+	}
+}
+
+// ActiveCount returns current number of retained sessions for testing.
+func (store *InMemoryStore) ActiveCount() int {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	return len(store.sessions)
+}
+
+// Close terminates the background sweeper goroutine.
+func (store *InMemoryStore) Close() {
+	close(store.stopSweeper)
+}
+
+// Exists reports whether the session ID is currently active in the store (SEC-16).
+func (store *InMemoryStore) Exists(id string) bool {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	_, exists := store.sessions[id]
+	return exists
+}
+
+// Load retrieves a session by its unique ID from the store.
 // If the session is missing, a new session is initialized and saved.
 func (store *InMemoryStore) Load(id string) (contract.Session, error) {
 	store.mu.Lock()
@@ -146,19 +231,41 @@ func (store *InMemoryStore) Load(id string) (contract.Session, error) {
 		s = NewMemorySession(id)
 		store.sessions[id] = s
 	}
+	store.activities[id] = time.Now()
 	return s, nil
 }
 
-// Save commits the given session structure state into the store registry.
+// Rotate implements contract.SessionStore without any runtime type assertions (SEC-04).
+func (store *InMemoryStore) Rotate(oldID string) (contract.Session, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	newID := generateSessionID()
+	newSess := NewMemorySession(newID)
+
+	if oldSess, exists := store.sessions[oldID]; exists {
+		for k, v := range oldSess.All() {
+			newSess.Set(k, v)
+		}
+		delete(store.sessions, oldID)
+		delete(store.activities, oldID)
+	}
+
+	store.sessions[newID] = newSess
+	store.activities[newID] = time.Now()
+	return newSess, nil
+}
+
+// Save commits the given session structure state into the store registry without type assertions (SEC-04).
 func (store *InMemoryStore) Save(s contract.Session) error {
-	memSession, ok := s.(*MemorySession)
-	if !ok {
-		return fmt.Errorf("session store: expected *MemorySession, got %T", s)
+	if s == nil {
+		return fmt.Errorf("session store: cannot save nil session")
 	}
 
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	store.sessions[s.ID()] = memSession
+	store.sessions[s.ID()] = s
+	store.activities[s.ID()] = time.Now()
 	return nil
 }
 
@@ -167,44 +274,31 @@ func (store *InMemoryStore) Destroy(id string) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	delete(store.sessions, id)
+	delete(store.activities, id)
 	return nil
 }
 
-// RegenerateID issues a brand new session ID for the given session, transfers
-// all existing data, and removes the old session entry. Call this immediately
-// after a successful login to prevent session fixation attacks.
-//
-// Example:
-//
-//	sess := http.GetSession(ctx)
-//	http.RegenerateSessionID(ctx, store, sess, "gostack_session")
+// RegenerateSessionID issues a brand new session ID for the given session, transfers
+// all existing data, and removes the old session entry across any store driver (SEC-04).
 func RegenerateSessionID(ctx *Context, store contract.SessionStore, sess contract.Session, cookieName string) (contract.Session, error) {
-	newID := generateSessionID()
-
-	// Build new session and copy all data from old session.
-	newSess := NewMemorySession(newID)
-	if ms, ok := sess.(*MemorySession); ok {
-		ms.mu.RLock()
-		for k, v := range ms.data {
-			newSess.data[k] = v
-		}
-		ms.mu.RUnlock()
-	}
-
-	// Destroy old session and save new session.
-	_ = store.Destroy(sess.ID())
-	if err := store.Save(newSess); err != nil {
+	newSess, err := store.Rotate(sess.ID())
+	if err != nil {
 		return nil, err
 	}
 
 	// Update context reference.
 	ctx.Set("session", newSess)
 
-	// Overwrite cookie with new session ID.
+	// Determine secure flag from TLS or proxy headers
 	isSecure := ctx.Request.TLS != nil || ctx.Request.Header.Get("X-Forwarded-Proto") == "https"
+	if strings.ToLower(os.Getenv("APP_ENV")) == "local" {
+		isSecure = false
+	}
+
+	// Emit updated cookie
 	netHTTP.SetCookie(ctx.Writer, &netHTTP.Cookie{
 		Name:     cookieName,
-		Value:    newID,
+		Value:    newSess.ID(),
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   isSecure,

@@ -1,39 +1,54 @@
 package admin
 
-// Purpose: To provide the HTTP handlers that power the GoDash CRUD interface.
-// Philosophy: Controllers in GoDash are pure reflection engines — they do not know
-// about specific models at compile time. They read from the Registry at runtime, dynamically
-// issue queries against the correct table, and render HTML responses with embedded views.
-// Architecture:
-// - Mount(mux): Registers all admin routes onto the provided http.ServeMux.
-// - handleDashboard: Renders the admin home page listing all registered models.
-// - handleList: Queries a model's table and renders paginated rows.
-// - handleEdit: Renders a form pre-filled with a specific record's data.
-// - handleStore: Processes a POST from the edit form and issues an UPDATE.
-// - handleDestroy: Processes a DELETE request and redirects back.
-// Choice:
-// We use the standard library `net/http` only, with no external router dependency, so the
-// admin panel can be mounted onto any existing GoStack router or standalone ServeMux without
-// coupling. The embedded HTML is written inline to keep the panel fully self-contained.
-
 import (
 	"database/sql"
 	"fmt"
+	"html"
+	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/charledeon77/gostack-framework/framework/contract"
 )
 
+func isPostgresDB(db *sql.DB) bool {
+	if db != nil && db.Driver() != nil {
+		t := strings.ToLower(fmt.Sprintf("%T", db.Driver()))
+		return strings.Contains(t, "postgres") || strings.Contains(t, "pq") || strings.Contains(t, "pgx")
+	}
+	return false
+}
+
+func sqlPlaceholder(isPg bool, idx int) string {
+	if isPg {
+		return fmt.Sprintf("$%d", idx)
+	}
+	return "?"
+}
+
 // Mount registers all admin panel routes onto the provided mux.
 // db is required for dynamic CRUD queries.
 // prefix is the URL prefix (e.g. "/admin").
 //
-// Access Control: By default, the panel is restricted to localhost-only access via LocalOnlyGuard.
-// Set admin.AuthGuard to a custom middleware function to enable authenticated remote access.
-func Mount(mux *http.ServeMux, db *sql.DB, prefix string) {
+// Access Control (SEC-01):
+// In production/staging, mounting without an explicit admin.AuthGuard is strictly forbidden
+// and returns an error to prevent accidental public exposure of the CRUD interface behind proxies.
+// In local/development environments, LocalOnlyGuard is permitted as a convenience.
+func Mount(mux *http.ServeMux, db *sql.DB, prefix string) error {
 	if prefix == "" {
 		prefix = "/admin"
+	}
+
+	env := strings.ToLower(os.Getenv("APP_ENV"))
+	if env == "" {
+		env = "local"
+	}
+
+	if AuthGuard == nil {
+		if env != "local" && env != "development" && env != "testing" {
+			return fmt.Errorf("[GoStack Security Blocker: SEC-01] admin.Mount rejected: In %q environment, GoDash admin panel cannot be mounted without an explicit admin.AuthGuard configured", env)
+		}
 	}
 
 	// Resolve the active guard: use the configured AuthGuard or fall back to LocalOnlyGuard.
@@ -69,13 +84,14 @@ func Mount(mux *http.ServeMux, db *sql.DB, prefix string) {
 	})
 
 	mux.Handle(prefix+"/", guard(inner))
+	return nil
 }
 
 func handleDashboard(w http.ResponseWriter, r *http.Request) {
 	entries := All()
 	var rows string
 	for name, entry := range entries {
-		rows += fmt.Sprintf(`<tr><td><a href="/admin/%s">%s</a></td><td>%s</td></tr>`, name, entry.Label, entry.TableName)
+		rows += fmt.Sprintf(`<tr><td><a href="/admin/%s">%s</a></td><td>%s</td></tr>`, html.EscapeString(name), html.EscapeString(entry.Label), html.EscapeString(entry.TableName))
 	}
 	w.Header().Set("Content-Type", "text/html")
 	fmt.Fprintf(w, dashboardTpl, rows)
@@ -88,9 +104,11 @@ func handleList(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName st
 		return
 	}
 
-	rows, err := db.Query(fmt.Sprintf("SELECT * FROM %s LIMIT 100", entry.TableName))
+	query := fmt.Sprintf("SELECT * FROM %s LIMIT 100", entry.TableName)
+	rows, err := db.Query(query)
 	if err != nil {
-		http.Error(w, "Query failed: "+err.Error(), 500)
+		log.Printf("[GoStack Admin] Query error: %v", err)
+		http.Error(w, "500 Internal Server Error: Query failed", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
@@ -103,26 +121,31 @@ func handleList(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName st
 		for i := range vals {
 			ptrs[i] = &vals[i]
 		}
-		rows.Scan(ptrs...)
+		if err := rows.Scan(ptrs...); err != nil {
+			log.Printf("[GoStack Admin] Scan error: %v", err)
+			continue
+		}
 		tableRows += "<tr>"
 		var id any
 		for i, v := range vals {
 			if cols[i] == "id" {
 				id = v
 			}
-			tableRows += fmt.Sprintf("<td>%v</td>", v)
+			tableRows += fmt.Sprintf("<td>%s</td>", html.EscapeString(fmt.Sprintf("%v", v)))
 		}
-		tableRows += fmt.Sprintf(`<td><a href="/admin/%s/%v">Edit</a> | <a href="/admin/%s/%v/delete" onclick="return confirm('Delete?')">Delete</a></td></tr>`, modelName, id, modelName, id)
+		escModel := html.EscapeString(modelName)
+		escID := html.EscapeString(fmt.Sprintf("%v", id))
+		tableRows += fmt.Sprintf(`<td><a href="/admin/%s/%s">Edit</a> | <form method="POST" action="/admin/%s/%s/delete" style="display:inline"><button type="submit" onclick="return confirm('Delete?')" style="background:none;border:none;color:#ef4444;cursor:pointer;padding:0;font:inherit;text-decoration:underline">Delete</button></form></td></tr>`, escModel, escID, escModel, escID)
 	}
 
 	var headers string
 	for _, c := range cols {
-		headers += fmt.Sprintf("<th>%s</th>", c)
+		headers += fmt.Sprintf("<th>%s</th>", html.EscapeString(c))
 	}
 	headers += "<th>Actions</th>"
 
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprintf(w, listTpl, entry.Label, entry.Label, modelName, headers, tableRows)
+	fmt.Fprintf(w, listTpl, html.EscapeString(entry.Label), html.EscapeString(entry.Label), html.EscapeString(modelName), headers, tableRows)
 }
 
 func handleCreate(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName string) {
@@ -136,6 +159,7 @@ func handleCreate(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName 
 		r.ParseForm()
 		setClauses := []string{}
 		args := []any{}
+		isPg := isPostgresDB(db)
 		for _, col := range entry.Columns {
 			if col.Name == "id" {
 				continue
@@ -144,10 +168,16 @@ func handleCreate(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName 
 			setClauses = append(setClauses, col.Name)
 			args = append(args, val)
 		}
-		placeholders := strings.Repeat("?,", len(setClauses))
-		placeholders = strings.TrimSuffix(placeholders, ",")
-		query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", entry.TableName, strings.Join(setClauses, ","), placeholders)
-		db.Exec(query, args...)
+		placeholders := make([]string, len(setClauses))
+		for i := range setClauses {
+			placeholders[i] = sqlPlaceholder(isPg, i+1)
+		}
+		query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", entry.TableName, strings.Join(setClauses, ","), strings.Join(placeholders, ","))
+		if _, err := db.Exec(query, args...); err != nil {
+			log.Printf("[GoStack Admin] Create error: %v", err)
+			http.Error(w, "500 Internal Server Error: Failed to create record", http.StatusInternalServerError)
+			return
+		}
 		http.Redirect(w, r, "/admin/"+modelName, http.StatusFound)
 		return
 	}
@@ -157,10 +187,10 @@ func handleCreate(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName 
 		if col.Name == "id" {
 			continue
 		}
-		fields += fmt.Sprintf(`<div class="field"><label>%s</label><input name="%s" type="text"></div>`, col.Name, col.Name)
+		fields += fmt.Sprintf(`<div class="field"><label>%s</label><input name="%s" type="text"></div>`, html.EscapeString(col.Name), html.EscapeString(col.Name))
 	}
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprintf(w, editTpl, "Create "+entry.Label, "Create "+entry.Label, "/admin/"+modelName+"/create", fields)
+	fmt.Fprintf(w, editTpl, "Create "+html.EscapeString(entry.Label), "Create "+html.EscapeString(entry.Label), "/admin/"+html.EscapeString(modelName)+"/create", fields)
 }
 
 func handleEdit(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, id string) {
@@ -174,23 +204,30 @@ func handleEdit(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, i
 		r.ParseForm()
 		setClauses := []string{}
 		args := []any{}
+		isPg := isPostgresDB(db)
 		for _, col := range entry.Columns {
 			if col.Name == "id" {
 				continue
 			}
 			val := r.FormValue(col.Name)
-			setClauses = append(setClauses, col.Name+" = ?")
 			args = append(args, val)
+			setClauses = append(setClauses, fmt.Sprintf("%s = %s", col.Name, sqlPlaceholder(isPg, len(args))))
 		}
 		args = append(args, id)
-		query := fmt.Sprintf("UPDATE %s SET %s WHERE id = ?", entry.TableName, strings.Join(setClauses, ", "))
-		db.Exec(query, args...)
+		whereID := sqlPlaceholder(isPg, len(args))
+		query := fmt.Sprintf("UPDATE %s SET %s WHERE id = %s", entry.TableName, strings.Join(setClauses, ", "), whereID)
+		if _, err := db.Exec(query, args...); err != nil {
+			log.Printf("[GoStack Admin] Update error: %v", err)
+			http.Error(w, "500 Internal Server Error: Failed to update record", http.StatusInternalServerError)
+			return
+		}
 		http.Redirect(w, r, "/admin/"+modelName, http.StatusFound)
 		return
 	}
 
 	// Fetch current record
-	row := db.QueryRow(fmt.Sprintf("SELECT * FROM %s WHERE id = ?", entry.TableName), id)
+	isPg := isPostgresDB(db)
+	row := db.QueryRow(fmt.Sprintf("SELECT * FROM %s WHERE id = %s", entry.TableName, sqlPlaceholder(isPg, 1)), id)
 	cols := make([]string, len(entry.Columns))
 	for i, c := range entry.Columns {
 		cols[i] = c.Name
@@ -200,7 +237,7 @@ func handleEdit(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, i
 	for i := range vals {
 		ptrs[i] = &vals[i]
 	}
-	row.Scan(ptrs...)
+	_ = row.Scan(ptrs...)
 
 	colMap := map[string]any{}
 	for i, c := range cols {
@@ -212,20 +249,34 @@ func handleEdit(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, i
 		if col.Name == "id" {
 			continue
 		}
-		fields += fmt.Sprintf(`<div class="field"><label>%s</label><input name="%s" type="text" value="%v"></div>`, col.Name, col.Name, colMap[col.Name])
+		fields += fmt.Sprintf(`<div class="field"><label>%s</label><input name="%s" type="text" value="%s"></div>`, html.EscapeString(col.Name), html.EscapeString(col.Name), html.EscapeString(fmt.Sprintf("%v", colMap[col.Name])))
 	}
 
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprintf(w, editTpl, "Edit "+entry.Label+" #"+id, "Edit "+entry.Label+" #"+id, "/admin/"+modelName+"/"+id, fields)
+	escLabel := html.EscapeString(entry.Label)
+	escID := html.EscapeString(id)
+	escModel := html.EscapeString(modelName)
+	fmt.Fprintf(w, editTpl, "Edit "+escLabel+" #"+escID, "Edit "+escLabel+" #"+escID, "/admin/"+escModel+"/"+escID, fields)
 }
 
 func handleDestroy(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, id string) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "405 Method Not Allowed - Destructive actions require POST", http.StatusMethodNotAllowed)
+		return
+	}
 	entry, ok := Find(modelName)
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
-	db.Exec(fmt.Sprintf("DELETE FROM %s WHERE id = ?", entry.TableName), id)
+	isPg := isPostgresDB(db)
+	query := fmt.Sprintf("DELETE FROM %s WHERE id = %s", entry.TableName, sqlPlaceholder(isPg, 1))
+	if _, err := db.Exec(query, id); err != nil {
+		log.Printf("[GoStack Admin] Delete error: %v", err)
+		http.Error(w, "500 Internal Server Error: Failed to delete record", http.StatusInternalServerError)
+		return
+	}
 	http.Redirect(w, r, "/admin/"+modelName, http.StatusFound)
 }
 
@@ -245,13 +296,15 @@ func handleSequenceDashboard(w http.ResponseWriter, r *http.Request) {
 
 	stats, err := inspector.GetStats()
 	if err != nil {
-		http.Error(w, "Failed to load queue stats: "+err.Error(), 500)
+		log.Printf("[GoStack Admin] Queue stats error: %v", err)
+		http.Error(w, "500 Internal Server Error: Failed to load queue stats", http.StatusInternalServerError)
 		return
 	}
 
 	failedJobs, err := inspector.GetFailedJobs()
 	if err != nil {
-		http.Error(w, "Failed to load failed jobs: "+err.Error(), 500)
+		log.Printf("[GoStack Admin] Queue failed jobs error: %v", err)
+		http.Error(w, "500 Internal Server Error: Failed to load failed jobs", http.StatusInternalServerError)
 		return
 	}
 
@@ -268,17 +321,21 @@ func handleSequenceDashboard(w http.ResponseWriter, r *http.Request) {
 				<td><span class="error-msg">%s</span></td>
 				<td>
 					<div class="action-buttons">
-						<a href="/admin/sequence/retry?id=%s" class="btn-action btn-retry">Retry</a>
-						<a href="/admin/sequence/delete?id=%s" class="btn-action btn-delete" onclick="return confirm('Are you sure you want to permanently delete this job?')">Delete</a>
+						<form method="POST" action="/admin/sequence/retry?id=%s" style="display:inline">
+							<button type="submit" class="btn-action btn-retry">Retry</button>
+						</form>
+						<form method="POST" action="/admin/sequence/delete?id=%s" style="display:inline">
+							<button type="submit" class="btn-action btn-delete" onclick="return confirm('Are you sure you want to permanently delete this job?')">Delete</button>
+						</form>
 					</div>
 				</td>
 			</tr>`,
-				job.Name,
-				job.Payload,
+				html.EscapeString(job.Name),
+				html.EscapeString(job.Payload),
 				job.Attempts,
-				job.Error,
-				job.ID,
-				job.ID,
+				html.EscapeString(job.Error),
+				html.EscapeString(job.ID),
+				html.EscapeString(job.ID),
 			)
 		}
 	}
@@ -302,6 +359,11 @@ func handleSequenceDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSequenceRetry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "405 Method Not Allowed - Retrying jobs requires POST", http.StatusMethodNotAllowed)
+		return
+	}
 	if Queue == nil {
 		http.Error(w, "Queue not configured", 400)
 		return
@@ -320,7 +382,8 @@ func handleSequenceRetry(w http.ResponseWriter, r *http.Request) {
 
 	err := inspector.RetryJob(id)
 	if err != nil {
-		http.Error(w, "Failed to retry job: "+err.Error(), 500)
+		log.Printf("[GoStack Admin] Retry error: %v", err)
+		http.Error(w, "500 Internal Server Error: Failed to retry job", http.StatusInternalServerError)
 		return
 	}
 
@@ -328,6 +391,11 @@ func handleSequenceRetry(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSequenceDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "405 Method Not Allowed - Deleting jobs requires POST", http.StatusMethodNotAllowed)
+		return
+	}
 	if Queue == nil {
 		http.Error(w, "Queue not configured", 400)
 		return
@@ -346,7 +414,8 @@ func handleSequenceDelete(w http.ResponseWriter, r *http.Request) {
 
 	err := inspector.DeleteFailedJob(id)
 	if err != nil {
-		http.Error(w, "Failed to delete job: "+err.Error(), 500)
+		log.Printf("[GoStack Admin] Delete failed job error: %v", err)
+		http.Error(w, "500 Internal Server Error: Failed to delete job", http.StatusInternalServerError)
 		return
 	}
 

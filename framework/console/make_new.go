@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bufio"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -11,7 +12,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
+	"time"
 )
 
 // NewCommand scaffolds a new GoStack project from the base GitHub repository.
@@ -717,19 +720,200 @@ func (c *NewCommand) Execute(args []string) error {
 	return nil
 }
 
-// downloadAndUnzip retrieves the main project template ZIP from GitHub over HTTPS,
-// and extracts its contents natively in pure Go, bypassing the system Git command.
-func downloadAndUnzip(projectName string) error {
-	url := "https://github.com/charledeon77/gostack-framework/archive/refs/heads/main.zip"
-	resp, err := http.Get(url)
+// frameworkReleaseTag returns the module version of the running binary so
+// downloadAndUnzip always pulls the same tag that was compiled in.
+// SEC-18: Using debug.ReadBuildInfo instead of a hardcoded literal means two
+// binaries built from different tags will scaffold from their own matching
+// archive — a hardcoded "v1.0.14" would silently drift as the framework grows.
+// Falls back to "v1.0.14" only when the binary was not built by the Go module
+// toolchain (e.g. `go run` from source during development).
+func frameworkReleaseTag() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		v := info.Main.Version
+		if v != "" && v != "(devel)" {
+			return v
+		}
+	}
+	return "v1.0.14"
+}
+
+// verifyArchiveChecksum fetches the published SHA-256 checksum file for the
+// given release tag from GitHub and compares it against the hash of the
+// already-downloaded archive.
+// SEC-18: If the hashes do not match — whether due to tampering, a corrupt
+// download, or a compromised release — the error is returned before any
+// project file is written. No partial project is created on mismatch.
+// Fails closed if the checksum file cannot be fetched, is missing, or is empty.
+func verifyArchiveChecksum(client *http.Client, tag, got string) error {
+	checksumURL := fmt.Sprintf(
+		"https://github.com/charledeon77/gostack-framework/releases/download/%s/gostack-framework-%s.zip.sha256",
+		tag, tag,
+	)
+	return verifyArchiveChecksumWithURL(client, checksumURL, tag, got)
+}
+
+func verifyArchiveChecksumWithURL(client *http.Client, checksumURL, tag, got string) error {
+	resp, err := client.Get(checksumURL)
 	if err != nil {
-		return fmt.Errorf("network connection failed: %w", err)
+		return fmt.Errorf("archive checksum verification failed for tag %s: unable to fetch checksum (%w)", tag, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("github repository returned status: %s", resp.Status)
+		return fmt.Errorf("archive checksum verification failed for tag %s: checksum file unavailable (HTTP %d)", tag, resp.StatusCode)
 	}
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 128))
+	if err != nil {
+		return fmt.Errorf("failed to read checksum file for tag %s: %w", tag, err)
+	}
+	fields := strings.Fields(string(raw))
+	if len(fields) == 0 {
+		return fmt.Errorf("archive checksum file for tag %s is empty or malformed", tag)
+	}
+	want := strings.TrimSpace(fields[0])
+	if !strings.EqualFold(want, got) {
+		return fmt.Errorf(
+			"archive checksum mismatch for tag %s: expected %s, got %s — download may be tampered",
+			tag, want, got,
+		)
+	}
+	return nil
+}
+
+// extractArchive extracts a zip archive to the target destination path with
+// complete Zip Slip, symlink, and decompression bomb protections.
+// SEC-19: Path traversal (Zip Slip) containment.
+// SEC-20: Rejects non-regular entries (symlinks/devices) with a named error.
+// SEC-21: Declared total uncompressed size pre-scan & per-file limits.
+func extractArchive(reader *zip.Reader, destDir string) error {
+	absProjectDir, err := filepath.Abs(destDir)
+	if err != nil {
+		return fmt.Errorf("failed to resolve project directory path: %w", err)
+	}
+
+	const maxTotalUncompressedBytes int64 = 250 << 20 // 250 MB
+	const maxPerFileBytes int64 = 25 << 20            // 25 MB
+
+	// SEC-21 Accept #1: Pre-scan declared uncompressed sizes across all entries.
+	// If the declared total exceeds the 250MB cap, abort immediately before creating
+	// any directories or writing a single file to disk.
+	var declaredTotal int64
+	for _, file := range reader.File {
+		declaredTotal += int64(file.UncompressedSize64)
+		if declaredTotal > maxTotalUncompressedBytes {
+			return fmt.Errorf("archive declared uncompressed size exceeds limit of 250MB (detected before extraction)")
+		}
+	}
+
+	var totalUncompressedBytes int64
+
+	for _, file := range reader.File {
+		// Strip the top-level directory (e.g. "gostack-main/" or "gostack-framework-1.0.14/")
+		parts := strings.Split(file.Name, "/")
+		if len(parts) <= 1 {
+			continue // skip the parent directory itself
+		}
+
+		subPath := filepath.Join(parts[1:]...)
+		destPath := filepath.Join(absProjectDir, subPath)
+
+		// SEC-19: Zip Slip check — ensure destPath stays within absProjectDir
+		cleanDest := filepath.Clean(destPath)
+		cleanRoot := filepath.Clean(absProjectDir)
+		if cleanDest != cleanRoot && !strings.HasPrefix(cleanDest, cleanRoot+string(filepath.Separator)) {
+			return fmt.Errorf("insecure zip archive: path traversal detected for entry %q", file.Name)
+		}
+
+		// SEC-20: Reject symlinks, pipes, devices and any non-regular, non-directory
+		// entry with a named error so the caller knows exactly which entry was bad.
+		fileMode := file.FileInfo().Mode()
+		if fileMode&os.ModeType != 0 && !file.FileInfo().IsDir() {
+			return fmt.Errorf("insecure zip archive: entry %q is not a regular file (mode=%v)", file.Name, fileMode)
+		}
+
+		if file.FileInfo().IsDir() {
+			if err := os.MkdirAll(cleanDest, 0755); err != nil {
+				return fmt.Errorf("failed to create directory structure: %w", err)
+			}
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(cleanDest), 0755); err != nil {
+			return fmt.Errorf("failed to create parent directories: %w", err)
+		}
+
+		rc, err := file.Open()
+		if err != nil {
+			return fmt.Errorf("failed to read file inside ZIP: %w", err)
+		}
+
+		// SEC-20: Mask file mode: regular 0644, executable 0755
+		perm := os.FileMode(0644)
+		if fileMode&0111 != 0 {
+			perm = 0755
+		}
+
+		outFile, err := os.OpenFile(cleanDest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+		if err != nil {
+			rc.Close()
+			return fmt.Errorf("failed to write local file: %w", err)
+		}
+
+		// SEC-21: Limit per-file extraction to 25MB and cumulative extraction to 250MB
+		limitedRC := io.LimitReader(rc, maxPerFileBytes+1)
+		fileWritten, err := io.Copy(outFile, limitedRC)
+		rc.Close()
+		outFile.Close()
+		if err != nil {
+			return fmt.Errorf("failed to extract file: %w", err)
+		}
+		if fileWritten > maxPerFileBytes {
+			return fmt.Errorf("file %q exceeded maximum allowed uncompressed size of 25MB", file.Name)
+		}
+
+		totalUncompressedBytes += fileWritten
+		if totalUncompressedBytes > maxTotalUncompressedBytes {
+			return fmt.Errorf("archive extraction exceeded total allowable limit of 250MB")
+		}
+	}
+
+	return nil
+}
+
+// downloadAndUnzip retrieves the project template ZIP from GitHub over HTTPS,
+// and extracts its contents natively in pure Go with Zip Slip and Zip Bomb protections.
+func downloadAndUnzip(projectName string) error {
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// SEC-18: Derive the release tag from the binary's own module version via
+	// debug.ReadBuildInfo so the scaffolder always pulls the same version as the
+	// running binary — a hardcoded literal or a main-branch fallback would defeat
+	// the pin and silently deliver different code on two consecutive runs.
+	tag := frameworkReleaseTag()
+	archiveURL := fmt.Sprintf(
+		"https://github.com/charledeon77/gostack-framework/archive/refs/tags/%s.zip",
+		tag,
+	)
+
+	resp, err := client.Get(archiveURL)
+	if err != nil {
+		return fmt.Errorf("network connection failed downloading template (tag=%s): %w", tag, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("github returned HTTP %d for tag %s — the release may not exist yet", resp.StatusCode, tag)
+	}
+
+	// SEC-21: Limit total downloaded ZIP size to 50MB.
+	// SEC-18: Compute SHA-256 of the download while streaming it so we can
+	// verify the archive against the published checksum file before extraction.
+	limitedBody := io.LimitReader(resp.Body, 50<<20)
+	hasher := sha256.New()
+	teeBody := io.TeeReader(limitedBody, hasher)
 
 	// Save to a temporary file
 	tempFile, err := os.CreateTemp("", "gostack-*.zip")
@@ -739,8 +923,20 @@ func downloadAndUnzip(projectName string) error {
 	defer os.Remove(tempFile.Name())
 	defer tempFile.Close()
 
-	if _, err = io.Copy(tempFile, resp.Body); err != nil {
+	written, err := io.Copy(tempFile, teeBody)
+	if err != nil {
 		return fmt.Errorf("failed to download repository template ZIP: %w", err)
+	}
+	if written >= 50<<20 {
+		return fmt.Errorf("downloaded template ZIP exceeded maximum allowable size of 50MB")
+	}
+
+	// SEC-18: Fetch the published SHA-256 checksum for this tag and verify the
+	// archive before writing a single project file. A tampered or corrupted
+	// archive is rejected here — no partial project is ever created.
+	downloadedHash := hex.EncodeToString(hasher.Sum(nil))
+	if err := verifyArchiveChecksum(client, tag, downloadedHash); err != nil {
+		return err
 	}
 
 	if _, err = tempFile.Seek(0, 0); err != nil {
@@ -757,47 +953,7 @@ func downloadAndUnzip(projectName string) error {
 		return fmt.Errorf("failed to open template ZIP: %w", err)
 	}
 
-	for _, file := range reader.File {
-		// Strip the top-level directory "gostack-main/" from GitHub's ZIP packaging
-		parts := strings.Split(file.Name, "/")
-		if len(parts) <= 1 {
-			continue // skip the parent directory itself
-		}
-
-		subPath := filepath.Join(parts[1:]...)
-		destPath := filepath.Join(projectName, subPath)
-
-		if file.FileInfo().IsDir() {
-			if err := os.MkdirAll(destPath, file.Mode()); err != nil {
-				return fmt.Errorf("failed to create directory structure: %w", err)
-			}
-			continue
-		}
-
-		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-			return fmt.Errorf("failed to create parent directories: %w", err)
-		}
-
-		rc, err := file.Open()
-		if err != nil {
-			return fmt.Errorf("failed to read file inside ZIP: %w", err)
-		}
-
-		outFile, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, file.Mode())
-		if err != nil {
-			rc.Close()
-			return fmt.Errorf("failed to write local file: %w", err)
-		}
-
-		_, err = io.Copy(outFile, rc)
-		rc.Close()
-		outFile.Close()
-		if err != nil {
-			return fmt.Errorf("failed to extract file: %w", err)
-		}
-	}
-
-	return nil
+	return extractArchive(reader, projectName)
 }
 
 // pruneUnusedDriverDeps removes unused database driver packages from go.mod

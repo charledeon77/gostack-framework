@@ -1,8 +1,10 @@
 package queue
 
 import (
-	"github.com/charledeon77/gostack-framework/framework/contract"
+	"fmt"
 	"sync"
+
+	"github.com/charledeon77/gostack-framework/framework/contract"
 )
 
 // JobChain executes a series of jobs sequentially. If one fails, the chain stops.
@@ -64,6 +66,18 @@ func (b *JobBatch) Handle() error {
 		wg.Add(1)
 		go func(j contract.Job) {
 			defer wg.Done()
+			// SEC-33: Recover from panics inside batch job goroutines so a single
+			// panicking job does not kill the process or leave the WaitGroup stuck.
+			defer func() {
+				if r := recover(); r != nil {
+					once.Do(func() {
+						firstErr = fmt.Errorf("job panicked: %v", r)
+						if b.onFail != nil {
+							b.onFail(firstErr)
+						}
+					})
+				}
+			}()
 			if err := j.Handle(); err != nil {
 				once.Do(func() {
 					firstErr = err

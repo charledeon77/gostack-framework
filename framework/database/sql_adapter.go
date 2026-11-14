@@ -55,12 +55,27 @@ func (a *SQLAdapter) SetConnMaxLifetime(d time.Duration) {
 	}
 }
 
-// NewSQLAdapter acts as a constructor for the SQLAdapter.
+// SetConnMaxIdleTime sets the maximum amount of time a connection may be idle.
+func (a *SQLAdapter) SetConnMaxIdleTime(d time.Duration) {
+	if a != nil && a.db != nil {
+		a.db.SetConnMaxIdleTime(d)
+	}
+}
+
+// NewSQLAdapter acts as a constructor for the SQLAdapter, configuring production-grade
+// connection pool safeguards (pool size, idle timeouts, and lifetime recycling).
 func NewSQLAdapter(driver, dsn string) (*SQLAdapter, error) {
 	db, err := sql.Open(driver, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database connection: %w", err)
 	}
+
+	// Production connection pool defaults matching cloud environments (PostgreSQL/MySQL/SQLite)
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(10)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(2 * time.Minute)
+
 	return &SQLAdapter{db: db, driver: driver}, nil
 }
 

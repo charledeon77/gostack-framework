@@ -129,22 +129,35 @@ func (s *LocalStorage) Exists(path string) bool {
 	return !info.IsDir()
 }
 
-// resolvePath sanitizes paths and prevents directory traversal attacks.
+// resolvePath sanitizes paths, evaluates symlinks, and prevents directory traversal attacks (SEC-07).
 func (s *LocalStorage) resolvePath(path string) (string, error) {
-	// Clean the path to eliminate relative paths (e.g. "../../")
 	cleanPath := filepath.Clean(path)
-
-	// Combine with root directory
 	fullPath := filepath.Join(s.rootDir, cleanPath)
 
-	// Ensure the resolved absolute path starts with the root directory path prefix
 	absPath, err := filepath.Abs(fullPath)
 	if err != nil {
 		return "", fmt.Errorf("storage: failed to resolve absolute target path: %w", err)
 	}
 
-	if !strings.HasPrefix(absPath, s.rootDir) {
+	absRoot, err := filepath.Abs(s.rootDir)
+	if err != nil {
+		return "", fmt.Errorf("storage: failed to resolve absolute root path: %w", err)
+	}
+
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("storage: security violation: path traversal attempt detected on '%s'", path)
+	}
+
+	// Symlink check: if target exists, ensure resolved symlink target remains within root (SEC-07)
+	if evalPath, err := filepath.EvalSymlinks(absPath); err == nil {
+		evalRoot, errRoot := filepath.EvalSymlinks(absRoot)
+		if errRoot == nil {
+			relEval, err := filepath.Rel(evalRoot, evalPath)
+			if err != nil || relEval == ".." || strings.HasPrefix(relEval, ".."+string(filepath.Separator)) {
+				return "", fmt.Errorf("storage: security violation: symlink points outside root on '%s'", path)
+			}
+		}
 	}
 
 	return absPath, nil

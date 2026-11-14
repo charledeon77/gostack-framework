@@ -34,9 +34,14 @@ Implementation:
 package contract
 
 import (
+	"errors"
 	"net/http"
 	"time"
 )
+
+// ErrCacheMiss is returned when a requested key is not present in the cache store.
+// SEC-46: Distinguishes between a genuine cache miss and an operational/network failure.
+var ErrCacheMiss = errors.New("cache: key not found")
 
 // Database defines the behaviors required for any database driver 
 // used within the framework. By using this interface, we ensure that
@@ -116,6 +121,9 @@ type Session interface {
 
 	// Clear purges all key-value data from the session.
 	Clear()
+
+	// All returns a shallow copy of all key-value pairs stored in the session.
+	All() map[string]any
 }
 
 // SessionStore defines the contract for persisting and loading session states across HTTP lifecycles.
@@ -133,11 +141,22 @@ type SessionStore interface {
 
 	// Destroy invalidates and removes a session from the storage backend.
 	Destroy(id string) error
+
+	// Rotate generates a new session ID, migrates all session data, destroys the old session record,
+	// and returns the newly minted session instance without type assertions.
+	Rotate(oldID string) (Session, error)
+
+	// Exists reports whether a session with the given ID exists in the store.
+	Exists(id string) bool
 }
 
 // SessionContextKeyType is the context key under which the session is bound.
 type SessionContextKeyType string
-const SessionContextKey SessionContextKeyType = "gostack_session"
+const (
+	SessionContextKey           SessionContextKeyType = "gostack_session"
+	SessionStoreContextKey      SessionContextKeyType = "gostack_session_store"
+	SessionCookieNameContextKey SessionContextKeyType = "gostack_session_cookie_name"
+)
 
 // UserContextKeyType is the context key under which the authenticated user is cached.
 type UserContextKeyType string
@@ -293,18 +312,21 @@ type Storage interface {
 // CacheStore defines the contract for an underlying caching driver (Memory, Redis).
 // It works strictly with interface{} (any) to remain implementation agnostic.
 // The developer-facing API will wrap this to provide Generic type safety.
+// SEC-46: All operations surface real errors rather than swallowing outages.
+// If a key is missing, Get returns (nil, ErrCacheMiss).
 type CacheStore interface {
-	// Get retrieves a value from the cache by key. Returns false if not found.
-	Get(key string) (any, bool)
+	// Get retrieves a value from the cache by key.
+	// Returns (nil, ErrCacheMiss) if not found. Returns an operational error if the driver fails.
+	Get(key string) (any, error)
 
-	// Put stores a value in the cache for a given duration.
-	Put(key string, val any, ttl time.Duration)
+	// Put stores a value in the cache for a given duration. Returns an error if the driver fails.
+	Put(key string, val any, ttl time.Duration) error
 
 	// Forget removes a specific key from the cache.
-	Forget(key string)
+	Forget(key string) error
 
 	// Flush completely clears the cache.
-	Flush()
+	Flush() error
 }
 
 // Translator defines the contract for resolving localized message keys.

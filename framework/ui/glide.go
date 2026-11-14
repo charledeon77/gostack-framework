@@ -68,62 +68,346 @@ const GlideJS = `
 
     // ── Expression Helpers ────────────────────────────────────────────────────
 
-    function evaluate(expr, scope, extra) {
-        try {
-            const context = new Proxy(extra || {}, {
-                has: function(target, key) {
-                    return key in target || key in scope || key in global;
-                },
-                get: function(target, key) {
-                    if (target && key in target) return target[key];
-                    return scope[key];
-                },
-                set: function(target, key, value) {
-                    if (target && key in target) {
-                        target[key] = value;
-                    } else {
-                        scope[key] = value;
-                    }
-                    return true;
+    // ── Safe Expression Parser & Evaluator (SEC-40) ──────────────────────────
+
+    const FORBIDDEN_IDENTIFIERS = new Set([
+        'window', 'document', 'global', 'globalThis', 'top', 'parent', 'self',
+        'Function', 'eval', 'constructor', '__proto__', 'prototype',
+        'XMLHttpRequest', 'fetch', 'WebSocket', 'localStorage', 'sessionStorage',
+        'cookie', 'alert'
+    ]);
+
+    function isSafeAttribute(name, value) {
+        const lowerName = String(name || '').toLowerCase().trim();
+        if (lowerName.startsWith('on')) {
+            console.warn('[Glide Security] Direct binding of event handler attribute "' + name + '" is blocked.');
+            return false;
+        }
+        if (lowerName === 'href' || lowerName === 'src' || lowerName === 'action' || lowerName === 'formaction') {
+            const strVal = String(value || '').trim().toLowerCase();
+            if (strVal.startsWith('javascript:') || strVal.startsWith('vbscript:') || strVal.startsWith('data:text/html')) {
+                console.warn('[Glide Security] Dangerous URL scheme blocked on attribute "' + name + '": ' + value);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    function getPath(obj, path) {
+        if (!obj || !path) return undefined;
+        let clean = String(path).trim();
+        if (clean.startsWith('.')) clean = clean.slice(1);
+        const parts = clean.split('.');
+        let current = obj;
+        for (let i = 0; i < parts.length; i++) {
+            if (current === null || current === undefined) return undefined;
+            const key = parts[i];
+            if (FORBIDDEN_IDENTIFIERS.has(key)) {
+                console.error('[Glide Security] Access to forbidden property "' + key + '" denied.');
+                return undefined;
+            }
+            current = current[key];
+        }
+        return current;
+    }
+
+    function splitTopLevel(str, delimiter) {
+        const parts = [];
+        let current = '';
+        let depth = 0;
+        let inSingle = false;
+        let inDouble = false;
+        const dLen = delimiter.length;
+
+        for (let i = 0; i < str.length; i++) {
+            const ch = str[i];
+            if (ch === "'" && !inDouble) inSingle = !inSingle;
+            else if (ch === '"' && !inSingle) inDouble = !inDouble;
+            else if (!inSingle && !inDouble) {
+                if (ch === '(' || ch === '[' || ch === '{') depth++;
+                else if (ch === ')' || ch === ']' || ch === '}') depth--;
+                else if (depth === 0 && str.slice(i, i + dLen) === delimiter) {
+                    parts.push(current.trim());
+                    current = '';
+                    i += dLen - 1;
+                    continue;
                 }
-            });
-            return (new Function('scope', 'with(scope) { return (' + expr + ') }'))(context);
-        } catch(e) {
+            }
+            current += ch;
+        }
+        if (current.trim() !== '') {
+            parts.push(current.trim());
+        }
+        return parts;
+    }
+
+    function evaluate(expr, scope, extra) {
+        if (!expr) return undefined;
+        const trimmed = String(expr).trim();
+        if (trimmed === '') return undefined;
+
+        // Handle filter chains: expr | filter(arg1, arg2)
+        if (trimmed.includes('|') && !trimmed.includes('||')) {
+            const pipes = splitTopLevel(trimmed, '|');
+            if (pipes.length > 1) {
+                let res = evaluate(pipes[0], scope, extra);
+                for (let i = 1; i < pipes.length; i++) {
+                    const filterCall = pipes[i].trim();
+                    res = applyFilterCall(res, filterCall, scope, extra);
+                }
+                return res;
+            }
+        }
+
+        // Logical OR: a || b
+        const orParts = splitTopLevel(trimmed, '||');
+        if (orParts.length > 1) {
+            for (let i = 0; i < orParts.length; i++) {
+                const val = evaluate(orParts[i], scope, extra);
+                if (val) return val;
+            }
+            return evaluate(orParts[orParts.length - 1], scope, extra);
+        }
+
+        // Logical AND: a && b
+        const andParts = splitTopLevel(trimmed, '&&');
+        if (andParts.length > 1) {
+            for (let i = 0; i < andParts.length; i++) {
+                const val = evaluate(andParts[i], scope, extra);
+                if (!val) return val;
+            }
+            return evaluate(andParts[andParts.length - 1], scope, extra);
+        }
+
+        // Negation: !expr
+        if (trimmed.startsWith('!')) {
+            return !evaluate(trimmed.slice(1).trim(), scope, extra);
+        }
+
+        // Comparisons
+        const cmpOps = ['===', '!==', '==', '!=', '>=', '<=', '>', '<'];
+        for (let i = 0; i < cmpOps.length; i++) {
+            const op = cmpOps[i];
+            const parts = splitTopLevel(trimmed, op);
+            if (parts.length === 2) {
+                const left = evaluate(parts[0], scope, extra);
+                const right = evaluate(parts[1], scope, extra);
+                switch(op) {
+                    case '===': return left === right;
+                    case '!==': return left !== right;
+                    case '==': return left == right;
+                    case '!=': return left != right;
+                    case '>=': return left >= right;
+                    case '<=': return left <= right;
+                    case '>': return left > right;
+                    case '<': return left < right;
+                }
+            }
+        }
+
+        // Simple arithmetic (+, -)
+        const addParts = splitTopLevel(trimmed, '+');
+        if (addParts.length > 1) {
+            return addParts.map(function(p) { return evaluate(p, scope, extra); }).reduce(function(a, b) { return a + b; });
+        }
+
+        // String literals: "..." or '...'
+        if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+            return trimmed.slice(1, -1);
+        }
+
+        // Number literal
+        if (/^-?[0-9]+(?:\.[0-9]+)?$/.test(trimmed)) {
+            return Number(trimmed);
+        }
+
+        // Boolean & Null literals
+        if (trimmed === 'true') return true;
+        if (trimmed === 'false') return false;
+        if (trimmed === 'null') return null;
+        if (trimmed === 'undefined') return undefined;
+
+        // Object literal: { a: 1, b: 2 }
+        if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+            return parseObjectLiteral(trimmed, scope, extra);
+        }
+
+        // Array literal: [1, 2, 3]
+        if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+            const inner = trimmed.slice(1, -1).trim();
+            if (inner === '') return [];
+            return splitTopLevel(inner, ',').map(function(item) { return evaluate(item, scope, extra); });
+        }
+
+        // Method call: foo(bar, baz)
+        if (trimmed.includes('(') && trimmed.endsWith(')')) {
+            const parenIdx = trimmed.indexOf('(');
+            const targetPath = trimmed.slice(0, parenIdx).trim();
+            const argsStr = trimmed.slice(parenIdx + 1, -1).trim();
+            const args = argsStr === '' ? [] : splitTopLevel(argsStr, ',').map(function(a) { return evaluate(a, scope, extra); });
+
+            // Function lookup
+            let fn = undefined;
+            let thisCtx = scope;
+            if (targetPath.includes('.')) {
+                const lastDot = targetPath.lastIndexOf('.');
+                const objPath = targetPath.slice(0, lastDot);
+                const method = targetPath.slice(lastDot + 1);
+                thisCtx = resolveIdentifier(objPath, scope, extra);
+                if (thisCtx && typeof thisCtx[method] === 'function') {
+                    fn = thisCtx[method];
+                }
+            } else {
+                fn = resolveIdentifier(targetPath, scope, extra);
+            }
+
+            if (typeof fn === 'function') {
+                try {
+                    return fn.apply(thisCtx, args);
+                } catch(e) {
+                    console.error('[Glide] Error executing method "' + targetPath + '":', e);
+                    return undefined;
+                }
+            }
             return undefined;
         }
+
+        // Identifier or Property Path: e.g. .title, user.name, $refs.btn
+        return resolveIdentifier(trimmed, scope, extra);
+    }
+
+    function resolveIdentifier(path, scope, extra) {
+        if (!path) return undefined;
+        let clean = String(path).trim();
+        if (clean.startsWith('.')) clean = clean.slice(1);
+
+        const firstPart = clean.split('.')[0].split('[')[0];
+        if (FORBIDDEN_IDENTIFIERS.has(firstPart)) {
+            console.error('[Glide Security] Access to forbidden property "' + firstPart + '" denied.');
+            return undefined;
+        }
+
+        if (extra && firstPart in extra) {
+            return getPath(extra, clean);
+        }
+        if (scope && (firstPart in scope || scope[firstPart] !== undefined)) {
+            return getPath(scope, clean);
+        }
+        return undefined;
+    }
+
+    function applyFilterCall(val, filterStr, scope, extra) {
+        let filterName = filterStr;
+        let args = [val];
+        if (filterStr.includes('(') && filterStr.endsWith(')')) {
+            const pIdx = filterStr.indexOf('(');
+            filterName = filterStr.slice(0, pIdx).trim();
+            const aStr = filterStr.slice(pIdx + 1, -1).trim();
+            if (aStr !== '') {
+                const evaluatedArgs = splitTopLevel(aStr, ',').map(function(a) { return evaluate(a, scope, extra); });
+                args = args.concat(evaluatedArgs);
+            }
+        }
+        // Registered filters
+        if (customDirectives[filterName] && typeof customDirectives[filterName] === 'function') {
+            return customDirectives[filterName].apply(null, args);
+        }
+        // Built-in basic filters
+        if (filterName === 'truncate') {
+            const maxLen = args[1] || 30;
+            const str = String(val || '');
+            return str.length > maxLen ? str.slice(0, maxLen) + '...' : str;
+        }
+        if (filterName === 'upper' || filterName === 'uppercase') {
+            return String(val || '').toUpperCase();
+        }
+        if (filterName === 'lower' || filterName === 'lowercase') {
+            return String(val || '').toLowerCase();
+        }
+        if (filterName === 'slugify') {
+            return String(val || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+        }
+        return val;
     }
 
     function execute(stmt, scope, extra) {
-        try {
-            const context = new Proxy(extra || {}, {
-                has: function(target, key) {
-                    return key in target || key in scope || key in global;
-                },
-                get: function(target, key) {
-                    if (target && key in target) return target[key];
-                    return scope[key];
-                },
-                set: function(target, key, value) {
-                    if (target && key in target) {
-                        target[key] = value;
-                    } else {
-                        scope[key] = value;
-                    }
-                    return true;
+        if (!stmt) return;
+        const trimmed = String(stmt).trim();
+        if (trimmed === '') return;
+
+        // Chain of statements separated by semicolons
+        const statements = splitTopLevel(trimmed, ';');
+        for (let s = 0; s < statements.length; s++) {
+            const st = statements[s].trim();
+            if (!st) continue;
+
+            if (st.includes('++')) {
+                const target = st.replace('++', '').trim();
+                const cur = Number(resolveIdentifier(target, scope, extra)) || 0;
+                setPath(scope, target, cur + 1);
+            } else if (st.includes('--')) {
+                const target = st.replace('--', '').trim();
+                const cur = Number(resolveIdentifier(target, scope, extra)) || 0;
+                setPath(scope, target, cur - 1);
+            } else if (st.includes('+=') && !st.includes('==')) {
+                const parts = splitTopLevel(st, '+=');
+                if (parts.length === 2) {
+                    const target = parts[0].trim();
+                    const val = evaluate(parts[1], scope, extra);
+                    const cur = resolveIdentifier(target, scope, extra);
+                    setPath(scope, target, (cur || 0) + val);
                 }
-            });
-            (new Function('scope', 'with(scope) { ' + stmt + ' }'))(context);
-        } catch(e) {
-            // silent: expression errors should not crash the page
+            } else if (st.includes('=') && !st.includes('==') && !st.includes('!=') && !st.includes('<=') && !st.includes('>=') && !st.includes('=>')) {
+                const parts = splitTopLevel(st, '=');
+                if (parts.length === 2) {
+                    const target = parts[0].trim();
+                    const val = evaluate(parts[1], scope, extra);
+                    setPath(scope, target, val);
+                }
+            } else {
+                evaluate(st, scope, extra);
+            }
         }
     }
 
+    function parseObjectLiteral(str, scope, extra) {
+        const inner = str.slice(1, -1).trim();
+        if (inner === '') return {};
+        const entries = splitTopLevel(inner, ',');
+        const res = {};
+        for (let i = 0; i < entries.length; i++) {
+            const entry = entries[i];
+            const colonIdx = entry.indexOf(':');
+            if (colonIdx !== -1) {
+                let key = entry.slice(0, colonIdx).trim();
+                if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
+                    key = key.slice(1, -1);
+                }
+                const valStr = entry.slice(colonIdx + 1).trim();
+                res[key] = evaluate(valStr, scope, extra);
+            }
+        }
+        return res;
+    }
+
     function parseData(expr, context) {
+        if (!expr) return {};
+        const trimmed = String(expr).trim();
+        if (trimmed === '' || trimmed === '{}') return {};
+
+        if (componentRegistry[trimmed]) {
+            const def = componentRegistry[trimmed];
+            return typeof def.data === 'function' ? def.data() : (def.data || {});
+        }
+
         try {
-            const keys = Object.keys(context || {});
-            const vals = keys.map(function(k) { return context[k]; });
-            return (new Function(keys.join(','), 'return (' + expr + ')')).apply(null, vals);
+            return JSON.parse(trimmed);
+        } catch(e) {}
+
+        try {
+            return parseObjectLiteral(trimmed, context, {});
         } catch(e) {
+            console.error('[Glide] Failed to parse gs-data:', expr, e);
             return {};
         }
     }
@@ -637,7 +921,11 @@ const GlideJS = `
             const r = evaluate(el.getAttribute('gs-text'), data, { $el: el });
             if (r !== undefined && r !== null) el.textContent = String(r);
         }
-        if (el.hasAttribute('gs-html')) {
+        if (el.hasAttribute('gs-raw')) {
+            const r = evaluate(el.getAttribute('gs-raw'), data, { $el: el });
+            if (r !== undefined && r !== null) el.innerHTML = String(r);
+        } else if (el.hasAttribute('gs-html')) {
+            console.warn('[Glide Security] "gs-html" writes raw unescaped HTML. Use with caution or prefer "gs-text".');
             const r = evaluate(el.getAttribute('gs-html'), data, { $el: el });
             if (r !== undefined && r !== null) el.innerHTML = String(r);
         }
@@ -653,7 +941,9 @@ const GlideJS = `
             const attrMap = evaluate(el.getAttribute('gs-attr'), data, { $el: el });
             if (attrMap && typeof attrMap === 'object') {
                 Object.entries(attrMap).forEach(function(entry) {
-                    el.setAttribute(entry[0], entry[1]);
+                    if (isSafeAttribute(entry[0], entry[1])) {
+                        el.setAttribute(entry[0], entry[1]);
+                    }
                 });
             }
         }
@@ -733,6 +1023,9 @@ const GlideJS = `
                     el._glideLastStyleKeys = [];
                 }
             } else {
+                if (!isSafeAttribute(attrName, val)) {
+                    return;
+                }
                 if (attrName === 'checked' && 'checked' in el) {
                     el.checked = !!val;
                 } else if (attrName === 'value' && 'value' in el) {
@@ -958,17 +1251,22 @@ const GlideJS = `
     // ── Scope Initializer ─────────────────────────────────────────────────────
 
     function initScope(rootEl) {
+        const canPersist = rootEl.hasAttribute('gs-persist');
         const persistedKeys = {};
         const teleportedElements = [];
         
         const extraContext = {
             persist: function(key, defaultValue) {
+                if (!canPersist) return defaultValue;
                 persistedKeys[key] = true;
-                const saved = localStorage.getItem('gs_' + key);
-                if (saved !== null) {
-                    try { return JSON.parse(saved); } catch(e) { return saved; }
-                }
-                localStorage.setItem('gs_' + key, JSON.stringify(defaultValue));
+                const storageKey = 'gs_persist_' + key;
+                try {
+                    const saved = localStorage.getItem(storageKey);
+                    if (saved !== null) {
+                        try { return JSON.parse(saved); } catch(e) { localStorage.removeItem(storageKey); return defaultValue; }
+                    }
+                    localStorage.setItem(storageKey, JSON.stringify(defaultValue));
+                } catch(e) {}
                 return defaultValue;
             }
         };
@@ -1020,10 +1318,14 @@ const GlideJS = `
             requestAnimationFrame(function() {
                 pending = false;
                 
-                // Save persisted keys to localStorage
-                Object.keys(persistedKeys).forEach(function(key) {
-                    localStorage.setItem('gs_' + key, JSON.stringify(plainData[key]));
-                });
+                // Save persisted keys to localStorage only if opt-in gs-persist is present
+                if (canPersist) {
+                    Object.keys(persistedKeys).forEach(function(key) {
+                        try {
+                            localStorage.setItem('gs_persist_' + key, JSON.stringify(plainData[key]));
+                        } catch(e) {}
+                    });
+                }
 
                 updateScope(rootEl, plainData, true);
                 teleportedElements.forEach(function(tel) {
@@ -1066,12 +1368,16 @@ const GlideJS = `
         };
 
         reactive.$persist = function(key, defaultValue) {
+            if (!canPersist) return defaultValue;
             persistedKeys[key] = true;
-            const saved = localStorage.getItem('gs_' + key);
-            if (saved !== null) {
-                try { return JSON.parse(saved); } catch(e) { return saved; }
-            }
-            localStorage.setItem('gs_' + key, JSON.stringify(defaultValue));
+            const storageKey = 'gs_persist_' + key;
+            try {
+                const saved = localStorage.getItem(storageKey);
+                if (saved !== null) {
+                    try { return JSON.parse(saved); } catch(e) { localStorage.removeItem(storageKey); return defaultValue; }
+                }
+                localStorage.setItem(storageKey, JSON.stringify(defaultValue));
+            } catch(e) {}
             return defaultValue;
         };
 
@@ -1278,9 +1584,40 @@ const GlideJS = `
 
     function navigate(url, push) {
         if (push === undefined) push = true;
-        fetch(url)
-            .then(function(res) { return res.text(); })
+
+        try {
+            const targetUrl = new URL(url, window.location.href);
+            if (targetUrl.origin !== window.location.origin) {
+                console.warn('[Glide Router] Cross-origin navigation delegated to browser:', url);
+                window.location.href = url;
+                return;
+            }
+        } catch(e) {
+            window.location.href = url;
+            return;
+        }
+
+        fetch(url, { headers: { 'X-Requested-With': 'Glide-SPA' } })
+            .then(function(res) {
+                if (res.redirected) {
+                    window.location.href = res.url;
+                    return null;
+                }
+                if (!res.ok) {
+                    console.error('[Glide Router] Navigation failed with HTTP ' + res.status + ': ' + url);
+                    if (res.status === 404) {
+                        const target = document.querySelector('[gs-route-target]') || document.body;
+                        if (target) {
+                            target.innerHTML = '<div class="gs-route-error gs-404"><h1>404 Not Found</h1><p>The requested page could not be found.</p></div>';
+                        }
+                    }
+                    // For 500 or other errors, leave DOM unchanged and do not morph error body
+                    return null;
+                }
+                return res.text();
+            })
             .then(function(html) {
+                if (!html) return;
                 const parser = new DOMParser();
                 const doc = parser.parseFromString(html, 'text/html');
 
@@ -1298,7 +1635,7 @@ const GlideJS = `
                 scanAndInit();
             })
             .catch(function(err) {
-                console.error('SPA Navigation error:', err);
+                console.error('[Glide Router] Navigation error:', err);
                 window.location.href = url;
             });
     }
@@ -1343,13 +1680,27 @@ const GlideJS = `
 
     // Public API
     global.Glide = {
-        version: '1.0.10',
+        version: '1.0.14',
         init:    scanAndInit,
         eval:    evaluate,
         store:   registerStore,
         directive: function(name, callback) { customDirectives[name] = callback; },
         magic:     function(name, callback) { customMagics[name] = callback; },
-        component: function(name, definition) { componentRegistry[name] = definition; }
+        component: function(name, definition) { componentRegistry[name] = definition; },
+        clearPersistedState: function() {
+            try {
+                const toRemove = [];
+                for (let i = 0; i < localStorage.length; i++) {
+                    const k = localStorage.key(i);
+                    if (k && (k.startsWith('gs_') || k.startsWith('gs_persist_'))) {
+                        toRemove.push(k);
+                    }
+                }
+                toRemove.forEach(function(k) { localStorage.removeItem(k); });
+            } catch(e) {
+                console.error('[Glide] Error clearing persisted state:', e);
+            }
+        }
     };
 
     // Global Modal Helpers

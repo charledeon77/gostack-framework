@@ -28,12 +28,20 @@ import (
 
 // TokenGuard handles stateless authentication using API bearer tokens.
 type TokenGuard struct {
-	provider contract.UserProvider
+	provider        contract.UserProvider
+	allowQueryToken bool // Explicit opt-in only. Query tokens leak into access logs and referrers (SEC-30).
 }
 
 // NewTokenGuard constructs a new TokenGuard with a user retrieval provider.
 func NewTokenGuard(provider contract.UserProvider) *TokenGuard {
-	return &TokenGuard{provider: provider}
+	return &TokenGuard{provider: provider, allowQueryToken: false}
+}
+
+// AllowQueryToken enables token extraction from URL query parameter ?api_token=.
+// WARNING: Passing tokens in URLs exposes credentials in proxy logs and browser history (SEC-30).
+func (g *TokenGuard) AllowQueryToken(allow bool) *TokenGuard {
+	g.allowQueryToken = allow
+	return g
 }
 
 // Check validates if the request contains a valid API token.
@@ -86,7 +94,10 @@ func (g *TokenGuard) getToken(r *http.Request) string {
 	if authHeader != "" && strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
 		return strings.TrimSpace(authHeader[7:])
 	}
-	return r.URL.Query().Get("api_token")
+	if g.allowQueryToken {
+		return r.URL.Query().Get("api_token")
+	}
+	return ""
 }
 
 func (g *TokenGuard) cacheUser(r *http.Request, user contract.Authenticatable) {

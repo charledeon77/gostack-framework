@@ -47,6 +47,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -62,15 +63,50 @@ type dbJobEnvelope struct {
 // DatabaseQueue is a SQL-backed implementation of contract.Queue.
 // It is safe for use across multiple worker instances.
 type DatabaseQueue struct {
-	db          *sql.DB
-	table       string       // jobs table name
-	failedTable string       // failed_jobs table name
-	queue       string       // logical queue name (allows multiple queues in one table)
+	db           *sql.DB
+	driver       string        // detected driver name: "postgres", "mysql", "sqlite", etc.
+	table        string        // jobs table name
+	failedTable  string        // failed_jobs table name
+	queue        string        // logical queue name (allows multiple queues in one table)
 	pollInterval time.Duration
-	registry    map[string]func() contract.Job // job name → constructor
-	mu          sync.RWMutex
-	wg          sync.WaitGroup
-	stop        chan struct{}
+	registry     map[string]func() contract.Job // job name → constructor
+	mu           sync.RWMutex
+	wg           sync.WaitGroup
+	stop         chan struct{}
+}
+
+// isPostgres reports whether the queue is backed by PostgreSQL or CockroachDB.
+// SEC-48: Driver-aware placeholder selection — Postgres requires $1,$2,… while
+// MySQL and SQLite use anonymous ? parameters.
+func (q *DatabaseQueue) isPostgres() bool {
+	d := q.driver
+	return d == "postgres" || d == "postgresql" || d == "cockroach" || d == "cockroachdb" ||
+		d == "pgx" || strings.Contains(d, "postgres") || strings.Contains(d, "cockroach")
+}
+
+// ph returns numbered Postgres-style placeholders ($1, $2, …) or anonymous ?
+// depending on the backing driver.
+func (q *DatabaseQueue) ph(n int) string {
+	if q.isPostgres() {
+		return fmt.Sprintf("$%d", n)
+	}
+	return "?"
+}
+
+// phs returns a comma-joined list of n placeholders, e.g. "?, ?, ?" or "$1, $2, $3".
+func (q *DatabaseQueue) phs(count int) string {
+	parts := make([]string, count)
+	for i := range parts {
+		parts[i] = q.ph(i + 1)
+	}
+	result := ""
+	for i, p := range parts {
+		if i > 0 {
+			result += ", "
+		}
+		result += p
+	}
+	return result
 }
 
 // NewDatabaseQueue creates a database-backed queue driver.
@@ -88,8 +124,15 @@ func NewDatabaseQueue(db *sql.DB, table, failedTable, queueName string, pollInte
 	if pollInterval <= 0 {
 		pollInterval = 3 * time.Second
 	}
+	// SEC-48: Detect driver at construction time so all SQL uses the correct
+	// placeholder syntax ($1,$2,… for Postgres; ? for MySQL/SQLite).
+	var driver string
+	if db != nil && db.Driver() != nil {
+		driver = strings.ToLower(fmt.Sprintf("%T", db.Driver()))
+	}
 	return &DatabaseQueue{
 		db:           db,
+		driver:       driver,
 		table:        table,
 		failedTable:  failedTable,
 		queue:        queueName,
@@ -135,18 +178,61 @@ func (q *DatabaseQueue) pushAt(job contract.Job, availableAt time.Time) error {
 
 	now := time.Now().Unix()
 	_, err = q.db.Exec(
-		fmt.Sprintf(`INSERT INTO %s (queue, payload, attempts, available_at, created_at) VALUES (?, ?, 0, ?, ?)`, q.table),
+		fmt.Sprintf(`INSERT INTO %s (queue, payload, attempts, available_at, created_at) VALUES (%s, %s, 0, %s, %s)`,
+			q.table, q.ph(1), q.ph(2), q.ph(3), q.ph(4)),
 		q.queue, string(envBytes), availableAt.Unix(), now,
 	)
 	return err
 }
 
 // StartWorkers launches n goroutines that each poll the database for available jobs.
+// SEC-31: Before starting, reclaim any jobs that are stuck in the reserved state due to
+// a previous worker crash. Jobs reserved longer than reservationTimeout are reset to pending.
 func (q *DatabaseQueue) StartWorkers(workers int) {
+	q.ReclaimReserved(5 * time.Minute)
 	for i := 0; i < workers; i++ {
 		q.wg.Add(1)
 		go q.worker(i)
 	}
+}
+
+// ReclaimReserved resets jobs that have been reserved but not completed within timeout.
+// This handles the case where a worker crashed mid-job and left the row stuck.
+// SEC-31: Called automatically on StartWorkers so orphaned jobs are never permanently lost.
+func (q *DatabaseQueue) ReclaimReserved(timeout time.Duration) {
+	cutoff := time.Now().Add(-timeout).Unix()
+	_, _ = q.db.Exec(
+		fmt.Sprintf(`UPDATE %s SET reserved_at = NULL, available_at = %s WHERE queue = %s AND reserved_at IS NOT NULL AND reserved_at < %s`,
+			q.table, q.ph(1), q.ph(2), q.ph(3)),
+		time.Now().Unix(), q.queue, cutoff,
+	)
+}
+
+// retryBackoff computes exponential backoff delay with full jitter for failed jobs.
+// SEC-34: Prevents thundering herd during mass retry storms after outages.
+// Formula: min(basePow * 2^(attempt-1), maxCap) with ±25% random jitter.
+func retryBackoff(attempt int) time.Duration {
+	const base = 10 * time.Second
+	const maxCap = 10 * time.Minute
+
+	delay := base
+	for i := 1; i < attempt; i++ {
+		delay *= 2
+		if delay > maxCap {
+			delay = maxCap
+			break
+		}
+	}
+
+	// Add ±25% jitter using time-based pseudorandom (no crypto needed here).
+	jitterRange := int64(delay) / 4
+	// Use the current nanosecond tick as a simple non-crypto jitter seed.
+	jitter := time.Duration(time.Now().UnixNano()%jitterRange - jitterRange/2)
+	result := delay + jitter
+	if result < time.Second {
+		result = time.Second
+	}
+	return result
 }
 
 // Close signals all workers to stop and waits for them to finish.
@@ -193,8 +279,8 @@ func (q *DatabaseQueue) processNext(workerID int) error {
 	// Attempt to reserve one unreserved, available job.
 	row := tx.QueryRow(
 		fmt.Sprintf(`SELECT id, payload, attempts FROM %s
-		             WHERE queue = ? AND available_at <= ? AND reserved_at IS NULL
-		             ORDER BY id ASC LIMIT 1 FOR UPDATE`, q.table),
+		             WHERE queue = %s AND available_at <= %s AND reserved_at IS NULL
+		             ORDER BY id ASC LIMIT 1 FOR UPDATE`, q.table, q.ph(1), q.ph(2)),
 		q.queue, now,
 	)
 
@@ -211,7 +297,7 @@ func (q *DatabaseQueue) processNext(workerID int) error {
 
 	// Mark as reserved.
 	if _, err = tx.Exec(
-		fmt.Sprintf(`UPDATE %s SET reserved_at = ?, attempts = attempts + 1 WHERE id = ?`, q.table),
+		fmt.Sprintf(`UPDATE %s SET reserved_at = %s, attempts = attempts + 1 WHERE id = %s`, q.table, q.ph(1), q.ph(2)),
 		now, jobID,
 	); err != nil {
 		return err
@@ -247,21 +333,34 @@ func (q *DatabaseQueue) processNext(workerID int) error {
 	if runErr != nil {
 		attempts++
 		if retryable, isRetryable := job.(contract.Retryable); isRetryable && attempts < retryable.MaxAttempts() {
-			// Put it back as unreserved for a retry.
-			_, _ = q.db.Exec(
-				fmt.Sprintf(`UPDATE %s SET reserved_at = NULL, available_at = ? WHERE id = ?`, q.table),
-				time.Now().Add(time.Duration(attempts)*10*time.Second).Unix(), jobID,
-			)
-			fmt.Printf("[DatabaseQueue Worker %d] Job %s failed (attempt %d/%d), retrying: %v\n",
-				workerID, env.Name, attempts, retryable.MaxAttempts(), runErr)
+			// SEC-34: Exponential backoff with jitter prevents thundering-herd retries.
+			backoff := retryBackoff(attempts)
+			// SEC-32: Check the requeue UPDATE error; on failure leave the job reserved rather than deleting it.
+			if _, requeueErr := q.db.Exec(
+				fmt.Sprintf(`UPDATE %s SET reserved_at = NULL, available_at = %s WHERE id = %s`, q.table, q.ph(1), q.ph(2)),
+				time.Now().Add(backoff).Unix(), jobID,
+			); requeueErr != nil {
+				fmt.Printf("[DatabaseQueue Worker %d] Job %s requeue failed (attempt %d/%d): %v — job left reserved\n",
+					workerID, env.Name, attempts, retryable.MaxAttempts(), requeueErr)
+				return requeueErr
+			}
+			fmt.Printf("[DatabaseQueue Worker %d] Job %s failed (attempt %d/%d), retrying in %s: %v\n",
+				workerID, env.Name, attempts, retryable.MaxAttempts(), backoff.Round(time.Second), runErr)
 			return nil
 		}
 
 		// Permanently failed — move to failed_jobs.
-		_, _ = q.db.Exec(
-			fmt.Sprintf(`INSERT INTO %s (queue, payload, attempts, error, failed_at) VALUES (?, ?, ?, ?, ?)`, q.failedTable),
+		// SEC-32: Only delete the job row after the dead-letter INSERT succeeds.
+		// If the INSERT fails, return the error and leave the job row intact so it is not silently lost.
+		if _, dlErr := q.db.Exec(
+			fmt.Sprintf(`INSERT INTO %s (queue, payload, attempts, error, failed_at) VALUES (%s, %s, %s, %s, %s)`,
+				q.failedTable, q.ph(1), q.ph(2), q.ph(3), q.ph(4), q.ph(5)),
 			q.queue, payload, attempts, runErr.Error(), time.Now().Unix(),
-		)
+		); dlErr != nil {
+			fmt.Printf("[DatabaseQueue Worker %d] Job %s dead-letter INSERT failed: %v — job NOT deleted\n",
+				workerID, env.Name, dlErr)
+			return dlErr
+		}
 		fmt.Printf("[DatabaseQueue Worker %d] Job %s permanently failed: %v\n", workerID, env.Name, runErr)
 	}
 
@@ -270,7 +369,7 @@ func (q *DatabaseQueue) processNext(workerID int) error {
 }
 
 func (q *DatabaseQueue) deleteJob(id int64) {
-	_, _ = q.db.Exec(fmt.Sprintf("DELETE FROM %s WHERE id = ?", q.table), id)
+	_, _ = q.db.Exec(fmt.Sprintf("DELETE FROM %s WHERE id = %s", q.table, q.ph(1)), id)
 }
 
 // GetStats returns overview counters for this queue.
@@ -278,11 +377,11 @@ func (q *DatabaseQueue) GetStats() (contract.QueueStats, error) {
 	var pending, failed int64
 
 	row := q.db.QueryRow(
-		fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE queue = ? AND reserved_at IS NULL`, q.table), q.queue)
+		fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE queue = %s AND reserved_at IS NULL`, q.table, q.ph(1)), q.queue)
 	_ = row.Scan(&pending)
 
 	row = q.db.QueryRow(
-		fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE queue = ?`, q.failedTable), q.queue)
+		fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE queue = %s`, q.failedTable, q.ph(1)), q.queue)
 	_ = row.Scan(&failed)
 
 	return contract.QueueStats{
@@ -296,7 +395,7 @@ func (q *DatabaseQueue) GetStats() (contract.QueueStats, error) {
 // GetFailedJobs lists all permanently failed jobs for this queue.
 func (q *DatabaseQueue) GetFailedJobs() ([]contract.FailedJob, error) {
 	rows, err := q.db.Query(
-		fmt.Sprintf(`SELECT id, payload, attempts, error, failed_at FROM %s WHERE queue = ? ORDER BY id DESC`, q.failedTable),
+		fmt.Sprintf(`SELECT id, payload, attempts, error, failed_at FROM %s WHERE queue = %s ORDER BY id DESC`, q.failedTable, q.ph(1)),
 		q.queue,
 	)
 	if err != nil {
@@ -333,7 +432,7 @@ func (q *DatabaseQueue) GetFailedJobs() ([]contract.FailedJob, error) {
 // RetryJob re-queues a failed job by its numeric ID.
 func (q *DatabaseQueue) RetryJob(id string) error {
 	row := q.db.QueryRow(
-		fmt.Sprintf(`SELECT payload FROM %s WHERE id = ?`, q.failedTable), id)
+		fmt.Sprintf(`SELECT payload FROM %s WHERE id = %s`, q.failedTable, q.ph(1)), id)
 	var payload string
 	if err := row.Scan(&payload); err != nil {
 		return fmt.Errorf("failed job not found: %s", id)
@@ -341,20 +440,21 @@ func (q *DatabaseQueue) RetryJob(id string) error {
 
 	now := time.Now().Unix()
 	_, err := q.db.Exec(
-		fmt.Sprintf(`INSERT INTO %s (queue, payload, attempts, available_at, created_at) VALUES (?, ?, 0, ?, ?)`, q.table),
+		fmt.Sprintf(`INSERT INTO %s (queue, payload, attempts, available_at, created_at) VALUES (%s, %s, 0, %s, %s)`,
+			q.table, q.ph(1), q.ph(2), q.ph(3), q.ph(4)),
 		q.queue, payload, now, now,
 	)
 	if err != nil {
 		return err
 	}
 
-	_, _ = q.db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE id = ?`, q.failedTable), id)
+	_, _ = q.db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE id = %s`, q.failedTable, q.ph(1)), id)
 	return nil
 }
 
 // DeleteFailedJob permanently removes a failed job by ID.
 func (q *DatabaseQueue) DeleteFailedJob(id string) error {
-	res, err := q.db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE id = ?`, q.failedTable), id)
+	res, err := q.db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE id = %s`, q.failedTable, q.ph(1)), id)
 	if err != nil {
 		return err
 	}

@@ -66,6 +66,9 @@ func (c *MakeEventCommand) Execute(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: make:event <EventName>")
 	}
+	if err := validateGeneratorName(args[0]); err != nil {
+		return fmt.Errorf("make:event failed: %w", err)
+	}
 	name := toStudlyCase(args[0])
 	name = strings.TrimSuffix(name, "Event") // Normalize: avoid double "Event"
 
@@ -129,6 +132,9 @@ func (c *MakeJobCommand) Execute(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: make:job <JobName>")
 	}
+	if err := validateGeneratorName(args[0]); err != nil {
+		return fmt.Errorf("make:job failed: %w", err)
+	}
 	name := toStudlyCase(args[0])
 	name = strings.TrimSuffix(name, "Job")
 
@@ -191,6 +197,9 @@ func (c *MakePolicyCommand) Execute(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: make:policy <PolicyName>")
 	}
+	if err := validateGeneratorName(args[0]); err != nil {
+		return fmt.Errorf("make:policy failed: %w", err)
+	}
 	name := toStudlyCase(args[0])
 	name = strings.TrimSuffix(name, "Policy")
 
@@ -250,6 +259,9 @@ func (p *{{.Name}}ServiceProvider) Boot() {
 func (c *MakeProviderCommand) Execute(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: make:provider <ProviderName>")
+	}
+	if err := validateGeneratorName(args[0]); err != nil {
+		return fmt.Errorf("make:provider failed: %w", err)
 	}
 	name := toStudlyCase(args[0])
 	name = strings.TrimSuffix(name, "ServiceProvider")

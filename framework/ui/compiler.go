@@ -83,6 +83,9 @@ func (c *AssetCompiler) Run() error {
 		}
 
 		name := entry.Name()
+		if !isValidComponentName(name) {
+			return fmt.Errorf("invalid component directory name %q: must match ^[a-z0-9][a-z0-9_-]*$", name)
+		}
 		componentDir := filepath.Join(c.ComponentsPath, name)
 
 		// 1. Process Scoped CSS
@@ -121,7 +124,10 @@ func (c *AssetCompiler) Run() error {
 			if strings.Contains(rawHTMLStr, "{{") || strings.Contains(rawHTMLStr, "@") {
 				needsUI = true
 			}
-			compiledHTML, hasFmt := c.compileHTML(name, rawHTMLStr)
+			compiledHTML, hasFmt, err := c.compileHTML(name, rawHTMLStr)
+			if err != nil {
+				return err
+			}
 			if hasFmt {
 				needsFmt = true
 			}
@@ -174,24 +180,68 @@ func RegisterComponents(t *http.Tempose) {
 }
 
 // Package-level compiled regexes (RE2-compatible, no backreferences).
-var directiveRegex    = regexp.MustCompile(`(@if\([^)]+\)|@elseif\([^)]+\)|@else|@endif|@foreach\([^)]+\)|@endforeach)`)
-var variableNameRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_.]*$`)
-var includeRe         = regexp.MustCompile(`@include\(["']([^"'\n]+)["']\)`)
-var extendsRe         = regexp.MustCompile(`@extends\(["']([^"'\n]+)["']\)`)
-var sectionRe         = regexp.MustCompile(`(?s)@section\(["']([^"'\n]+)["']\)(.*?)@endsection`)
-var yieldRe           = regexp.MustCompile(`@yield\(["']([^"'\n]+)["']\)`)
+var directiveRegex     = regexp.MustCompile(`(@if\([^)]+\)|@elseif\([^)]+\)|@else|@endif|@foreach\([^)]+\)|@endforeach)`)
+var componentNameRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+var variableNameRegex  = regexp.MustCompile(`^[a-zA-Z_$][a-zA-Z0-9_.]*$`)
+var identifierRegex    = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+var numberLiteralRegex = regexp.MustCompile(`^-?[0-9]+(?:\.[0-9]+)?$`)
+var includeRe          = regexp.MustCompile(`@include\(["']([^"'\n]+)["']\)`)
+var extendsRe          = regexp.MustCompile(`@extends\(["']([^"'\n]+)["']\)`)
+var sectionRe          = regexp.MustCompile(`(?s)@section\(["']([^"'\n]+)["']\)(.*?)@endsection`)
+var yieldRe            = regexp.MustCompile(`@yield\(["']([^"'\n]+)["']\)`)
+
+func isValidComponentName(name string) bool {
+	return componentNameRegex.MatchString(name)
+}
 
 func isVariableName(expr string) bool {
 	return variableNameRegex.MatchString(expr)
 }
 
-// compileHTML transforms a raw HTML template string into a sequence of Go statements.
-// Returns the compiled Go source and whether fmt.Sprint is used (for import tracking).
-func (c *AssetCompiler) compileHTML(componentName, rawHTML string) (string, bool) {
-	// Resolve layout inheritance and partial includes at compile time.
-	if preprocessed, err := c.preprocessLayouts(rawHTML); err == nil {
-		rawHTML = preprocessed
+func isValidIdentifier(name string) bool {
+	return identifierRegex.MatchString(name)
+}
+
+func isLiteral(expr string) bool {
+	if (strings.HasPrefix(expr, `"`) && strings.HasSuffix(expr, `"`)) ||
+		(strings.HasPrefix(expr, `'`) && strings.HasSuffix(expr, `'`)) {
+		return true
 	}
+	if numberLiteralRegex.MatchString(expr) {
+		return true
+	}
+	if expr == "true" || expr == "false" {
+		return true
+	}
+	return false
+}
+
+func calculateLine(fullText, snippet string) int {
+	idx := strings.Index(fullText, snippet)
+	if idx == -1 {
+		return 1
+	}
+	line := strings.Count(fullText[:idx], "\n")
+	if line < 1 {
+		line = 1
+	}
+	return line
+}
+
+type exprError struct {
+	expr string
+	err  error
+}
+
+// compileHTML transforms a raw HTML template string into a sequence of Go statements.
+// Returns the compiled Go source, whether fmt.Sprint is used (for import tracking), and any validation error.
+func (c *AssetCompiler) compileHTML(componentName, rawHTML string) (string, bool, error) {
+	// Resolve layout inheritance and partial includes at compile time.
+	preprocessed, err := c.preprocessLayouts(rawHTML)
+	if err != nil {
+		return "", false, fmt.Errorf("component %q: %w", componentName, err)
+	}
+	rawHTML = preprocessed
 
 	wrappedHTML := fmt.Sprintf("<div gs-component=\"%s\">\n%s\n</div>", componentName, strings.TrimSpace(rawHTML))
 
@@ -200,45 +250,91 @@ func (c *AssetCompiler) compileHTML(componentName, rawHTML string) (string, bool
 
 	matches := directiveRegex.FindAllStringIndex(wrappedHTML, -1)
 	if len(matches) == 0 {
-		c.compileTextSegment(wrappedHTML, &sb, &needsFmt)
-		return sb.String(), needsFmt
+		if errExp := c.compileTextSegment(wrappedHTML, &sb, &needsFmt); errExp != nil {
+			line := calculateLine(wrappedHTML, errExp.expr)
+			return "", false, fmt.Errorf("%s:%d: %w", componentName, line, errExp.err)
+		}
+		return sb.String(), needsFmt, nil
 	}
 
 	lastIdx := 0
 	for _, match := range matches {
 		start, end := match[0], match[1]
 		if start > lastIdx {
-			c.compileTextSegment(wrappedHTML[lastIdx:start], &sb, &needsFmt)
+			if errExp := c.compileTextSegment(wrappedHTML[lastIdx:start], &sb, &needsFmt); errExp != nil {
+				line := calculateLine(wrappedHTML, errExp.expr)
+				return "", false, fmt.Errorf("%s:%d: %w", componentName, line, errExp.err)
+			}
 		}
-		c.compileDirective(wrappedHTML[start:end], &sb, &needsFmt)
+		if err := c.compileDirective(wrappedHTML[start:end], &sb, &needsFmt); err != nil {
+			line := calculateLine(wrappedHTML, wrappedHTML[start:end])
+			return "", false, fmt.Errorf("%s:%d: %w", componentName, line, err)
+		}
 		lastIdx = end
 	}
 	if lastIdx < len(wrappedHTML) {
-		c.compileTextSegment(wrappedHTML[lastIdx:], &sb, &needsFmt)
+		if errExp := c.compileTextSegment(wrappedHTML[lastIdx:], &sb, &needsFmt); errExp != nil {
+			line := calculateLine(wrappedHTML, errExp.expr)
+			return "", false, fmt.Errorf("%s:%d: %w", componentName, line, errExp.err)
+		}
 	}
 
-	return sb.String(), needsFmt
+	return sb.String(), needsFmt, nil
 }
 
-func (c *AssetCompiler) compileDirective(dirStr string, sb *strings.Builder, needsFmt *bool) {
+func (c *AssetCompiler) compileDirective(dirStr string, sb *strings.Builder, needsFmt *bool) error {
 	switch {
 	case strings.HasPrefix(dirStr, "@if("):
 		expr := strings.TrimSuffix(strings.TrimPrefix(dirStr, "@if("), ")")
+		expr = strings.TrimSpace(expr)
 		if strings.HasPrefix(expr, ".") {
-			sb.WriteString(fmt.Sprintf("\t\tif ui.EvaluateBool(data, \"%s\") {\n", strings.TrimPrefix(expr, ".")))
+			field := strings.TrimPrefix(expr, ".")
+			if !isVariableName(field) {
+				return fmt.Errorf("invalid field in @if: %q", expr)
+			}
+			sb.WriteString(fmt.Sprintf("\t\tif ui.EvaluateBool(data, \"%s\") {\n", field))
+		} else if strings.HasPrefix(expr, "!.") {
+			field := strings.TrimPrefix(expr, "!.")
+			if !isVariableName(field) {
+				return fmt.Errorf("invalid field in @if: %q", expr)
+			}
+			sb.WriteString(fmt.Sprintf("\t\tif !ui.EvaluateBool(data, \"%s\") {\n", field))
 		} else if isVariableName(expr) {
 			sb.WriteString(fmt.Sprintf("\t\tif ui.EvaluateBool(data, \"%s\") {\n", expr))
+		} else if strings.HasPrefix(expr, "!") && isVariableName(strings.TrimPrefix(expr, "!")) {
+			sb.WriteString(fmt.Sprintf("\t\tif !ui.EvaluateBool(data, \"%s\") {\n", strings.TrimPrefix(expr, "!")))
+		} else if expr == "true" {
+			sb.WriteString("\t\tif true {\n")
+		} else if expr == "false" {
+			sb.WriteString("\t\tif false {\n")
 		} else {
-			sb.WriteString(fmt.Sprintf("\t\tif %s {\n", expr))
+			return fmt.Errorf("invalid @if expression %q: arbitrary Go expressions are not allowed", expr)
 		}
 	case strings.HasPrefix(dirStr, "@elseif("):
 		expr := strings.TrimSuffix(strings.TrimPrefix(dirStr, "@elseif("), ")")
+		expr = strings.TrimSpace(expr)
 		if strings.HasPrefix(expr, ".") {
-			sb.WriteString(fmt.Sprintf("\t\t} else if ui.EvaluateBool(data, \"%s\") {\n", strings.TrimPrefix(expr, ".")))
+			field := strings.TrimPrefix(expr, ".")
+			if !isVariableName(field) {
+				return fmt.Errorf("invalid field in @elseif: %q", expr)
+			}
+			sb.WriteString(fmt.Sprintf("\t\t} else if ui.EvaluateBool(data, \"%s\") {\n", field))
+		} else if strings.HasPrefix(expr, "!.") {
+			field := strings.TrimPrefix(expr, "!.")
+			if !isVariableName(field) {
+				return fmt.Errorf("invalid field in @elseif: %q", expr)
+			}
+			sb.WriteString(fmt.Sprintf("\t\t} else if !ui.EvaluateBool(data, \"%s\") {\n", field))
 		} else if isVariableName(expr) {
 			sb.WriteString(fmt.Sprintf("\t\t} else if ui.EvaluateBool(data, \"%s\") {\n", expr))
+		} else if strings.HasPrefix(expr, "!") && isVariableName(strings.TrimPrefix(expr, "!")) {
+			sb.WriteString(fmt.Sprintf("\t\t} else if !ui.EvaluateBool(data, \"%s\") {\n", strings.TrimPrefix(expr, "!")))
+		} else if expr == "true" {
+			sb.WriteString("\t\t} else if true {\n")
+		} else if expr == "false" {
+			sb.WriteString("\t\t} else if false {\n")
 		} else {
-			sb.WriteString(fmt.Sprintf("\t\t} else if %s {\n", expr))
+			return fmt.Errorf("invalid @elseif expression %q: arbitrary Go expressions are not allowed", expr)
 		}
 	case dirStr == "@else":
 		sb.WriteString("\t\t} else {\n")
@@ -253,17 +349,23 @@ func (c *AssetCompiler) compileDirective(dirStr string, sb *strings.Builder, nee
 		if len(parts) == 2 {
 			listName := strings.TrimPrefix(strings.TrimSpace(parts[0]), ".")
 			varName := strings.TrimSpace(parts[1])
+			if !isVariableName(listName) || !isValidIdentifier(varName) {
+				return fmt.Errorf("invalid @foreach syntax %q: list and item must be valid identifiers", expr)
+			}
 			sb.WriteString(fmt.Sprintf("\t\tfor _, %sVal := range ui.EvaluateSlice(data, \"%s\") {\n", varName, listName))
 			sb.WriteString(fmt.Sprintf("\t\t\tdata := map[string]any{\"$parent\": data, \"%s\": %sVal}\n", varName, varName))
+		} else {
+			return fmt.Errorf("invalid @foreach syntax %q: expected 'list as item' or 'list in item'", expr)
 		}
 	case dirStr == "@endforeach":
 		sb.WriteString("\t\t}\n")
 	}
+	return nil
 }
 
-func (c *AssetCompiler) compileTextSegment(segment string, sb *strings.Builder, needsFmt *bool) {
+func (c *AssetCompiler) compileTextSegment(segment string, sb *strings.Builder, needsFmt *bool) *exprError {
 	if segment == "" {
-		return
+		return nil
 	}
 	parts := strings.Split(segment, "{{")
 
@@ -282,16 +384,23 @@ func (c *AssetCompiler) compileTextSegment(segment string, sb *strings.Builder, 
 
 		if strings.Contains(expr, "|") {
 			// Filter pipe chain: e.g. ".Title | slugify" or ".CreatedAt | date(\"2006-01-02\")"
-			compiledExpr := c.compileFilterChain(expr)
+			compiledExpr, err := c.compileFilterChain(expr)
+			if err != nil {
+				return &exprError{expr: expr, err: err}
+			}
 			sb.WriteString(fmt.Sprintf("\t\tif _, err := io.WriteString(w, ui.Escape(%s)); err != nil { return err }\n", compiledExpr))
 		} else if strings.HasPrefix(expr, ".") {
 			fieldName := strings.TrimPrefix(expr, ".")
+			if !isVariableName(fieldName) {
+				return &exprError{expr: expr, err: fmt.Errorf("invalid field identifier %q", expr)}
+			}
 			sb.WriteString(fmt.Sprintf("\t\tif _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, \"%s\"))); err != nil { return err }\n", fieldName))
 		} else if isVariableName(expr) {
 			sb.WriteString(fmt.Sprintf("\t\tif _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, \"%s\"))); err != nil { return err }\n", expr))
+		} else if isLiteral(expr) {
+			sb.WriteString(fmt.Sprintf("\t\tif _, err := io.WriteString(w, ui.Escape(%s)); err != nil { return err }\n", expr))
 		} else {
-			*needsFmt = true
-			sb.WriteString(fmt.Sprintf("\t\tif _, err := io.WriteString(w, fmt.Sprint(%s)); err != nil { return err }\n", expr))
+			return &exprError{expr: expr, err: fmt.Errorf("invalid template expression {{ %s }}: arbitrary Go expressions are not allowed", expr)}
 		}
 
 		restSafe := strings.ReplaceAll(rest, "`", "` + \"`\" + `")
@@ -299,6 +408,7 @@ func (c *AssetCompiler) compileTextSegment(segment string, sb *strings.Builder, 
 			sb.WriteString(fmt.Sprintf("\t\tif _, err := io.WriteString(w, `%s`); err != nil { return err }\n", restSafe))
 		}
 	}
+	return nil
 }
 
 // compileFilterChain compiles a pipe-separated filter expression into a Go ui.ApplyFilter call chain.
@@ -306,7 +416,7 @@ func (c *AssetCompiler) compileTextSegment(segment string, sb *strings.Builder, 
 //   ".Title | slugify"              → ui.ApplyFilter(ui.Evaluate(data, "Title"), "slugify")
 //   ".CreatedAt | date(\"2006\")"   → ui.ApplyFilter(ui.Evaluate(data, "CreatedAt"), "date", "2006")
 //   ".Name | upper | truncate(20)" → ui.ApplyFilter(ui.ApplyFilter(...), "truncate", "20")
-func (c *AssetCompiler) compileFilterChain(expr string) string {
+func (c *AssetCompiler) compileFilterChain(expr string) (string, error) {
 	// Parse the expression into parts by splitting on '|', but respecting quotes/parens.
 	var pipes []string
 	var current strings.Builder
@@ -353,18 +463,24 @@ func (c *AssetCompiler) compileFilterChain(expr string) string {
 	}
 
 	if len(pipes) == 0 {
-		return `""`
+		return `""`, nil
 	}
 
 	// Compile the base value expression
 	base := pipes[0]
 	var goExpr string
 	if strings.HasPrefix(base, ".") {
-		goExpr = fmt.Sprintf(`ui.Evaluate(data, "%s")`, strings.TrimPrefix(base, "."))
+		fieldName := strings.TrimPrefix(base, ".")
+		if !isVariableName(fieldName) {
+			return "", fmt.Errorf("invalid field in filter chain: %q", base)
+		}
+		goExpr = fmt.Sprintf(`ui.Evaluate(data, "%s")`, fieldName)
 	} else if isVariableName(base) {
 		goExpr = fmt.Sprintf(`ui.Evaluate(data, "%s")`, base)
-	} else {
+	} else if isLiteral(base) {
 		goExpr = base
+	} else {
+		return "", fmt.Errorf("invalid base expression in filter chain: %q", base)
 	}
 
 	// Apply each filter in the chain
@@ -373,6 +489,9 @@ func (c *AssetCompiler) compileFilterChain(expr string) string {
 		// Parse filter name and optional args: filterName(arg1, arg2)
 		if parenIdx := strings.Index(pipe, "("); parenIdx != -1 {
 			filterName := strings.TrimSpace(pipe[:parenIdx])
+			if !isValidIdentifier(filterName) {
+				return "", fmt.Errorf("invalid filter name: %q", filterName)
+			}
 			argsStr := strings.TrimSuffix(strings.TrimSpace(pipe[parenIdx+1:]), ")")
 
 			// Parse filter args, respecting quotes/parens.
@@ -431,11 +550,66 @@ func (c *AssetCompiler) compileFilterChain(expr string) string {
 			}
 		} else {
 			// No args: filterName only
-			goExpr = fmt.Sprintf(`ui.ApplyFilter(%s, "%s")`, goExpr, pipe)
+			filterName := pipe
+			if !isValidIdentifier(filterName) {
+				return "", fmt.Errorf("invalid filter name: %q", filterName)
+			}
+			goExpr = fmt.Sprintf(`ui.ApplyFilter(%s, "%s")`, goExpr, filterName)
 		}
 	}
 
-	return goExpr
+	return goExpr, nil
+}
+
+func (c *AssetCompiler) resolveTemplateFile(relPath string) (string, error) {
+	roots := []string{c.ComponentsPath}
+	if parent := filepath.Dir(c.ComponentsPath); parent != "" && parent != "." && parent != c.ComponentsPath {
+		roots = append(roots, parent)
+	}
+
+	cleanRel := filepath.Clean(relPath)
+	if filepath.IsAbs(cleanRel) {
+		return "", fmt.Errorf("security violation: absolute path traversal attempt on %q", relPath)
+	}
+
+	var lastErr error
+	for _, root := range roots {
+		absRoot, err := filepath.Abs(root)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		target := filepath.Join(absRoot, cleanRel)
+		absTarget, err := filepath.Abs(target)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		rel, err := filepath.Rel(absRoot, absTarget)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			lastErr = fmt.Errorf("security violation: path traversal attempt on %q", relPath)
+			continue
+		}
+
+		if evalPath, err := filepath.EvalSymlinks(absTarget); err == nil {
+			if evalRoot, errRoot := filepath.EvalSymlinks(absRoot); errRoot == nil {
+				relEval, err := filepath.Rel(evalRoot, evalPath)
+				if err != nil || relEval == ".." || strings.HasPrefix(relEval, ".."+string(filepath.Separator)) {
+					return "", fmt.Errorf("security violation: symlink points outside root on %q", relPath)
+				}
+			}
+		}
+
+		if _, err := os.Stat(absTarget); err == nil {
+			return absTarget, nil
+		}
+	}
+
+	if lastErr != nil && strings.Contains(lastErr.Error(), "security violation") {
+		return "", lastErr
+	}
+	return "", fmt.Errorf("file %q not found", relPath)
 }
 
 // preprocessLayouts resolves template inheritance at compile time.
@@ -465,22 +639,42 @@ func (c *AssetCompiler) preprocessLayouts(rawHTML string) (string, error) {
 		return fmt.Sprintf("@section('%s')%s@endsection", slotName, content)
 	})
 
-	// 1. Inline @include partial files.
-	rawHTML = includeRe.ReplaceAllStringFunc(rawHTML, func(incStr string) string {
-		m := includeRe.FindStringSubmatch(incStr)
-		if len(m) < 2 {
-			return ""
+	// 1. Inline @include partial files (supporting recursive nested includes safely).
+	maxDepth := 10
+	for depth := 0; depth < maxDepth; depth++ {
+		if !strings.Contains(rawHTML, "@include(") {
+			break
 		}
-		incFile := filepath.Join(c.ComponentsPath, m[1]+".html")
-		if _, err := os.Stat(incFile); err != nil {
-			incFile = filepath.Join(filepath.Dir(c.ComponentsPath), m[1]+".html")
+		var incErr error
+		rawHTML = includeRe.ReplaceAllStringFunc(rawHTML, func(incStr string) string {
+			if incErr != nil {
+				return ""
+			}
+			m := includeRe.FindStringSubmatch(incStr)
+			if len(m) < 2 {
+				return ""
+			}
+			incPath := m[1]
+			incFile, err := c.resolveTemplateFile(incPath + ".html")
+			if err != nil {
+				incErr = fmt.Errorf("invalid @include(%q): %w", incPath, err)
+				return ""
+			}
+			b, err := os.ReadFile(incFile)
+			if err != nil {
+				incErr = fmt.Errorf("included file %q not readable: %w", incPath, err)
+				return ""
+			}
+			return string(b)
+		})
+		if incErr != nil {
+			return "", incErr
 		}
-		b, err := os.ReadFile(incFile)
-		if err != nil {
-			return fmt.Sprintf("<!-- Include error: %s not found -->", m[1])
-		}
-		return string(b)
-	})
+	}
+
+	if strings.Contains(rawHTML, "@include(") {
+		return "", fmt.Errorf("circular or excessively deep @include detected")
+	}
 
 	if !strings.Contains(rawHTML, "@extends") {
 		return rawHTML, nil
@@ -493,13 +687,13 @@ func (c *AssetCompiler) preprocessLayouts(rawHTML string) (string, error) {
 	}
 	layoutPath := m[1]
 
-	layoutFile := filepath.Join(c.ComponentsPath, layoutPath+".html")
-	if _, err := os.Stat(layoutFile); err != nil {
-		layoutFile = filepath.Join(filepath.Dir(c.ComponentsPath), layoutPath+".html")
+	layoutFile, err := c.resolveTemplateFile(layoutPath + ".html")
+	if err != nil {
+		return "", fmt.Errorf("layout file %q not found: %w", layoutPath, err)
 	}
 	layoutBytes, err := os.ReadFile(layoutFile)
 	if err != nil {
-		return "", fmt.Errorf("layout file %s not found: %w", layoutPath, err)
+		return "", fmt.Errorf("layout file %q not readable: %w", layoutPath, err)
 	}
 	layoutHTML := string(layoutBytes)
 

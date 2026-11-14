@@ -33,9 +33,21 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"github.com/charledeon77/gostack-framework/framework/contract"
 	netHTTP "net/http"
+	"os"
+	"strconv"
+	"strings"
+
+	"github.com/charledeon77/gostack-framework/framework/contract"
 )
+
+func isRequestSecure(req *netHTTP.Request) bool {
+	appEnv := strings.ToLower(os.Getenv("APP_ENV"))
+	if appEnv == "local" || appEnv == "development" {
+		return req.TLS != nil || req.Header.Get("X-Forwarded-Proto") == "https"
+	}
+	return true
+}
 
 // SessionMiddleware builds an HTTP middleware interceptor targeting session lifecycles.
 //
@@ -49,37 +61,57 @@ func SessionMiddleware(store contract.SessionStore, cookieName string) Middlewar
 	if cookieName == "" {
 		cookieName = "gostack_session"
 	}
-	
+
 	return func(ctx *Context, next NextHandler) error {
 		var sessionID string
-		
-		// 1. Inspect request cookies for existing session tokens
+		var isNewSession bool
+
+		// 1. Inspect request cookies for existing session tokens (SEC-16)
 		cookie, err := ctx.Request.Cookie(cookieName)
-		if err == nil && cookie != nil && cookie.Value != "" {
+		if err == nil && cookie != nil && cookie.Value != "" && IsValidSessionID(cookie.Value) && store.Exists(cookie.Value) {
 			sessionID = cookie.Value
 		} else {
-			// 2. Generate a secure fallback ID if missing
+			// Generate a fresh cryptographically secure session ID if missing, invalid format, or unknown in store
 			sessionID = generateSessionID()
+			isNewSession = true
 		}
 
-		// 3. Retrieve or create session via the store contract
+		// 2. Retrieve or create session via the store contract
 		sess, err := store.Load(sessionID)
 		if err != nil {
 			return err
 		}
 
-		// 4. Inject the session reference into the request-scoped Context
+		// 3. Inject the session and store reference into the request-scoped Context
 		ctx.Set("session", sess)
-		ctx.Request = ctx.Request.WithContext(context.WithValue(ctx.Request.Context(), contract.SessionContextKey, sess))
+		ctx.Set("session_store", store)
+		ctx.Set("session_cookie_name", cookieName)
 
-		// 5. Commit response cookie headers before next() triggers WriteHeader/Write
-		netHTTP.SetCookie(ctx.Writer, &netHTTP.Cookie{
-			Name:     cookieName,
-			Value:    sessionID,
-			Path:     "/",
-			HttpOnly: true,
-			Secure:   false, // Set false for local development compatibility
-		})
+		reqCtx := context.WithValue(ctx.Request.Context(), contract.SessionContextKey, sess)
+		reqCtx = context.WithValue(reqCtx, contract.SessionStoreContextKey, store)
+		reqCtx = context.WithValue(reqCtx, contract.SessionCookieNameContextKey, cookieName)
+		ctx.Request = ctx.Request.WithContext(reqCtx)
+
+		// 4. Determine session cookie expiry (Max-Age) and security attributes (SEC-02)
+		maxAge := 7200 // default 2 hours
+		if lifetimeStr := os.Getenv("SESSION_LIFETIME"); lifetimeStr != "" {
+			if mins, parseErr := strconv.Atoi(lifetimeStr); parseErr == nil && mins > 0 {
+				maxAge = mins * 60
+			}
+		}
+
+		// 5. Commit response cookie header if newly minted (SEC-16)
+		if isNewSession {
+			netHTTP.SetCookie(ctx.Writer, &netHTTP.Cookie{
+				Name:     cookieName,
+				Value:    sessionID,
+				Path:     "/",
+				HttpOnly: true,
+				Secure:   isRequestSecure(ctx.Request),
+				SameSite: netHTTP.SameSiteLaxMode,
+				MaxAge:   maxAge,
+			})
+		}
 
 		// 6. Execute subsequent middlewares and handler controllers
 		err = next(ctx)

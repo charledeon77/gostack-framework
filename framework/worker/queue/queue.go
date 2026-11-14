@@ -128,40 +128,56 @@ func (q *MemoryQueue) Close() error {
 	return nil
 }
 
-// worker is the internal loop that continuously pops and executes jobs.
+// worker is the internal loop that continuously pops and executes jobs with panic isolation.
 func (q *MemoryQueue) worker(id int) {
 	defer q.wg.Done()
 
 	for env := range q.jobs {
-		err := env.job.Handle()
-		if err != nil {
-			env.attempts++
-			if retryable, ok := env.job.(contract.Retryable); ok && env.attempts < retryable.MaxAttempts() {
-				// Exponential backoff: factor * 2^attempts
-				factor := q.BackoffFactor
-				if factor == 0 {
-					factor = time.Second
+		func(e *memoryJobEnvelope) {
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Printf("[Sequence Worker %d Critical Panic] Job %s crashed: %v\n", id, e.job.Name(), r)
+					q.mu.Lock()
+					q.failedJobs = append(q.failedJobs, memoryFailedJob{
+						id:       fmt.Sprintf("panic-%d", time.Now().UnixNano()),
+						job:      e.job,
+						errorMsg: fmt.Sprintf("panic: %v", r),
+						failedAt: time.Now(),
+					})
+					q.mu.Unlock()
 				}
-				backoff := factor * time.Duration(1 << env.attempts)
-				fmt.Printf("[Sequence Worker %d] Job %s execution failed: %v. Retrying in %v (attempt %d/%d)...\n",
-					id, env.job.Name(), err, backoff, env.attempts, retryable.MaxAttempts())
-				
-				go func(e *memoryJobEnvelope, d time.Duration) {
-					time.Sleep(d)
-					_ = q.pushEnvelope(e)
-				}(env, backoff)
-			} else {
-				fmt.Printf("[Sequence Worker %d] Job %s execution failed: %v\n", id, env.job.Name(), err)
-				q.mu.Lock()
-				q.failedJobs = append(q.failedJobs, memoryFailedJob{
-					id:       fmt.Sprintf("mem-%d", time.Now().UnixNano()),
-					job:      env.job,
-					errorMsg: err.Error(),
-					failedAt: time.Now(),
-				})
-				q.mu.Unlock()
+			}()
+
+			err := e.job.Handle()
+			if err != nil {
+				e.attempts++
+				if retryable, ok := e.job.(contract.Retryable); ok && e.attempts < retryable.MaxAttempts() {
+					// Exponential backoff: factor * 2^attempts
+					factor := q.BackoffFactor
+					if factor == 0 {
+						factor = time.Second
+					}
+					backoff := factor * time.Duration(1<<e.attempts)
+					fmt.Printf("[Sequence Worker %d] Job %s execution failed: %v. Retrying in %v (attempt %d/%d)...\n",
+						id, e.job.Name(), err, backoff, e.attempts, retryable.MaxAttempts())
+
+					go func(envRef *memoryJobEnvelope, d time.Duration) {
+						time.Sleep(d)
+						_ = q.pushEnvelope(envRef)
+					}(e, backoff)
+				} else {
+					fmt.Printf("[Sequence Worker %d] Job %s execution failed: %v\n", id, e.job.Name(), err)
+					q.mu.Lock()
+					q.failedJobs = append(q.failedJobs, memoryFailedJob{
+						id:       fmt.Sprintf("mem-%d", time.Now().UnixNano()),
+						job:      e.job,
+						errorMsg: err.Error(),
+						failedAt: time.Now(),
+					})
+					q.mu.Unlock()
+				}
 			}
-		}
+		}(env)
 	}
 }
 

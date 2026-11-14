@@ -41,25 +41,63 @@ package database
 import (
 	"database/sql"
 	"fmt"
-	"github.com/charledeon77/gostack-framework/framework/contract"
+	"regexp"
 	"strings"
 	"sync/atomic"
+
+	"github.com/charledeon77/gostack-framework/framework/contract"
 )
+
+var (
+	identRegex  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	tableRegex  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$`)
+	columnRegex = regexp.MustCompile(`^(?:(?:[A-Za-z_][A-Za-z0-9_]*|\*|(?:[A-Za-z_][A-Za-z0-9_]*)\.(?:[A-Za-z_][A-Za-z0-9_]*|\*))|(?:COUNT|SUM|AVG|MIN|MAX)\((?:[A-Za-z_][A-Za-z0-9_]*|\*|(?:[A-Za-z_][A-Za-z0-9_]*)\.[A-Za-z_][A-Za-z0-9_]*)\))(?:\s+(?i:as)\s+[A-Za-z_][A-Za-z0-9_]*)?$`)
+)
+
+func isValidOperator(op string) bool {
+	switch strings.ToUpper(strings.TrimSpace(op)) {
+	case "=", "!=", "<>", ">", ">=", "<", "<=", "LIKE", "NOT LIKE", "ILIKE", "NOT ILIKE", "IS", "IS NOT", "IN", "NOT IN":
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidDirection(dir string) bool {
+	switch strings.ToUpper(strings.TrimSpace(dir)) {
+	case "ASC", "DESC", "ASC NULLS FIRST", "DESC NULLS LAST":
+		return true
+	default:
+		return false
+	}
+}
 
 // QueryBuilder serves as the core state manager for SQL construction.
 type QueryBuilder struct {
-	table        string
-	columns      []string
-	where        []string
-	joins        []string
-	bindings     []any
-	db           contract.Database
-	tx           contract.Tx
-	relations    []string
-	orderBy      string // e.g. "created_at DESC"
-	limitVal     int    // 0 = no limit
-	offsetVal    int    // 0 = no offset
-	withTrashed  bool
+	table       string
+	columns     []string
+	where       []string
+	joins       []string
+	bindings    []any
+	db          contract.Database
+	tx          contract.Tx
+	relations   []string
+	orderBy     string // e.g. "created_at DESC"
+	limitVal    int    // 0 = no limit
+	offsetVal   int    // 0 = no offset
+	withTrashed bool
+	err         error
+}
+
+func (qb *QueryBuilder) setErr(err error) {
+	if qb.err == nil && err != nil {
+		qb.err = err
+	}
+}
+
+// Err returns the first validation or execution error encountered by the query builder.
+func (qb *QueryBuilder) Err() error {
+	return qb.err
 }
 
 type dbOrTx interface {
@@ -152,10 +190,14 @@ func Transaction(conn any, fn func(tx contract.Tx) error) error {
 
 // New constructs a new QueryBuilder instance.
 func New(db contract.Database, table string) *QueryBuilder {
-	return &QueryBuilder{
+	qb := &QueryBuilder{
 		db:    db,
 		table: table,
 	}
+	if !tableRegex.MatchString(table) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid table identifier: %q", table))
+	}
+	return qb
 }
 
 // WithTx configures the query builder to run operations inside a transaction.
@@ -166,12 +208,27 @@ func (qb *QueryBuilder) WithTx(tx contract.Tx) *QueryBuilder {
 
 // Select specifies the columns to be retrieved.
 func (qb *QueryBuilder) Select(cols ...string) *QueryBuilder {
+	for _, col := range cols {
+		if !columnRegex.MatchString(col) {
+			qb.setErr(fmt.Errorf("[Crafter] invalid column identifier in Select: %q", col))
+			return qb
+		}
+	}
 	qb.columns = cols
 	return qb
 }
 
 // Where adds a filtering condition to the internal state.
 func (qb *QueryBuilder) Where(col, op string, val any) *QueryBuilder {
+	if !columnRegex.MatchString(col) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid column identifier in Where: %q", col))
+		return qb
+	}
+	if !isValidOperator(op) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid operator in Where: %q", op))
+		return qb
+	}
+
 	var placeholder string
 	drv := ""
 	if qb.db != nil {
@@ -190,6 +247,15 @@ func (qb *QueryBuilder) Where(col, op string, val any) *QueryBuilder {
 
 // OrWhere adds an OR filtering condition to the query.
 func (qb *QueryBuilder) OrWhere(col, op string, val any) *QueryBuilder {
+	if !columnRegex.MatchString(col) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid column identifier in OrWhere: %q", col))
+		return qb
+	}
+	if !isValidOperator(op) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid operator in OrWhere: %q", op))
+		return qb
+	}
+
 	var placeholder string
 	drv := ""
 	if qb.db != nil {
@@ -213,18 +279,30 @@ func (qb *QueryBuilder) OrWhere(col, op string, val any) *QueryBuilder {
 
 // WhereNull adds a condition requiring a column to be NULL.
 func (qb *QueryBuilder) WhereNull(col string) *QueryBuilder {
+	if !columnRegex.MatchString(col) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid column identifier in WhereNull: %q", col))
+		return qb
+	}
 	qb.where = append(qb.where, fmt.Sprintf("%s IS NULL", col))
 	return qb
 }
 
 // WhereNotNull adds a condition requiring a column to be NOT NULL.
 func (qb *QueryBuilder) WhereNotNull(col string) *QueryBuilder {
+	if !columnRegex.MatchString(col) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid column identifier in WhereNotNull: %q", col))
+		return qb
+	}
 	qb.where = append(qb.where, fmt.Sprintf("%s IS NOT NULL", col))
 	return qb
 }
 
 // WhereBetween adds a condition requiring a column value to fall between min and max.
 func (qb *QueryBuilder) WhereBetween(col string, min, max any) *QueryBuilder {
+	if !columnRegex.MatchString(col) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid column identifier in WhereBetween: %q", col))
+		return qb
+	}
 	var p1, p2 string
 	drv := ""
 	if qb.db != nil {
@@ -245,6 +323,10 @@ func (qb *QueryBuilder) WhereBetween(col string, min, max any) *QueryBuilder {
 
 // WhereLike adds a condition requiring a column value to match a pattern.
 func (qb *QueryBuilder) WhereLike(col, pattern string) *QueryBuilder {
+	if !columnRegex.MatchString(col) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid column identifier in WhereLike: %q", col))
+		return qb
+	}
 	var placeholder string
 	drv := ""
 	if qb.db != nil {
@@ -263,18 +345,66 @@ func (qb *QueryBuilder) WhereLike(col, pattern string) *QueryBuilder {
 
 // Join adds an INNER JOIN clause to the query.
 func (qb *QueryBuilder) Join(table, first, op, second string) *QueryBuilder {
+	if !tableRegex.MatchString(table) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid table identifier in Join: %q", table))
+		return qb
+	}
+	if !columnRegex.MatchString(first) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid column identifier in Join (first): %q", first))
+		return qb
+	}
+	if !columnRegex.MatchString(second) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid column identifier in Join (second): %q", second))
+		return qb
+	}
+	if !isValidOperator(op) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid operator in Join: %q", op))
+		return qb
+	}
 	qb.joins = append(qb.joins, fmt.Sprintf("INNER JOIN %s ON %s %s %s", table, first, op, second))
 	return qb
 }
 
 // LeftJoin adds a LEFT JOIN clause to the query.
 func (qb *QueryBuilder) LeftJoin(table, first, op, second string) *QueryBuilder {
+	if !tableRegex.MatchString(table) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid table identifier in LeftJoin: %q", table))
+		return qb
+	}
+	if !columnRegex.MatchString(first) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid column identifier in LeftJoin (first): %q", first))
+		return qb
+	}
+	if !columnRegex.MatchString(second) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid column identifier in LeftJoin (second): %q", second))
+		return qb
+	}
+	if !isValidOperator(op) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid operator in LeftJoin: %q", op))
+		return qb
+	}
 	qb.joins = append(qb.joins, fmt.Sprintf("LEFT JOIN %s ON %s %s %s", table, first, op, second))
 	return qb
 }
 
 // RightJoin adds a RIGHT JOIN clause to the query.
 func (qb *QueryBuilder) RightJoin(table, first, op, second string) *QueryBuilder {
+	if !tableRegex.MatchString(table) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid table identifier in RightJoin: %q", table))
+		return qb
+	}
+	if !columnRegex.MatchString(first) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid column identifier in RightJoin (first): %q", first))
+		return qb
+	}
+	if !columnRegex.MatchString(second) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid column identifier in RightJoin (second): %q", second))
+		return qb
+	}
+	if !isValidOperator(op) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid operator in RightJoin: %q", op))
+		return qb
+	}
 	qb.joins = append(qb.joins, fmt.Sprintf("RIGHT JOIN %s ON %s %s %s", table, first, op, second))
 	return qb
 }
@@ -318,6 +448,9 @@ func (qb *QueryBuilder) whereSQL() string {
 
 // ToSQL serializes the internal state into a valid SQL query string.
 func (qb *QueryBuilder) ToSQL() string {
+	if qb.err != nil {
+		return ""
+	}
 	cols := "*"
 	if len(qb.columns) > 0 {
 		cols = strings.Join(qb.columns, ", ")
@@ -343,13 +476,22 @@ func (qb *QueryBuilder) ToSQL() string {
 }
 
 // OrderBy appends an ORDER BY clause to the query.
-// dir should be "ASC" or "DESC".
+// dir should be "ASC", "DESC", "ASC NULLS FIRST", or "DESC NULLS LAST".
 //
 // Example:
 //
 //	gostack.Table("posts").OrderBy("created_at", "DESC").Get(&posts)
 func (qb *QueryBuilder) OrderBy(col, dir string) *QueryBuilder {
-	qb.orderBy = col + " " + dir
+	if !columnRegex.MatchString(col) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid column identifier in OrderBy: %q", col))
+		return qb
+	}
+	d := strings.ToUpper(strings.TrimSpace(dir))
+	if !isValidDirection(d) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid direction in OrderBy: %q", dir))
+		return qb
+	}
+	qb.orderBy = col + " " + d
 	return qb
 }
 
@@ -382,6 +524,9 @@ func (qb *QueryBuilder) Offset(n int) *QueryBuilder {
 //	var user model.User
 //	err := gostack.Table("users").Where("email", "=", email).First(&user)
 func (qb *QueryBuilder) First(dest any) error {
+	if qb.err != nil {
+		return qb.err
+	}
 	if qb.db == nil && qb.tx == nil {
 		return fmt.Errorf("database connection is nil; ensure the QueryBuilder was initialized with a valid database adapter")
 	}
@@ -435,11 +580,20 @@ func (qb *QueryBuilder) Update(data map[string]any) error {
 
 // UpdateModel is Update with optional model hook support.
 func (qb *QueryBuilder) UpdateModel(model any, data map[string]any) error {
+	if qb.err != nil {
+		return qb.err
+	}
 	if qb.db == nil && qb.tx == nil {
 		return fmt.Errorf("database connection is nil; ensure the QueryBuilder was initialized with a valid database adapter")
 	}
 	if len(data) == 0 {
 		return nil
+	}
+
+	for col := range data {
+		if !identRegex.MatchString(col) {
+			return fmt.Errorf("[Crafter] invalid column identifier in Update: %q", col)
+		}
 	}
 
 	var setClauses []string
@@ -482,6 +636,9 @@ func (qb *QueryBuilder) Delete() error {
 
 // DeleteModel is Delete with optional model hook support.
 func (qb *QueryBuilder) DeleteModel(model any) error {
+	if qb.err != nil {
+		return qb.err
+	}
 	if qb.db == nil && qb.tx == nil {
 		return fmt.Errorf("database connection is nil; ensure the QueryBuilder was initialized with a valid database adapter")
 	}
@@ -516,6 +673,9 @@ func (qb *QueryBuilder) DeleteModel(model any) error {
 // Execute triggers the execution of the built SQL query via the 
 // injected database connection. 
 func (qb *QueryBuilder) Execute() (any, error) {
+	if qb.err != nil {
+		return nil, qb.err
+	}
 	if qb.db == nil && qb.tx == nil {
 		return nil, fmt.Errorf("database connection is nil; ensure the QueryBuilder was initialized with a valid database adapter")
 	}
@@ -526,6 +686,9 @@ func (qb *QueryBuilder) Execute() (any, error) {
 // Get executes the compiled query and automatically hydates the database results 
 // directly into the provided destination pointer (struct or slice of structs).
 func (qb *QueryBuilder) Get(dest any) error {
+	if qb.err != nil {
+		return qb.err
+	}
 	result, err := qb.Execute()
 	if err != nil {
 		return fmt.Errorf("[Crafter] Execution pipeline crashed: %w", err)
@@ -558,6 +721,10 @@ func (qb *QueryBuilder) With(relations ...string) *QueryBuilder {
 
 // WhereIn adds a "WHERE col IN (?, ?, ...)" clause to the query state.
 func (qb *QueryBuilder) WhereIn(col string, vals []any) *QueryBuilder {
+	if !columnRegex.MatchString(col) {
+		qb.setErr(fmt.Errorf("[Crafter] invalid column identifier in WhereIn: %q", col))
+		return qb
+	}
 	if len(vals) == 0 {
 		qb.where = append(qb.where, "1 = 0")
 		return qb
@@ -592,11 +759,20 @@ func (qb *QueryBuilder) Insert(data map[string]any) error {
 // InsertModel is Insert with optional model hook support. Pass the model pointer
 // to enable BeforeSave and AfterCreate lifecycle hooks.
 func (qb *QueryBuilder) InsertModel(model any, data map[string]any) error {
+	if qb.err != nil {
+		return qb.err
+	}
 	if qb.db == nil && qb.tx == nil {
 		return fmt.Errorf("database connection is nil; ensure the QueryBuilder was initialized with a valid database adapter")
 	}
 	if len(data) == 0 {
 		return nil
+	}
+
+	for col := range data {
+		if !identRegex.MatchString(col) {
+			return fmt.Errorf("[Crafter] invalid column identifier in Insert: %q", col)
+		}
 	}
 
 	// Fire BeforeSave hook if model implements it.
@@ -656,6 +832,9 @@ type PageMeta struct {
 
 // Count returns the total number of records matching current query constraints.
 func (qb *QueryBuilder) Count() (int, error) {
+	if qb.err != nil {
+		return 0, qb.err
+	}
 	if qb.db == nil && qb.tx == nil {
 		return 0, fmt.Errorf("database connection is nil")
 	}
@@ -692,6 +871,9 @@ func (qb *QueryBuilder) countSQL() string {
 // Paginate counts total records matching current query conditions, retrieves the requested
 // chunk of rows for the target page, and hydrates them into dest.
 func (qb *QueryBuilder) Paginate(dest any, page, perPage int) (*PageMeta, error) {
+	if qb.err != nil {
+		return nil, qb.err
+	}
 	if page < 1 {
 		page = 1
 	}
@@ -759,6 +941,9 @@ func (qb *QueryBuilder) Paginate(dest any, page, perPage int) (*PageMeta, error)
 
 // executeAggregate executes a single value aggregate query and returns the scanned result.
 func (qb *QueryBuilder) executeAggregate(expr string, dest any) error {
+	if qb.err != nil {
+		return qb.err
+	}
 	if qb.db == nil && qb.tx == nil {
 		return fmt.Errorf("database connection is nil")
 	}
@@ -786,6 +971,9 @@ func (qb *QueryBuilder) executeAggregate(expr string, dest any) error {
 
 // Sum calculates the sum of a column.
 func (qb *QueryBuilder) Sum(col string) (float64, error) {
+	if !identRegex.MatchString(col) && !columnRegex.MatchString(col) {
+		return 0, fmt.Errorf("[Crafter] invalid column identifier in Sum: %q", col)
+	}
 	var val sql.NullFloat64
 	err := qb.executeAggregate(fmt.Sprintf("SUM(%s)", col), &val)
 	if err != nil {
@@ -796,6 +984,9 @@ func (qb *QueryBuilder) Sum(col string) (float64, error) {
 
 // Avg calculates the average of a column.
 func (qb *QueryBuilder) Avg(col string) (float64, error) {
+	if !identRegex.MatchString(col) && !columnRegex.MatchString(col) {
+		return 0, fmt.Errorf("[Crafter] invalid column identifier in Avg: %q", col)
+	}
 	var val sql.NullFloat64
 	err := qb.executeAggregate(fmt.Sprintf("AVG(%s)", col), &val)
 	if err != nil {
@@ -806,6 +997,9 @@ func (qb *QueryBuilder) Avg(col string) (float64, error) {
 
 // Min calculates the minimum of a column.
 func (qb *QueryBuilder) Min(col string) (any, error) {
+	if !identRegex.MatchString(col) && !columnRegex.MatchString(col) {
+		return nil, fmt.Errorf("[Crafter] invalid column identifier in Min: %q", col)
+	}
 	var ns sql.NullString
 	err := qb.executeAggregate(fmt.Sprintf("MIN(%s)", col), &ns)
 	if err != nil {
@@ -819,6 +1013,9 @@ func (qb *QueryBuilder) Min(col string) (any, error) {
 
 // Max calculates the maximum of a column.
 func (qb *QueryBuilder) Max(col string) (any, error) {
+	if !identRegex.MatchString(col) && !columnRegex.MatchString(col) {
+		return nil, fmt.Errorf("[Crafter] invalid column identifier in Max: %q", col)
+	}
 	var ns sql.NullString
 	err := qb.executeAggregate(fmt.Sprintf("MAX(%s)", col), &ns)
 	if err != nil {

@@ -79,7 +79,9 @@ func (j *Job) inLocation(t time.Time) time.Time {
 }
 
 // tryRun executes the task, honouring WithoutOverlapping if set.
-// It returns false (and skips execution) when a previous run is still in progress.
+// SEC-33: A deferred recover() catches any panic from the task so a single
+// panicking job cannot crash the entire process. The overlap guard prevents
+// goroutine accumulation when a task outruns its interval.
 func (j *Job) tryRun(id int) {
 	if j.withoutOverlap {
 		if !atomic.CompareAndSwapInt32(&j.running, 0, 1) {
@@ -89,6 +91,13 @@ func (j *Job) tryRun(id int) {
 		}
 		defer atomic.StoreInt32(&j.running, 0)
 	}
+
+	// SEC-33: Recover from panics so the scheduler survives a misbehaving task.
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("[Scheduler] Job %d panicked: %v\n", id, r)
+		}
+	}()
 
 	if err := j.Task(); err != nil {
 		fmt.Printf("[Scheduler] Error executing job %d: %v\n", id, err)

@@ -41,8 +41,10 @@ import (
 	"mime"
 	"net"
 	"net/smtp"
+	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Config defines the configuration properties required to connect to an SMTP server.
@@ -90,7 +92,52 @@ func NewMessage(subject string) *MessageBuilder {
 	return &MessageBuilder{msg: Message{Subject: subject}}
 }
 
+func validateHeaderField(name, val string) error {
+	if strings.ContainsAny(val, "\r\n\x00") {
+		return fmt.Errorf("mail: security violation: header %q contains forbidden CRLF or NUL characters", name)
+	}
+	return nil
+}
+
+// Validate checks all message headers for header-injection characters (SEC-06).
+func (m *Mailer) Validate(msg Message) error {
+	if err := validateHeaderField("Subject", msg.Subject); err != nil {
+		return err
+	}
+	if err := validateHeaderField("FromAddress", m.cfg.FromAddress); err != nil {
+		return err
+	}
+	if err := validateHeaderField("FromName", m.cfg.FromName); err != nil {
+		return err
+	}
+	if err := validateHeaderField("ReplyTo", msg.ReplyTo); err != nil {
+		return err
+	}
+	for _, to := range msg.To {
+		if err := validateHeaderField("To", to); err != nil {
+			return err
+		}
+	}
+	for _, cc := range msg.CC {
+		if err := validateHeaderField("Cc", cc); err != nil {
+			return err
+		}
+	}
+	for _, bcc := range msg.BCC {
+		if err := validateHeaderField("Bcc", bcc); err != nil {
+			return err
+		}
+	}
+	for _, att := range msg.Attachments {
+		if err := validateHeaderField("Attachment.Filename", att.Filename); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Send formats and sends the given Message via SMTP.
+// Rejects any attempt at SMTP header injection (SEC-06).
 func (m *Mailer) Send(msg any) error {
 	var mailMsg Message
 	switch v := msg.(type) {
@@ -103,6 +150,10 @@ func (m *Mailer) Send(msg any) error {
 		mailMsg = *v
 	default:
 		return fmt.Errorf("mail: invalid message type, expected mail.Message or *mail.Message")
+	}
+
+	if err := m.Validate(mailMsg); err != nil {
+		return err
 	}
 
 	addr := net.JoinHostPort(m.cfg.Host, fmt.Sprintf("%d", m.cfg.Port))
@@ -158,7 +209,28 @@ func (m *Mailer) BuildRaw(msg Message) []byte {
 	if msg.ReplyTo != "" {
 		b.WriteString(fmt.Sprintf("Reply-To: %s\r\n", msg.ReplyTo))
 	}
-	b.WriteString(fmt.Sprintf("Subject: %s\r\n", msg.Subject))
+	// RFC 2047: Encode non-ASCII subjects (SEC-06)
+	subject := msg.Subject
+	isASCII := true
+	for i := 0; i < len(subject); i++ {
+		if subject[i] > 127 {
+			isASCII = false
+			break
+		}
+	}
+	if !isASCII {
+		subject = mime.QEncoding.Encode("utf-8", subject)
+	}
+	b.WriteString(fmt.Sprintf("Subject: %s\r\n", subject))
+
+	// RFC 5322: Date and unique Message-ID (SEC-06)
+	host := m.cfg.Host
+	if host == "" {
+		host = "localhost"
+	}
+	b.WriteString(fmt.Sprintf("Date: %s\r\n", time.Now().UTC().Format(time.RFC1123Z)))
+	b.WriteString(fmt.Sprintf("Message-ID: <%d.%d@%s>\r\n", time.Now().UnixNano(), os.Getpid(), host))
+
 	b.WriteString("MIME-Version: 1.0\r\n")
 
 	// ── Body ────────────────────────────────────────────────────────────────
@@ -186,7 +258,9 @@ func (m *Mailer) BuildRaw(msg Message) []byte {
 			b.WriteString(fmt.Sprintf("--%s\r\n", boundary))
 			b.WriteString(fmt.Sprintf("Content-Type: %s\r\n", mt))
 			b.WriteString("Content-Transfer-Encoding: base64\r\n")
-			b.WriteString(fmt.Sprintf("Content-Disposition: attachment; filename=\"%s\"\r\n\r\n", att.Filename))
+			// Escape quotes in attachment filename (SEC-06)
+			escapedFilename := strings.ReplaceAll(att.Filename, `"`, `\"`)
+			b.WriteString(fmt.Sprintf("Content-Disposition: attachment; filename=\"%s\"\r\n\r\n", escapedFilename))
 			encoded := base64.StdEncoding.EncodeToString(att.Content)
 			// RFC 2045 §6.8: wrap base64 at 76 characters
 			for len(encoded) > 76 {

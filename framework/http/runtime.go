@@ -2,94 +2,179 @@
 package http
 
 import (
-	"net/http"
+	"errors"
+	"fmt"
+	"log"
+	netHTTP "net/http"
+	"os"
+	"runtime/debug"
+	"strconv"
 	"strings"
 )
+
+type headResponseWriter struct {
+	netHTTP.ResponseWriter
+}
+
+func (h *headResponseWriter) Write(b []byte) (int, error) {
+	return len(b), nil
+}
 
 // Engine represents the operational HTTP server configuration block.
 // It manages the template view renderer, routing tables, and server lifecycle options.
 type Engine struct {
-	Router  *Router
-	Tempose *Tempose
+	Router                 *Router
+	Tempose                *Tempose
+	SecurityHeadersConfig  SecurityHeadersConfig
+	DisableSecurityHeaders bool
 }
 
-// NewEngine establishes an operational HTTP processing core.
+// NewEngine establishes an operational HTTP processing core with default security headers mounted (SEC-12).
 //
 // Parameters:
 //   - router: An initialized routing context registry.
 //   - tempose: A configured template view engine instance.
 func NewEngine(router *Router, tempose *Tempose) *Engine {
 	return &Engine{
-		Router:  router,
-		Tempose: tempose,
+		Router:                router,
+		Tempose:               tempose,
+		SecurityHeadersConfig: DefaultSecurityHeadersConfig(),
 	}
 }
 
 // ServeHTTP acts as the low-level execution entry point required by Go's standard http.Server interface.
-// Every single inbound network connection request shifts through this method pass.
-//
-// How It Works:
-//  1. It monitors incoming connection request patterns against the internal Router table.
-//  2. If a match is found, it instantiates the framework's custom Context block.
-//  3. It populates that Context with the raw response stream, the request metadata, and the Engine's direct Tempose reference.
-//  4. It dispatches execution to the controller handler seamlessly.
-//  5. If no route matches, it writes a clean RFC-standard 404 Not Found error state.
-func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	routes := e.Router.GetRoutes()
+func (e *Engine) ServeHTTP(w netHTTP.ResponseWriter, r *netHTTP.Request) {
+	// Global Crash-Catcher & Panic Recovery Shield (SEC-05)
+	defer func() {
+		if rec := recover(); rec != nil {
+			stack := debug.Stack()
+			log.Printf("[GoStack Critical Panic Recovered] %v\nStack Trace:\n%s", rec, stack)
 
-	// Dispatch key: "METHOD /path" — enables distinct GET/POST/PUT/DELETE handlers
-	// on the same path without conflict.
-	key := r.Method + " " + r.URL.Path
+			// Never drop the TCP socket ungracefully — return a standardized 500 response
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(netHTTP.StatusInternalServerError)
+			_, _ = w.Write([]byte(fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head><title>500 Internal Server Error</title><style>body{font-family:sans-serif;background:#0b0f19;color:#f8fafc;padding:40px;display:flex;justify-content:center;align-items:center;height:80vh;} .card{background:#1e293b;padding:30px;border-radius:12px;border:1px solid #334155;max-width:600px;text-align:center;} h1{color:#ef4444;margin-top:0;} p{color:#94a3b8;line-height:1.6;}</style></head>
+<body><div class="card"><h1>500 Internal Server Error</h1><p>An unexpected condition was encountered while processing this request. The application kernel intercepted the crash safely.</p></div></body></html>`)))
+		}
+	}()
+
+	// Automatic production security headers at engine level (SEC-12)
+	if !e.DisableSecurityHeaders {
+		ApplySecurityHeaders(w, r, e.SecurityHeadersConfig)
+	}
+
+	// Enforce request body size limit (SEC-09)
+	maxBody := int64(8 * 1024 * 1024) // 8MB default
+	if customSize := os.Getenv("MAX_REQUEST_BODY_SIZE"); customSize != "" {
+		if val, err := strconv.ParseInt(customSize, 10, 64); err == nil && val > 0 {
+			maxBody = val
+		}
+	}
+	if r.Body != nil {
+		r.Body = netHTTP.MaxBytesReader(w, r.Body, maxBody)
+	}
+
+	dispatch := func(ctx *Context, fn func(*Context) error) {
+		if err := fn(ctx); err != nil {
+			var maxBytesErr *netHTTP.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				w.WriteHeader(netHTTP.StatusRequestEntityTooLarge)
+				_, _ = w.Write([]byte("413 Request Entity Too Large: request body exceeds configured limit"))
+				return
+			}
+			if e.Router != nil && e.Router.errorHandler != nil {
+				e.Router.errorHandler(ctx, err)
+				return
+			}
+			w.WriteHeader(netHTTP.StatusInternalServerError)
+			_, _ = w.Write([]byte("500 Internal Server Error - GoStack Engine"))
+		}
+	}
+
+	effectiveMethod := r.Method
+	effectiveWriter := w
+
+	// Support HEAD method: route to GET if no explicit HEAD handler, discard response body (SEC-05)
+	if r.Method == "HEAD" {
+		if _, hasHead := e.Router.GetRoutes()["HEAD "+r.URL.Path]; !hasHead {
+			if route, _ := e.Router.Match("HEAD", r.URL.Path); route == nil {
+				effectiveMethod = "GET"
+				effectiveWriter = &headResponseWriter{ResponseWriter: w}
+			}
+		}
+	}
+
+	routes := e.Router.GetRoutes()
+	key := effectiveMethod + " " + r.URL.Path
 
 	if handler, exists := routes[key]; exists {
 		ctx := &Context{
-			Writer:  w,
+			Writer:  effectiveWriter,
 			Request: r,
 			Tempose: e.Tempose,
 			Router:  e.Router,
 		}
-		handler(ctx)
+		dispatch(ctx, handler)
 		return
 	}
 
 	// Try dynamic/parameterized routing match
-	if route, params := e.Router.Match(r.Method, r.URL.Path); route != nil {
+	if route, params := e.Router.Match(effectiveMethod, r.URL.Path); route != nil {
 		ctx := &Context{
-			Writer:  w,
+			Writer:  effectiveWriter,
 			Request: r,
 			Tempose: e.Tempose,
 			Router:  e.Router,
 		}
 		ctx.Set("params", params)
-		route.Handler(ctx)
+		dispatch(ctx, route.Handler)
 		return
 	}
 
-	// Return 405 if the path exists under a different method, 404 otherwise.
-	trimmedPath := strings.Trim(r.URL.Path, "/")
-	var pathSegments []string
-	if trimmedPath != "" {
-		pathSegments = strings.Split(trimmedPath, "/")
-	}
+	// Collect all allowed methods for this path (static and dynamic) (SEC-05)
+	allowed := e.Router.AllowedMethods(r.URL.Path)
 
-	for _, route := range e.Router.GetDynamicRoutes() {
-		if _, matched := matchRoute(route.Segments, pathSegments); matched {
-			if e.Router.methodNotAllowedHandler != nil {
-				ctx := &Context{
-					Writer:  w,
-					Request: r,
-					Tempose: e.Tempose,
-					Router:  e.Router,
+	// Automatic OPTIONS handling (SEC-05)
+	if r.Method == "OPTIONS" {
+		if len(allowed) > 0 {
+			hasOptions := false
+			for _, m := range allowed {
+				if m == "OPTIONS" {
+					hasOptions = true
+					break
 				}
-				e.Router.methodNotAllowedHandler(ctx)
-			} else {
-				w.WriteHeader(http.StatusMethodNotAllowed)
-				_, _ = w.Write([]byte("405 Method Not Allowed - GoStack Engine"))
 			}
+			if !hasOptions {
+				allowed = append(allowed, "OPTIONS")
+			}
+			w.Header().Set("Allow", strings.Join(allowed, ", "))
+			w.WriteHeader(netHTTP.StatusNoContent)
 			return
 		}
 	}
 
+	// 405 Method Not Allowed with Allow header (SEC-05)
+	if len(allowed) > 0 {
+		w.Header().Set("Allow", strings.Join(allowed, ", "))
+		if e.Router.methodNotAllowedHandler != nil {
+			ctx := &Context{
+				Writer:  w,
+				Request: r,
+				Tempose: e.Tempose,
+				Router:  e.Router,
+			}
+			e.Router.methodNotAllowedHandler(ctx)
+		} else {
+			w.WriteHeader(netHTTP.StatusMethodNotAllowed)
+			_, _ = w.Write([]byte("405 Method Not Allowed - GoStack Engine"))
+		}
+		return
+	}
+
+	// 404 Not Found
 	if e.Router.notFoundHandler != nil {
 		ctx := &Context{
 			Writer:  w,
@@ -99,7 +184,7 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		e.Router.notFoundHandler(ctx)
 	} else {
-		w.WriteHeader(http.StatusNotFound)
+		w.WriteHeader(netHTTP.StatusNotFound)
 		_, _ = w.Write([]byte("404 Page Not Found - GoStack Engine"))
 	}
 }

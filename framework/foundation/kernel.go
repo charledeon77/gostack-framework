@@ -125,9 +125,42 @@ func (k *Kernel) Run(addr string) error {
 
 	runtimeEngine := ghttp.NewEngine(k.Router, viewEngine)
 
+	readTimeout := 15 * time.Second
+	if t := os.Getenv("SERVER_READ_TIMEOUT"); t != "" {
+		if d, err := time.ParseDuration(t); err == nil {
+			readTimeout = d
+		}
+	}
+
+	writeTimeout := 30 * time.Second
+	if t := os.Getenv("SERVER_WRITE_TIMEOUT"); t != "" {
+		if d, err := time.ParseDuration(t); err == nil {
+			writeTimeout = d
+		}
+	}
+
+	idleTimeout := 60 * time.Second
+	if t := os.Getenv("SERVER_IDLE_TIMEOUT"); t != "" {
+		if d, err := time.ParseDuration(t); err == nil {
+			idleTimeout = d
+		}
+	}
+
+	readHeaderTimeout := 5 * time.Second
+	if t := os.Getenv("SERVER_READ_HEADER_TIMEOUT"); t != "" {
+		if d, err := time.ParseDuration(t); err == nil {
+			readHeaderTimeout = d
+		}
+	}
+
 	srv := &http.Server{
-		Addr:    addr,
-		Handler: runtimeEngine,
+		Addr:              addr,
+		Handler:           runtimeEngine,
+		ReadTimeout:       readTimeout,
+		ReadHeaderTimeout: readHeaderTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+		MaxHeaderBytes:    1 << 20, // 1 MB anti-DDoS header buffer ceiling
 	}
 
 	// Start serving in a goroutine so we can wait for signals below.

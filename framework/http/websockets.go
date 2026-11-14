@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"sync"
+	"time"
 
 	"golang.org/x/net/websocket"
 )
@@ -33,12 +34,40 @@ Architecture:
       - BroadcastToRoom:   Send to a NAMED room of connected clients.
       - JoinRoom/LeaveRoom: Manage room membership dynamically.
 
+Security (SEC-17):
+  - MaxMessageSize: Incoming messages exceeding 64KB are discarded and the connection is closed.
+  - Read/Write deadlines: Each read and write has a timeout to prevent hung connections from
+    accumulating indefinitely.
+  - Ping/pong liveness: The hub sends periodic pings; connections that do not respond within
+    the pong deadline are unregistered and closed.
+
 Choice:
 We use golang.org/x/net/websocket, the semi-official Go standard package for WebSockets.
 It keeps our dependencies tightly aligned with the core Go project, adhering to our
 zero-external-bloat philosophy. The Hub model ensures safe concurrent access across
 multiple simultaneous connections.
 */
+
+const (
+	// wsMaxMessageSize is the maximum inbound message size in bytes (64 KB).
+	// SEC-17: Rejects oversized messages to prevent memory exhaustion attacks.
+	wsMaxMessageSize = 64 << 10 // 64 KB
+
+	// wsPingInterval is how often the hub sends a ping frame to each connection.
+	wsPingInterval = 30 * time.Second
+
+	// wsPongDeadline is how long the hub waits for a pong response before evicting
+	// a connection as unresponsive.
+	wsPongDeadline = 10 * time.Second
+
+	// wsWriteDeadline caps how long a single write may block before the connection
+	// is considered broken.
+	wsWriteDeadline = 10 * time.Second
+
+	// wsReadDeadline is the maximum idle time between messages from the client.
+	// Pings reset this deadline, so legitimate idle connections stay connected.
+	wsReadDeadline = wsPingInterval + wsPongDeadline + 5*time.Second
+)
 
 // Connection wraps a single active WebSocket connection.
 type Connection struct {
@@ -49,26 +78,63 @@ type Connection struct {
 }
 
 // Write pumps messages from the hub's send channel to the WebSocket connection.
+// SEC-17: Each write is bounded by wsWriteDeadline to avoid stuck connections.
 func (c *Connection) Write() {
 	defer c.ws.Close()
-	for msg := range c.send {
-		if err := websocket.Message.Send(c.ws, msg); err != nil {
-			break
+
+	pingTicker := time.NewTicker(wsPingInterval)
+	defer pingTicker.Stop()
+
+	for {
+		select {
+		case msg, ok := <-c.send:
+			if !ok {
+				return
+			}
+			// SEC-17: Enforce per-write deadline.
+			_ = c.ws.SetDeadline(time.Now().Add(wsWriteDeadline))
+			if err := websocket.Message.Send(c.ws, msg); err != nil {
+				return
+			}
+
+		case <-pingTicker.C:
+			// SEC-17: Send a ping. The read loop resets the read deadline on each
+			// incoming message; if the client is silent past wsReadDeadline the Read
+			// call will error and the connection will be unregistered.
+			_ = c.ws.SetDeadline(time.Now().Add(wsWriteDeadline))
+			if err := websocket.Message.Send(c.ws, []byte("ping")); err != nil {
+				return
+			}
 		}
 	}
 }
 
 // Read pumps incoming messages from the WebSocket connection to the hub.
+// SEC-17: Enforces read deadline and 64KB max message size.
 func (c *Connection) Read() {
 	defer func() {
 		c.hub.unregister <- c
 		c.ws.Close()
 	}()
 	for {
+		// SEC-17: Extend read deadline on every message received (ping resets the clock).
+		_ = c.ws.SetDeadline(time.Now().Add(wsReadDeadline))
+
 		var msg []byte
 		if err := websocket.Message.Receive(c.ws, &msg); err != nil {
 			break
 		}
+
+		// SEC-17: Discard oversized messages and terminate the connection.
+		if len(msg) > wsMaxMessageSize {
+			break
+		}
+
+		// Swallow ping frames from the client rather than re-broadcasting them.
+		if string(msg) == "ping" || string(msg) == "pong" {
+			continue
+		}
+
 		c.hub.Broadcast(msg)
 	}
 }

@@ -62,7 +62,15 @@ func (c *DatabaseChannel) Send(notifiable any, notification Notification) error 
 	notifID := generateUUID()
 	now := time.Now().UTC()
 
-	query := `INSERT INTO notifications (id, type, notifiable_id, data, read_at, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+	// SEC-47: Use driver-aware placeholder syntax.
+	// PostgreSQL requires numbered positional parameters ($1, $2, ...),
+	// while MySQL and SQLite use anonymous ? placeholders.
+	var query string
+	if drv := c.db.Driver(); drv == "postgres" || drv == "cockroach" || drv == "cockroachdb" {
+		query = `INSERT INTO notifications (id, type, notifiable_id, data, read_at, created_at) VALUES ($1, $2, $3, $4, $5, $6)`
+	} else {
+		query = `INSERT INTO notifications (id, type, notifiable_id, data, read_at, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+	}
 
 	// Convert receiver ID to a string representation for consistent DB persistence
 	notifiableID := fmt.Sprintf("%v", receiver.GetID())

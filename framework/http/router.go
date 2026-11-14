@@ -42,6 +42,7 @@ type Router struct {
 	namedRoutes             map[string]*Route
 	notFoundHandler         func(ctx *Context)
 	methodNotAllowedHandler func(ctx *Context)
+	errorHandler            func(ctx *Context, err error)
 }
 
 // NewRouter initializes a fresh, memory-isolated routing table.
@@ -63,15 +64,31 @@ func (r *Router) SetMethodNotAllowedHandler(handler func(ctx *Context)) {
 	r.methodNotAllowedHandler = handler
 }
 
+// SetErrorHandler registers a custom handler for unhandled errors produced by routes or middlewares (SEC-05).
+func (r *Router) SetErrorHandler(handler func(ctx *Context, err error)) {
+	r.errorHandler = handler
+}
+
+// Handle registers a route that returns an error directly, dispatching it cleanly to error handlers (SEC-05).
+func (r *Router) Handle(method, path string, handler func(ctx *Context) error, middleware ...Middleware) *Route {
+	return r.registerWithError(method, path, handler, middleware)
+}
+
 // register compiles a route pipeline and stores it in the routing registry.
 // It warns if a duplicate method+path combination is registered.
 func (r *Router) register(method, path string, handler func(ctx *Context), middleware []Middleware) *Route {
+	return r.registerWithError(method, path, func(c *Context) error {
+		handler(c)
+		return nil
+	}, middleware)
+}
+
+func (r *Router) registerWithError(method, path string, handler func(ctx *Context) error, middleware []Middleware) *Route {
 	pipeline := NewPipeline()
 	pipeline.Through(middleware...)
 	runPipeline := func(ctx *Context) error {
 		return pipeline.Run(ctx, func(c *Context) error {
-			handler(c)
-			return nil
+			return handler(c)
 		})
 	}
 
@@ -290,4 +307,38 @@ func matchRoute(patternSegments []string, pathSegments []string) (map[string]str
 	}
 
 	return params, true
+}
+
+// AllowedMethods returns all HTTP methods registered for the given path across static and dynamic routes (SEC-05).
+func (r *Router) AllowedMethods(path string) []string {
+	seen := make(map[string]bool)
+	var methods []string
+
+	// Check static routes
+	for key := range r.routes {
+		parts := strings.SplitN(key, " ", 2)
+		if len(parts) == 2 && parts[1] == path {
+			if !seen[parts[0]] {
+				seen[parts[0]] = true
+				methods = append(methods, parts[0])
+			}
+		}
+	}
+
+	// Check dynamic routes
+	trimmedPath := strings.Trim(path, "/")
+	var pathSegments []string
+	if trimmedPath != "" {
+		pathSegments = strings.Split(trimmedPath, "/")
+	}
+	for _, route := range r.dynamicRoutes {
+		if _, matched := matchRoute(route.Segments, pathSegments); matched {
+			if !seen[route.Method] {
+				seen[route.Method] = true
+				methods = append(methods, route.Method)
+			}
+		}
+	}
+
+	return methods
 }

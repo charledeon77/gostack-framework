@@ -48,25 +48,26 @@ func NewMemoryStore() contract.CacheStore {
 }
 
 // Get retrieves a value from the cache.
-func (m *MemoryStore) Get(key string) (any, bool) {
+// Returns (nil, contract.ErrCacheMiss) if missing or expired.
+func (m *MemoryStore) Get(key string) (any, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	it, found := m.items[key]
 	if !found {
-		return nil, false
+		return nil, contract.ErrCacheMiss
 	}
 
 	if it.expiration > 0 && time.Now().UnixNano() > it.expiration {
 		// Found but expired
-		return nil, false
+		return nil, contract.ErrCacheMiss
 	}
 
-	return it.value, true
+	return it.value, nil
 }
 
 // Put stores a value in the cache.
-func (m *MemoryStore) Put(key string, val any, ttl time.Duration) {
+func (m *MemoryStore) Put(key string, val any, ttl time.Duration) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -79,20 +80,23 @@ func (m *MemoryStore) Put(key string, val any, ttl time.Duration) {
 		value:      val,
 		expiration: exp,
 	}
+	return nil
 }
 
 // Forget removes a key from the cache.
-func (m *MemoryStore) Forget(key string) {
+func (m *MemoryStore) Forget(key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.items, key)
+	return nil
 }
 
 // Flush removes all items from the cache.
-func (m *MemoryStore) Flush() {
+func (m *MemoryStore) Flush() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.items = make(map[string]item)
+	return nil
 }
 
 // startCleanup periodically removes expired items to prevent memory leaks.
