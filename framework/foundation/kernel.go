@@ -117,6 +117,13 @@ func (k *Kernel) Run(addr string) error {
 		})
 	}
 
+	// Auto-mount public/assets static route if the directory exists on disk and not already explicitly mapped.
+	if _, err := os.Stat("public/assets"); err == nil {
+		if route, _ := k.Router.Match("GET", "/assets/probe"); route == nil {
+			k.Router.Static("/assets", "public/assets")
+		}
+	}
+
 	runtimeEngine := ghttp.NewEngine(k.Router, viewEngine)
 
 	readTimeout := 15 * time.Second

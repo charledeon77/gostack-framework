@@ -37,6 +37,7 @@ package ui
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"go/format"
 	"log"
@@ -51,22 +52,51 @@ import (
 
 // AssetCompiler orchestrates the full component compilation pipeline.
 // It scans the components source directory, processes all assets (HTML, CSS, JS),
-// and writes a fully compiled, Go-formatted registration file to the output path.
+// bundles and fingerprints public assets, and writes a fully compiled, Go-formatted
+// registration file to the output path.
 //
 // Fields:
 //   - ComponentsPath: Absolute or relative path to the components source directory.
 //   - OutputPath: Absolute or relative path where the generated Go file will be written.
+//   - PublicAssetsPath: Destination directory for compiled CSS/JS bundles (defaults to "public/assets").
 type AssetCompiler struct {
-	ComponentsPath string
-	OutputPath     string
+	ComponentsPath   string
+	OutputPath       string
+	PublicAssetsPath string
 }
 
 // NewAssetCompiler returns a pointer to an initialized AssetCompiler.
-func NewAssetCompiler(componentsPath, outputPath string) *AssetCompiler {
-	return &AssetCompiler{
-		ComponentsPath: componentsPath,
-		OutputPath:     outputPath,
+// An optional publicAssetsPath can be provided; if omitted, it defaults to "public/assets".
+func NewAssetCompiler(componentsPath, outputPath string, publicAssetsPath ...string) *AssetCompiler {
+	c := &AssetCompiler{
+		ComponentsPath:   componentsPath,
+		OutputPath:       outputPath,
+		PublicAssetsPath: "public/assets",
 	}
+	if len(publicAssetsPath) > 0 && publicAssetsPath[0] != "" {
+		c.PublicAssetsPath = publicAssetsPath[0]
+	}
+	return c
+}
+
+func (c *AssetCompiler) resolvePublicAssetsPath() string {
+	if c.PublicAssetsPath != "" {
+		return c.PublicAssetsPath
+	}
+	if c.OutputPath != "" {
+		parent := filepath.Dir(c.OutputPath)
+		if filepath.Base(parent) == "cmd" || filepath.Base(c.OutputPath) == "app" {
+			projectRoot := filepath.Dir(parent)
+			return filepath.Join(projectRoot, "public", "assets")
+		}
+		return filepath.Join(parent, "public", "assets")
+	}
+	return "public/assets"
+}
+
+func hashBytes(b []byte) string {
+	h := sha256.Sum256(b)
+	return fmt.Sprintf("%x", h[:4]) // 8-character hex fingerprint
 }
 
 // Run executes the full compilation sequence.
@@ -79,6 +109,14 @@ func (c *AssetCompiler) Run() error {
 	var registrations strings.Builder
 	needsFmt := false
 	needsUI := false
+
+	var cssBundle strings.Builder
+	cssBundle.WriteString(GoStackCoreCSS)
+	cssBundle.WriteString("\n\n")
+
+	var jsBundle strings.Builder
+	jsBundle.WriteString(GlideJS)
+	jsBundle.WriteString("\n\n")
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -99,6 +137,7 @@ func (c *AssetCompiler) Run() error {
 				return err
 			}
 			prefixed := c.scopeCSS(name, string(rawCSS))
+			cssBundle.WriteString(fmt.Sprintf("/* Component: %s */\n%s\n\n", name, prefixed))
 			safeCSS := strings.ReplaceAll(prefixed, "`", "` + \"`\" + `")
 			registrations.WriteString(fmt.Sprintf("\tui.RegisterComponentStyle(\"%s\", `%s`)\n\n", name, safeCSS))
 			needsUI = true
@@ -111,6 +150,7 @@ func (c *AssetCompiler) Run() error {
 			if err != nil {
 				return err
 			}
+			jsBundle.WriteString(fmt.Sprintf("/* Component: %s */\n%s\n\n", name, string(rawJS)))
 			safeJS := strings.ReplaceAll(string(rawJS), "`", "` + \"`\" + `")
 			registrations.WriteString(fmt.Sprintf("\tui.RegisterComponentScript(\"%s\", `%s`)\n\n", name, safeJS))
 			needsUI = true
@@ -155,6 +195,32 @@ func (c *AssetCompiler) Run() error {
 		}
 	}
 
+	// 4. Write compiled bundles to PublicAssetsPath and compute version fingerprints
+	publicAssets := c.resolvePublicAssetsPath()
+	cssDir := filepath.Join(publicAssets, "css")
+	jsDir := filepath.Join(publicAssets, "js")
+	_ = os.MkdirAll(cssDir, 0755)
+	_ = os.MkdirAll(jsDir, 0755)
+
+	cssBytes := []byte(cssBundle.String())
+	cssHash := hashBytes(cssBytes)
+	if err := os.WriteFile(filepath.Join(cssDir, "gostack.css"), cssBytes, 0644); err != nil {
+		log.Printf("[GoStack Compiler Warning] Failed to write %s: %v", filepath.Join(cssDir, "gostack.css"), err)
+	}
+
+	jsBytes := []byte(jsBundle.String())
+	jsHash := hashBytes(jsBytes)
+	if err := os.WriteFile(filepath.Join(jsDir, "gostack.js"), jsBytes, 0644); err != nil {
+		log.Printf("[GoStack Compiler Warning] Failed to write %s: %v", filepath.Join(jsDir, "gostack.js"), err)
+	}
+
+	// Always write dev hot-reload client script to assets/js
+	_ = os.WriteFile(filepath.Join(jsDir, "gostack-hot-reload.js"), []byte(HotReloadClientJS), 0644)
+
+	// Register versioned URLs in the generated code
+	registrations.WriteString(fmt.Sprintf("\tui.RegisterAssetURLs(\"/assets/css/gostack.css?v=%s\", \"/assets/js/gostack.js?v=%s\")\n\n", cssHash, jsHash))
+	needsUI = true
+
 	// Build dynamic imports slice
 	var imports []string
 	if needsFmt {
@@ -185,6 +251,9 @@ func RegisterComponents(t *http.Tempose) {
 	formatted, fmtErr := format.Source([]byte(goSource))
 	if fmtErr != nil {
 		formatted = []byte(goSource)
+	}
+	if err := os.MkdirAll(c.OutputPath, 0755); err != nil {
+		return fmt.Errorf("cannot create output directory %q: %w", c.OutputPath, err)
 	}
 	return os.WriteFile(filepath.Join(c.OutputPath, "gostack_components_gen.go"), formatted, 0644)
 }

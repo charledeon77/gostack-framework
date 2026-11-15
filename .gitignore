@@ -29,3 +29,8 @@ go.work.sum
 
 # Temporary developer workspace files
 /scratch/
+
+# Asset bundles written by AssetCompiler during test runs inside the framework repo.
+# In application projects these are intentionally generated into public/assets/
+# and also excluded from app-level .gitignore (documented in GoStack docs).
+framework/ui/public/

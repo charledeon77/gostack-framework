@@ -149,3 +149,67 @@ func TestEngine_SEC15_StatusCaptureCapabilities(t *testing.T) {
 	}
 }
 
+func TestRouter_Static(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create test static files in tempDir
+	cssContent := []byte("body { background: #000; }")
+	cssFile := tempDir + "/test.css"
+	if err := os.WriteFile(cssFile, cssContent, 0644); err != nil {
+		t.Fatalf("failed to write test css: %v", err)
+	}
+
+	router := NewRouter()
+	router.Static("/assets", tempDir)
+	engine := NewEngine(router, nil)
+
+	// 1. Valid file request without version
+	req1 := httptest.NewRequest("GET", "/assets/test.css", nil)
+	w1 := httptest.NewRecorder()
+	engine.ServeHTTP(w1, req1)
+	if w1.Code != netHTTP.StatusOK {
+		t.Fatalf("expected 200 OK for /assets/test.css, got %d", w1.Code)
+	}
+	if !strings.Contains(w1.Body.String(), "background: #000") {
+		t.Fatalf("expected css body, got %q", w1.Body.String())
+	}
+	if w1.Header().Get("Cache-Control") != "public, max-age=3600" {
+		t.Fatalf("expected 3600 cache-control for unversioned request, got %q", w1.Header().Get("Cache-Control"))
+	}
+
+	// 2. Versioned file request with ?v=1234
+	req2 := httptest.NewRequest("GET", "/assets/test.css?v=1234", nil)
+	w2 := httptest.NewRecorder()
+	engine.ServeHTTP(w2, req2)
+	if w2.Code != netHTTP.StatusOK {
+		t.Fatalf("expected 200 OK for versioned request, got %d", w2.Code)
+	}
+	if w2.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" {
+		t.Fatalf("expected immutable cache-control for versioned request, got %q", w2.Header().Get("Cache-Control"))
+	}
+
+	// 3. Path traversal attempt should 404
+	req3 := httptest.NewRequest("GET", "/assets/../../etc/passwd", nil)
+	w3 := httptest.NewRecorder()
+	engine.ServeHTTP(w3, req3)
+	if w3.Code != netHTTP.StatusNotFound {
+		t.Fatalf("expected 404 for traversal attempt, got %d", w3.Code)
+	}
+
+	// 4. Directory request should 404
+	req4 := httptest.NewRequest("GET", "/assets/", nil)
+	w4 := httptest.NewRecorder()
+	engine.ServeHTTP(w4, req4)
+	if w4.Code != netHTTP.StatusNotFound {
+		t.Fatalf("expected 404 for directory request, got %d", w4.Code)
+	}
+
+	// 5. Non-existent file should 404
+	req5 := httptest.NewRequest("GET", "/assets/non-existent.js", nil)
+	w5 := httptest.NewRecorder()
+	engine.ServeHTTP(w5, req5)
+	if w5.Code != netHTTP.StatusNotFound {
+		t.Fatalf("expected 404 for non-existent file, got %d", w5.Code)
+	}
+}
+

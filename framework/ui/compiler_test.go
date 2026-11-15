@@ -405,3 +405,88 @@ func TestIsTransCall_Validation(t *testing.T) {
 		}
 	}
 }
+
+// TestCompiler_BundledStaticAssetsAndRegistration verifies that:
+// 1. Component CSS and JS are bundled into physical files under public/assets/css and public/assets/js.
+// 2. Short content hashes are computed and registered in gostack_components_gen.go.
+// 3. WriteMasterAssetBlock emits external <link> and <script defer> tags instead of inline blocks.
+func TestCompiler_BundledStaticAssetsAndRegistration(t *testing.T) {
+	dir := t.TempDir()
+	componentsDir := filepath.Join(dir, "components")
+	outputDir := filepath.Join(dir, "out")
+	publicAssetsDir := filepath.Join(dir, "public", "assets")
+
+	compDir := filepath.Join(componentsDir, "button")
+	if err := os.MkdirAll(compDir, 0755); err != nil {
+		t.Fatalf("mkdir comp: %v", err)
+	}
+
+	// Button HTML, CSS, JS
+	if err := os.WriteFile(filepath.Join(compDir, "button.html"), []byte("<button>{{ .Label }}</button>"), 0644); err != nil {
+		t.Fatalf("write html: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(compDir, "button.css"), []byte(".btn { background: blue; }"), 0644); err != nil {
+		t.Fatalf("write css: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(compDir, "button.js"), []byte("console.log('button');"), 0644); err != nil {
+		t.Fatalf("write js: %v", err)
+	}
+
+	compiler := NewAssetCompiler(componentsDir, outputDir, publicAssetsDir)
+	if err := compiler.Run(); err != nil {
+		t.Fatalf("compiler.Run() failed: %v", err)
+	}
+
+	// 1. Verify CSS bundle exists and contains scoped CSS + GoStackCoreCSS
+	cssPath := filepath.Join(publicAssetsDir, "css", "gostack.css")
+	cssData, err := os.ReadFile(cssPath)
+	if err != nil {
+		t.Fatalf("expected bundled css at %s: %v", cssPath, err)
+	}
+	if !strings.Contains(string(cssData), "background: blue;") {
+		t.Errorf("expected button css in bundle, got:\n%s", string(cssData))
+	}
+
+	// 2. Verify JS bundle exists and contains GlideJS + component script
+	jsPath := filepath.Join(publicAssetsDir, "js", "gostack.js")
+	jsData, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("expected bundled js at %s: %v", jsPath, err)
+	}
+	if !strings.Contains(string(jsData), "console.log('button');") {
+		t.Errorf("expected button js in bundle, got:\n%s", string(jsData))
+	}
+
+	// 3. Verify hot reload script was written
+	hotReloadPath := filepath.Join(publicAssetsDir, "js", "gostack-hot-reload.js")
+	if _, err := os.Stat(hotReloadPath); err != nil {
+		t.Fatalf("expected hot reload script at %s: %v", hotReloadPath, err)
+	}
+
+	// 4. Verify generated Go source registers versioned asset URLs
+	genGoPath := filepath.Join(outputDir, "gostack_components_gen.go")
+	genSource, err := os.ReadFile(genGoPath)
+	if err != nil {
+		t.Fatalf("read generated go source: %v", err)
+	}
+	genStr := string(genSource)
+	if !strings.Contains(genStr, `ui.RegisterAssetURLs("/assets/css/gostack.css?v=`) {
+		t.Errorf("expected RegisterAssetURLs with version hash in generated code; got:\n%s", genStr)
+	}
+
+	// 5. Verify WriteMasterAssetBlock emits external links
+	RegisterAssetURLs("/assets/css/gostack.css?v=test1234", "/assets/js/gostack.js?v=test5678")
+	var buf strings.Builder
+	WriteMasterAssetBlock(&buf)
+	assetBlock := buf.String()
+
+	if !strings.Contains(assetBlock, `<link rel="stylesheet" href="/assets/css/gostack.css?v=test1234">`) {
+		t.Errorf("expected external stylesheet link in master block; got:\n%s", assetBlock)
+	}
+	if !strings.Contains(assetBlock, `<script defer src="/assets/js/gostack.js?v=test5678"></script>`) {
+		t.Errorf("expected external script link in master block; got:\n%s", assetBlock)
+	}
+	if strings.Contains(assetBlock, "<style id=\"gostack-core-styles\">") {
+		t.Errorf("master asset block must NOT contain inline style tag; got:\n%s", assetBlock)
+	}
+}

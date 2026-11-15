@@ -12,6 +12,9 @@ package http
 import (
 	"fmt"
 	"log"
+	netHTTP "net/http"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -147,6 +150,72 @@ func (r *Router) Patch(path string, handler func(ctx *Context), middleware ...Mi
 // Delete registers a DELETE route.
 func (r *Router) Delete(path string, handler func(ctx *Context), middleware ...Middleware) *Route {
 	return r.register("DELETE", path, handler, middleware)
+}
+
+// Static registers a GET route serving static assets from rootDir under the given URL prefix.
+// Example:
+//
+//	router.Static("/assets", "./public/assets")
+//
+// Features:
+//   - Strict Path-Traversal Guard: Rejects any '..' attempts to escape rootDir (SEC-05).
+//   - Smart Cache-Control: Emits 'public, max-age=31536000, immutable' when a '?v=' or '?version='
+//     query parameter is present, or 'public, max-age=3600' for unversioned static requests.
+//   - Directory Shielding: Directory listings are rejected with 404 to avoid leaking directory structures.
+//   - RFC-Compliant Streaming: Uses net/http.ServeContent for optimal caching (ETag, If-Modified-Since) and byte ranges.
+func (r *Router) Static(prefix, rootDir string, middleware ...Middleware) *Route {
+	cleanPrefix := "/" + strings.Trim(prefix, "/")
+	pattern := cleanPrefix + "/*"
+
+	absRoot, err := filepath.Abs(rootDir)
+	if err != nil {
+		absRoot = rootDir
+	}
+
+	return r.register("GET", pattern, func(ctx *Context) {
+		wildcard := ctx.Param("*")
+		if wildcard == "" || wildcard == "/" {
+			ctx.Writer.WriteHeader(netHTTP.StatusNotFound)
+			return
+		}
+
+		cleanRel := filepath.Clean(strings.TrimPrefix(wildcard, "/"))
+		if cleanRel == "." || strings.HasPrefix(cleanRel, "..") || strings.Contains(cleanRel, "..") {
+			ctx.Writer.WriteHeader(netHTTP.StatusNotFound)
+			return
+		}
+
+		targetPath := filepath.Join(absRoot, cleanRel)
+
+		// Ensure targetPath stays strictly within absRoot (Zip Slip / Path Traversal defense)
+		cleanTarget := filepath.Clean(targetPath)
+		if !strings.HasPrefix(cleanTarget, absRoot) {
+			ctx.Writer.WriteHeader(netHTTP.StatusNotFound)
+			return
+		}
+
+		stat, err := os.Stat(cleanTarget)
+		if err != nil || stat.IsDir() {
+			ctx.Writer.WriteHeader(netHTTP.StatusNotFound)
+			return
+		}
+
+		file, err := os.Open(cleanTarget)
+		if err != nil {
+			ctx.Writer.WriteHeader(netHTTP.StatusNotFound)
+			return
+		}
+		defer file.Close()
+
+		// Cache-Control headers
+		if ctx.Query("v") != "" || ctx.Query("version") != "" {
+			ctx.Writer.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			ctx.Writer.Header().Set("Cache-Control", "public, max-age=3600")
+		}
+
+		netHTTP.ServeContent(ctx.Writer, ctx.Request, stat.Name(), stat.ModTime(), file)
+	}, middleware)
 }
 
 // RouteGroup holds a shared prefix and a stack of group-scoped middleware that

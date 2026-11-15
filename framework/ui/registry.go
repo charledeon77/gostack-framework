@@ -188,16 +188,68 @@ func FilterLower(val any, _ ...string) string {
 
 
 
+// HotReloadClientJS provides the browser client SSE connection for development hot reloading.
+const HotReloadClientJS = `if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+  let disconnected = false;
+  function connectSSE() {
+    const es = new EventSource('/__gostack_reload');
+    es.onmessage = (e) => {
+      if (e.data === 'reload') {
+        location.reload();
+      }
+    };
+    es.onopen = () => {
+      if (disconnected) {
+        location.reload();
+      }
+    };
+    es.onerror = () => {
+      disconnected = true;
+      es.close();
+      setTimeout(connectSSE, 1000);
+    };
+  }
+  connectSSE();
+}`
+
 var (
 	// styleRegistry maintains isolated string mappings of component-scoped styles.
 	styleRegistry = make(map[string]string)
 
 	// scriptRegistry maintains component-scoped scripts.
 	scriptRegistry = make(map[string]string)
-	
+
+	// registeredStylesheetURL holds the versioned CSS bundle URL (e.g. /assets/css/gostack.css?v=1a2b3c4d).
+	registeredStylesheetURL = "/assets/css/gostack.css"
+
+	// registeredScriptURL holds the versioned JS bundle URL (e.g. /assets/js/gostack.js?v=5e6f7g8h).
+	registeredScriptURL = "/assets/js/gostack.js"
+
+	// registeredHotReloadURL holds the hot reload client JS URL.
+	registeredHotReloadURL = "/assets/js/gostack-hot-reload.js"
+
 	// registryMu guards read/write concurrency across concurrent HTTP threads accessing components.
 	registryMu sync.RWMutex
 )
+
+// RegisterAssetURLs configures the versioned asset URLs emitted by WriteMasterAssetBlock.
+func RegisterAssetURLs(cssURL, jsURL string) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	if cssURL != "" {
+		registeredStylesheetURL = cssURL
+	}
+	if jsURL != "" {
+		registeredScriptURL = jsURL
+	}
+}
+
+// GetRegisteredAssetURLs returns the registered stylesheet and script URLs.
+func GetRegisteredAssetURLs() (cssURL, jsURL string) {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	return registeredStylesheetURL, registeredScriptURL
+}
 
 // RegisterComponentStyle saves isolated, prefixed component CSS configurations during system boot passes.
 func RegisterComponentStyle(name, prefixedCSS string) {
@@ -213,61 +265,26 @@ func RegisterComponentScript(name, js string) {
 	scriptRegistry[name] = js
 }
 
-// WriteMasterAssetBlock streams the GoStack core styles, the Glide reactive runtime,
-// and all registered component-scoped styles and scripts into the HTTP response writer.
+// WriteMasterAssetBlock streams the linked stylesheet and script tags into the HTTP response writer.
 // It is called once per page render, typically just before the closing </head> tag.
-// No arguments are required — the Glide engine is embedded directly from GlideJS.
+// It emits external <link> and <script defer> tags satisfying strict Content Security Policies (CSP)
+// without requiring 'unsafe-inline'.
 func WriteMasterAssetBlock(w io.Writer) {
 	registryMu.RLock()
-	defer registryMu.RUnlock()
+	cssURL := registeredStylesheetURL
+	jsURL := registeredScriptURL
+	hotURL := registeredHotReloadURL
+	registryMu.RUnlock()
 
-	// ── Styles: core base CSS + all component-scoped styles ──
-	_, _ = io.WriteString(w, "<style id=\"gostack-core-styles\">\n")
-	_, _ = io.WriteString(w, GoStackCoreCSS)
-	_, _ = io.WriteString(w, "\n")
-	for _, css := range styleRegistry {
-		_, _ = io.WriteString(w, css)
-		_, _ = io.WriteString(w, "\n")
-	}
-	_, _ = io.WriteString(w, "</style>\n")
+	// 1. External Stylesheet link
+	_, _ = io.WriteString(w, fmt.Sprintf("<link rel=\"stylesheet\" href=\"%s\">\n", cssURL))
 
-	// ── Scripts: Glide runtime + all component-scoped scripts ──
-	_, _ = io.WriteString(w, "<script id=\"gostack-glide-runtime\">\n")
-	_, _ = io.WriteString(w, GlideJS)
-	_, _ = io.WriteString(w, "\n")
-	for _, js := range scriptRegistry {
-		_, _ = io.WriteString(w, js)
-		_, _ = io.WriteString(w, "\n")
-	}
-	_, _ = io.WriteString(w, "</script>\n")
+	// 2. External Reactive script link
+	_, _ = io.WriteString(w, fmt.Sprintf("<script defer src=\"%s\"></script>\n", jsURL))
 
-	// ── Development Hot Reload Client script ──
+	// 3. Development Hot Reload Client script
 	if os.Getenv("APP_ENV") != "production" {
-		_, _ = io.WriteString(w, `<script id="gostack-hot-reload">
-  if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
-    let disconnected = false;
-    function connectSSE() {
-      const es = new EventSource('/__gostack_reload');
-      es.onmessage = (e) => {
-        if (e.data === 'reload') {
-          location.reload();
-        }
-      };
-      es.onopen = () => {
-        if (disconnected) {
-          location.reload();
-        }
-      };
-      es.onerror = () => {
-        disconnected = true;
-        es.close();
-        setTimeout(connectSSE, 1000);
-      };
-    }
-    connectSSE();
-  }
-</script>
-`)
+		_, _ = io.WriteString(w, fmt.Sprintf("<script defer src=\"%s\"></script>\n", hotURL))
 	}
 }
 
