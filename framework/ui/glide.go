@@ -26,11 +26,6 @@ const GlideJS = `
 (function(global) {
     'use strict';
 
-    // ── gs-cloak CSS ─────────────────────────────────────────────────────────
-    const cloakStyle = document.createElement('style');
-    cloakStyle.textContent = '[gs-cloak] { display: none !important; }';
-    document.head.appendChild(cloakStyle);
-
     let globalComponentId = 0;
     const customDirectives = {};
     const customMagics = {};

@@ -446,6 +446,12 @@ func TestCompiler_BundledStaticAssetsAndRegistration(t *testing.T) {
 	if !strings.Contains(string(cssData), "background: blue;") {
 		t.Errorf("expected button css in bundle, got:\n%s", string(cssData))
 	}
+	if !strings.Contains(string(cssData), "[gs-cloak]") {
+		t.Errorf("expected [gs-cloak] rule in css bundle")
+	}
+	if strings.Contains(string(cssData), "@font-face") || strings.Contains(string(cssData), "data:font") {
+		t.Errorf("framework core css must NOT embed raw fonts; fonts belong to applications")
+	}
 
 	// 2. Verify JS bundle exists and contains GlideJS + component script
 	jsPath := filepath.Join(publicAssetsDir, "js", "gostack.js")
@@ -455,6 +461,9 @@ func TestCompiler_BundledStaticAssetsAndRegistration(t *testing.T) {
 	}
 	if !strings.Contains(string(jsData), "console.log('button');") {
 		t.Errorf("expected button js in bundle, got:\n%s", string(jsData))
+	}
+	if strings.Contains(string(jsData), "createElement('style')") {
+		t.Errorf("Glide runtime must NOT inject runtime style elements; got:\n%s", string(jsData))
 	}
 
 	// 3. Verify hot reload script was written

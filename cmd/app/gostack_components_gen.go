@@ -717,6 +717,6 @@ text-decoration: underline;
 		return nil
 	})
 
-	ui.RegisterAssetURLs("/assets/css/gostack.css?v=1ac09ed4", "/assets/js/gostack.js?v=c08f1d3e")
+	ui.RegisterAssetURLs("/assets/css/gostack.css?v=aa441cb3", "/assets/js/gostack.js?v=2a5a4a87")
 
 }
