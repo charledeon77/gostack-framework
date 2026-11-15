@@ -36,7 +36,9 @@ and emits a single Go registration file containing all compiled outputs.
 package ui
 
 import (
+	"context"
 	"fmt"
+	"go/format"
 	"log"
 	"net/http"
 	"os"
@@ -177,7 +179,14 @@ import (
 func RegisterComponents(t *http.Tempose) {
 %s}`, strings.Join(imports, "\n\t"), registrations.String())
 
-	return os.WriteFile(filepath.Join(c.OutputPath, "gostack_components_gen.go"), []byte(goSource), 0644)
+	// Pass generated source through gofmt so the output file is always clean.
+	// If formatting fails (should never happen with well-formed generated code),
+	// fall back to unformatted source rather than silently losing the output.
+	formatted, fmtErr := format.Source([]byte(goSource))
+	if fmtErr != nil {
+		formatted = []byte(goSource)
+	}
+	return os.WriteFile(filepath.Join(c.OutputPath, "gostack_components_gen.go"), formatted, 0644)
 }
 
 // Package-level compiled regexes (RE2-compatible, no backreferences).
@@ -190,6 +199,10 @@ var includeRe          = regexp.MustCompile(`@include\(["']([^"'\n]+)["']\)`)
 var extendsRe          = regexp.MustCompile(`@extends\(["']([^"'\n]+)["']\)`)
 var sectionRe          = regexp.MustCompile(`(?s)@section\(["']([^"'\n]+)["']\)(.*?)@endsection`)
 var yieldRe            = regexp.MustCompile(`@yield\(["']([^"'\n]+)["']\)`)
+// htmlCommentRe matches HTML comments including multiline ones (dotall via (?s)).
+// Used in preprocessLayouts to strip comments before scanning for directives,
+// preventing false positives such as <!-- @include("x") --> from being processed.
+var htmlCommentRe      = regexp.MustCompile(`(?s)<!--.*?-->`)
 
 func isValidComponentName(name string) bool {
 	return componentNameRegex.MatchString(name)
@@ -215,6 +228,64 @@ func isLiteral(expr string) bool {
 		return true
 	}
 	return false
+}
+
+// isTransCall validates that expr is a safe call to one of the three built-in
+// translation helpers: trans, transRaw, or transChoice.
+//
+// Security contract: the first argument must be a plain quoted string literal
+// (the translation key). No nested function calls or arbitrary Go expressions
+// are permitted inside the call. This prevents template injection while still
+// allowing the full optional-argument signatures:
+//
+//	trans("key")
+//	trans("key", map[string]string{"Name": .FirstName})   ← map args: rejected (non-string literal)
+//	transChoice("key", 3)                                 ← second int arg: allowed as number literal
+//
+// In practice, map replacement args come from controller data, not from the
+// template itself, so the restriction is not limiting.
+func isTransCall(expr string) bool {
+	var prefix string
+	switch {
+	case strings.HasPrefix(expr, "trans("):
+		prefix = "trans("
+	case strings.HasPrefix(expr, "transRaw("):
+		prefix = "transRaw("
+	case strings.HasPrefix(expr, "transChoice("):
+		prefix = "transChoice("
+	default:
+		return false
+	}
+	if !strings.HasSuffix(expr, ")") {
+		return false
+	}
+	// Extract everything between the outer parens.
+	inner := expr[len(prefix) : len(expr)-1]
+	inner = strings.TrimSpace(inner)
+	if inner == "" {
+		return false
+	}
+	// The first argument must be a double-quoted string literal (the key).
+	// We allow an optional second argument that is a number literal (for transChoice count).
+	// Anything else is rejected.
+	if !strings.HasPrefix(inner, `"`) {
+		return false
+	}
+	// Find the closing quote of the first string arg.
+	end := strings.Index(inner[1:], `"`)
+	if end == -1 {
+		return false
+	}
+	afterKey := strings.TrimSpace(inner[end+2:]) // skip opening quote + content + closing quote
+	if afterKey == "" {
+		return true // trans("key") — valid
+	}
+	if !strings.HasPrefix(afterKey, ",") {
+		return false
+	}
+	secondArg := strings.TrimSpace(afterKey[1:])
+	// Only allow a plain number literal as an optional second argument (transChoice count).
+	return numberLiteralRegex.MatchString(secondArg)
 }
 
 func calculateLine(fullText, snippet string) int {
@@ -400,8 +471,16 @@ func (c *AssetCompiler) compileTextSegment(segment string, sb *strings.Builder, 
 			sb.WriteString(fmt.Sprintf("\t\tif _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, \"%s\"))); err != nil { return err }\n", expr))
 		} else if isLiteral(expr) {
 			sb.WriteString(fmt.Sprintf("\t\tif _, err := io.WriteString(w, ui.Escape(%s)); err != nil { return err }\n", expr))
+		} else if isTransCall(expr) {
+			// trans/transRaw/transChoice are defined as local closures in every generated
+			// component function (see Run above). They already handle HTML escaping
+			// internally, so we emit a direct write — no additional ui.Escape wrapper.
+			sb.WriteString(fmt.Sprintf("\t\tif _, err := io.WriteString(w, %s); err != nil { return err }\n", expr))
 		} else {
-			return &exprError{expr: expr, err: fmt.Errorf("invalid template expression {{ %s }}: arbitrary Go expressions are not allowed", expr)}
+			return &exprError{expr: expr, err: fmt.Errorf(
+				"invalid template expression {{ %s }}: only field references (.Field), "+
+					"simple variables, string/number literals, filter pipes (expr | filter), "+
+					"and translation calls (trans/transRaw/transChoice) are accepted", expr)}
 		}
 
 		restSafe := strings.ReplaceAll(rest, "`", "` + \"`\" + `")
@@ -640,7 +719,12 @@ func (c *AssetCompiler) preprocessLayouts(rawHTML string) (string, error) {
 		return fmt.Sprintf("@section('%s')%s@endsection", slotName, content)
 	})
 
-	// 1. Inline @include partial files (supporting recursive nested includes safely).
+	// 1. Strip HTML comments before scanning for any directives.
+	// This prevents commented-out directives (e.g. <!-- @include("x") -->) from
+	// being treated as real instructions and triggering false circular-include errors.
+	rawHTML = htmlCommentRe.ReplaceAllString(rawHTML, "")
+
+	// 2. Inline @include partial files (supporting recursive nested includes safely).
 	maxDepth := 10
 	for depth := 0; depth < maxDepth; depth++ {
 		if !strings.Contains(rawHTML, "@include(") {
@@ -789,9 +873,9 @@ func NewHotReloadWatcher(compiler *AssetCompiler, interval time.Duration) *HotRe
 	}
 }
 
-// Start begins the polling loop. It blocks until ctx.Done() is closed.
+// Start begins the polling loop. It blocks until ctx is cancelled.
 // Run this in a goroutine: go watcher.Start(ctx)
-func (w *HotReloadWatcher) Start(ctx interface{ Done() <-chan struct{} }) {
+func (w *HotReloadWatcher) Start(ctx context.Context) {
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
 

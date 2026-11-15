@@ -280,3 +280,128 @@ func TestHotReloadWatcher_ServeSSE(t *testing.T) {
 		t.Errorf("expected Content-Type text/event-stream, got %q", rec.Header().Get("Content-Type"))
 	}
 }
+
+// TestCompiler_TransAndDirectivesCombined is the golden test for the UI compiler's
+// Category 1 fixes shipped in v1.0.16. It verifies in a single template that:
+//
+//  1. trans("key")        → emits io.WriteString(w, trans("key"))  — no ui.Escape wrapper
+//  2. transRaw("key")     → emits io.WriteString(w, transRaw("key"))
+//  3. transChoice("k", 3) → emits io.WriteString(w, transChoice("k", 3))
+//  4. <!-- @include("x") --> inside an HTML comment is stripped before scanning,
+//     so it never reaches the @include resolver and never causes a false
+//     "circular or excessively deep @include" error.
+//  5. @if / @endif and @foreach / @endforeach directives still compile correctly
+//     alongside the new trans calls.
+func TestCompiler_TransAndDirectivesCombined(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	componentsDir := filepath.Join(dir, "components")
+	outputDir := filepath.Join(dir, "out")
+
+	// Create the component directory and HTML template.
+	compDir := filepath.Join(componentsDir, "greeting")
+	if err := os.MkdirAll(compDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Template exercises all five requirements above.
+	// @foreach uses "list as item" syntax: list comes first, then the loop variable.
+	template := `<!-- @include("partials/commented") -->
+@if(.Active)
+<p>{{ trans("welcome") }}</p>
+<p>{{ transRaw("html.content") }}</p>
+<p>{{ transChoice("items", 3) }}</p>
+@endif
+@foreach(.Items as item)
+<li>{{ .Name }}</li>
+@endforeach`
+
+	htmlPath := filepath.Join(compDir, "greeting.html")
+	if err := os.WriteFile(htmlPath, []byte(template), 0644); err != nil {
+		t.Fatalf("write html: %v", err)
+	}
+
+	compiler := NewAssetCompiler(componentsDir, outputDir)
+	if err := compiler.Run(); err != nil {
+		t.Fatalf("compiler.Run() unexpected error: %v", err)
+	}
+
+	genPath := filepath.Join(outputDir, "gostack_components_gen.go")
+	src, err := os.ReadFile(genPath)
+	if err != nil {
+		t.Fatalf("read generated file: %v", err)
+	}
+	output := string(src)
+
+	// --- Requirement 1: trans emitted without ui.Escape ---
+	if !strings.Contains(output, `io.WriteString(w, trans("welcome"))`) {
+		t.Errorf("expected io.WriteString(w, trans(\"welcome\")) in output; got:\n%s", output)
+	}
+	// Must NOT be wrapped in ui.Escape.
+	if strings.Contains(output, `ui.Escape(trans(`) {
+		t.Errorf("trans() must NOT be wrapped in ui.Escape; got:\n%s", output)
+	}
+
+	// --- Requirement 2: transRaw emitted without ui.Escape ---
+	if !strings.Contains(output, `io.WriteString(w, transRaw("html.content"))`) {
+		t.Errorf("expected io.WriteString(w, transRaw(\"html.content\")) in output; got:\n%s", output)
+	}
+
+	// --- Requirement 3: transChoice with numeric second arg ---
+	if !strings.Contains(output, `io.WriteString(w, transChoice("items", 3))`) {
+		t.Errorf("expected io.WriteString(w, transChoice(\"items\", 3)) in output; got:\n%s", output)
+	}
+
+	// --- Requirement 4: commented @include must NOT appear in generated output ---
+	if strings.Contains(output, `"partials/commented"`) {
+		t.Errorf("commented @include must be stripped; found 'partials/commented' in output:\n%s", output)
+	}
+
+	// --- Requirement 5: @if/@foreach directives still compile ---
+	if !strings.Contains(output, `ui.EvaluateBool(data, "Active")`) {
+		t.Errorf("expected @if(.Active) to compile to EvaluateBool; got:\n%s", output)
+	}
+	if !strings.Contains(output, `ui.EvaluateSlice(data, "Items")`) {
+		t.Errorf("expected @foreach(item in .Items) to compile to EvaluateSlice; got:\n%s", output)
+	}
+}
+
+// TestIsTransCall_Validation ensures the isTransCall security boundary holds:
+// valid calls are accepted, injection attempts are rejected.
+func TestIsTransCall_Validation(t *testing.T) {
+	t.Parallel()
+
+	accept := []string{
+		`trans("welcome")`,
+		`trans("auth.login.title")`,
+		`transRaw("html.content")`,
+		`transChoice("items", 3)`,
+		`transChoice("count.items", 100)`,
+	}
+	for _, expr := range accept {
+		if !isTransCall(expr) {
+			t.Errorf("isTransCall(%q) = false; want true", expr)
+		}
+	}
+
+	reject := []string{
+		`trans()`,                       // empty key
+		`trans(variable)`,               // non-string-literal key — injection risk
+		`trans("key", os.Exit(1))`,      // arbitrary Go in second arg
+		`trans("key" + "x")`,            // concatenation — not a plain literal
+		`fmt.Sprintf("x")`,              // completely different function
+		`transChoice("k", variable)`,    // non-literal second arg
+		`trans("key") + doSomething()`,  // trailing arbitrary Go
+		`transRaw`,                      // no call parens
+		``,                              // empty string
+	}
+	for _, expr := range reject {
+		if isTransCall(expr) {
+			t.Errorf("isTransCall(%q) = true; want false (should be rejected)", expr)
+		}
+	}
+}
