@@ -12,60 +12,60 @@ import (
 // RegisterComponents binds all compiled component views, styles, and scripts.
 func RegisterComponents(t *http.Tempose) {
 	ui.RegisterComponentStyle("accordion", `[gs-component="accordion"] .gostack-components-accordion {
-width: 100%;
-max-width: 500px;
-background: var(--bg-surface-elevated);
-border: 1px solid var(--border-color);
-border-radius: var(--radius-md);
-overflow: hidden;
+  width: 100%;
+  max-width: 500px;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
 }
 [gs-component="accordion"] .gostack-components-accordion-item {
-border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
 }
 [gs-component="accordion"] .gostack-components-accordion-item:last-child {
-border-bottom: none;
+  border-bottom: none;
 }
 [gs-component="accordion"] .gostack-components-accordion-trigger {
-width: 100%;
-background: transparent;
-border: none;
-padding: 18px 20px;
-text-align: left;
-color: var(--text-primary);
-font-family: var(--font-sans);
-font-weight: 600;
-font-size: 15px;
-cursor: pointer;
-display: flex;
-justify-content: space-between;
-align-items: center;
-transition: var(--transition);
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 18px 20px;
+  text-align: left;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: var(--transition);
 }
 [gs-component="accordion"] .gostack-components-accordion-trigger:hover {
-background: rgba(255, 255, 255, 0.02);
+  background: rgba(255, 255, 255, 0.02);
 }
 [gs-component="accordion"] .gostack-components-accordion-icon {
-transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-color: var(--text-muted);
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  color: var(--text-muted);
 }
 [gs-component="accordion"] .gostack-components-accordion-content {
-max-height: 0;
-overflow: hidden;
-transition: max-height 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-background: rgba(0, 0, 0, 0.1);
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  background: rgba(0, 0, 0, 0.1);
 }
 [gs-component="accordion"] .gostack-components-accordion-content-inner {
-padding: 0 20px 20px 20px;
-color: var(--text-secondary);
-font-size: 14px;
-line-height: 1.6;
+  padding: 0 20px 20px 20px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.6;
 }
 [gs-component="accordion"] .gostack-components-accordion-item.active .gostack-components-accordion-content {
-max-height: 200px;
+  max-height: 200px;
 }
 [gs-component="accordion"] .gostack-components-accordion-item.active .gostack-components-accordion-icon {
-transform: rotate(180deg);
-color: var(--accent);
+  transform: rotate(180deg);
+  color: var(--accent);
 }`)
 
 	ui.RegisterComponentScript("accordion", `// Toggle accordion logic
@@ -140,38 +140,38 @@ function toggleAccordion(trigger) {
 	})
 
 	ui.RegisterComponentStyle("button", `[gs-component="button"] .gs-btn {
-display: inline-flex;
-align-items: center;
-justify-content: center;
-padding: 0.5rem 1rem;
-font-size: 0.875rem;
-font-weight: 500;
-border-radius: 0.375rem;
-border: none;
-cursor: pointer;
-transition: all 0.2s ease-in-out;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  border-radius: 0.375rem;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
 }
 [gs-component="button"] .gs-btn-primary {
-background-color: #0f172a;
-color: #ffffff;
+  background-color: #0f172a;
+  color: #ffffff;
 }
 [gs-component="button"] .gs-btn-primary:hover {
-background-color: #334155;
+  background-color: #334155;
 }
 [gs-component="button"] .gs-btn-secondary {
-background-color: #f1f5f9;
-color: #0f172a;
-border: 1px solid #e2e8f0;
+  background-color: #f1f5f9;
+  color: #0f172a;
+  border: 1px solid #e2e8f0;
 }
 [gs-component="button"] .gs-btn-secondary:hover {
-background-color: #e2e8f0;
+  background-color: #e2e8f0;
 }
 [gs-component="button"] .gs-btn-danger {
-background-color: #ef4444;
-color: #ffffff;
+  background-color: #ef4444;
+  color: #ffffff;
 }
 [gs-component="button"] .gs-btn-danger:hover {
-background-color: #dc2626;
+  background-color: #dc2626;
 }`)
 
 	t.Register("button", func(w io.Writer, data any, t http.ViewTranslator) error {
@@ -228,20 +228,20 @@ background-color: #dc2626;
 	})
 
 	ui.RegisterComponentStyle("counter", `[gs-component="counter"] button {
-background-color: #0076ff;
-color: white;
-border: none;
-padding: 0.5rem 1rem;
-border-radius: 4px;
-cursor: pointer;
+  background-color: #0076ff;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
 }
 [gs-component="counter"] button:hover {
-background-color: #0056b3;
+  background-color: #0056b3;
 }
 [gs-component="counter"] span {
-font-size: 1.5rem;
-margin: 0 1rem;
-font-weight: bold;
+  font-size: 1.5rem;
+  margin: 0 1rem;
+  font-weight: bold;
 }`)
 
 	ui.RegisterComponentScript("counter", `// counter.js: Custom reactive handlers or initialization for the counter component
@@ -283,86 +283,86 @@ console.log('Counter component hydrated successfully');
 	})
 
 	ui.RegisterComponentStyle("login", `[gs-component="login"] .auth-card {
-max-width: 400px;
-margin: 50px auto;
-padding: 30px;
-background: #ffffff;
-border-radius: 12px;
-box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-font-family: 'Inter', sans-serif;
+  max-width: 400px;
+  margin: 50px auto;
+  padding: 30px;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+  font-family: 'Inter', sans-serif;
 }
 [gs-component="login"] .auth-card h2 {
-margin-top: 0;
-margin-bottom: 24px;
-color: #1a1a1a;
-font-weight: 700;
-text-align: center;
+  margin-top: 0;
+  margin-bottom: 24px;
+  color: #1a1a1a;
+  font-weight: 700;
+  text-align: center;
 }
 [gs-component="login"] .form-group {
-margin-bottom: 20px;
+  margin-bottom: 20px;
 }
 [gs-component="login"] .form-group label {
-display: block;
-margin-bottom: 8px;
-font-size: 14px;
-font-weight: 500;
-color: #4a4a4a;
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #4a4a4a;
 }
 [gs-component="login"] .form-group input {
-width: 100%;
-padding: 12px 16px;
-border: 1px solid #dcdcdc;
-border-radius: 8px;
-box-sizing: border-box;
-font-size: 15px;
-transition: border-color 0.2s;
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid #dcdcdc;
+  border-radius: 8px;
+  box-sizing: border-box;
+  font-size: 15px;
+  transition: border-color 0.2s;
 }
 [gs-component="login"] .form-group input:focus {
-outline: none;
-border-color: #4f46e5;
+  outline: none;
+  border-color: #4f46e5;
 }
 [gs-component="login"] .btn {
-display: block;
-width: 100%;
-padding: 14px;
-background: #4f46e5;
-color: #ffffff;
-border: none;
-border-radius: 8px;
-font-size: 16px;
-font-weight: 600;
-cursor: pointer;
-transition: background-color 0.2s;
+  display: block;
+  width: 100%;
+  padding: 14px;
+  background: #4f46e5;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s;
 }
 [gs-component="login"] .btn:hover {
-background: #4338ca;
+  background: #4338ca;
 }
 [gs-component="login"] .alert {
-padding: 12px;
-border-radius: 8px;
-margin-bottom: 20px;
-font-size: 14px;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  font-size: 14px;
 }
 [gs-component="login"] .alert:empty {
-display: none;
+  display: none;
 }
 [gs-component="login"] .alert-danger {
-background: #fee2e2;
-color: #991b1b;
+  background: #fee2e2;
+  color: #991b1b;
 }
 [gs-component="login"] .auth-switch {
-margin-top: 24px;
-text-align: center;
-font-size: 14px;
-color: #6b7280;
+  margin-top: 24px;
+  text-align: center;
+  font-size: 14px;
+  color: #6b7280;
 }
 [gs-component="login"] .auth-switch a {
-color: #4f46e5;
-text-decoration: none;
-font-weight: 500;
+  color: #4f46e5;
+  text-decoration: none;
+  font-weight: 500;
 }
 [gs-component="login"] .auth-switch a:hover {
-text-decoration: underline;
+  text-decoration: underline;
 }`)
 
 	ui.RegisterComponentScript("login", `// Login client scripts`)
@@ -426,72 +426,72 @@ text-decoration: underline;
 	})
 
 	ui.RegisterComponentStyle("modal", `[gs-component="modal"] .gs-modal-overlay {
-position: fixed;
-top: 0;
-left: 0;
-width: 100vw;
-height: 100vh;
-background-color: rgba(0, 0, 0, 0.5);
-display: flex;
-align-items: center;
-justify-content: center;
-z-index: 50;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
 }
 [gs-component="modal"] .gs-modal-content {
-background-color: #ffffff;
-border-radius: 0.5rem;
-box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-width: 100%;
-max-width: 32rem;
-padding: 1.5rem;
-display: flex;
-flex-direction: column;
-gap: 1rem;
-animation: gs-modal-in 0.2s ease-out forwards;
+  background-color: #ffffff;
+  border-radius: 0.5rem;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  width: 100%;
+  max-width: 32rem;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  animation: gs-modal-in 0.2s ease-out forwards;
 }
 [gs-component="modal"] .gs-modal-header {
-display: flex;
-justify-content: space-between;
-align-items: center;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 [gs-component="modal"] .gs-modal-title {
-font-size: 1.125rem;
-font-weight: 600;
-margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin: 0;
 }
 [gs-component="modal"] .gs-modal-close {
-background: none;
-border: none;
-font-size: 1.5rem;
-line-height: 1;
-cursor: pointer;
-color: #64748b;
-transition: color 0.2s;
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  color: #64748b;
+  transition: color 0.2s;
 }
 [gs-component="modal"] .gs-modal-close:hover {
-color: #0f172a;
+  color: #0f172a;
 }
 [gs-component="modal"] .gs-modal-body {
-font-size: 0.875rem;
-color: #475569;
+  font-size: 0.875rem;
+  color: #475569;
 }
 [gs-component="modal"] .gs-modal-footer {
-display: flex;
-justify-content: flex-end;
-gap: 0.5rem;
-margin-top: 0.5rem;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
 }
 [gs-component="modal"] .gs-hidden {
-display: none !important;
+  display: none !important;
 }
 @keyframes gs-modal-in {
-[gs-component="modal"] from {
-opacity: 0;
-transform: scale(0.95);
+from {
+  opacity: 0;
+  transform: scale(0.95);
 }
-[gs-component="modal"] to {
-opacity: 1;
-transform: scale(1);
+to {
+  opacity: 1;
+  transform: scale(1);
 }
 }`)
 
@@ -575,86 +575,86 @@ transform: scale(1);
 	})
 
 	ui.RegisterComponentStyle("register", `[gs-component="register"] .auth-card {
-max-width: 400px;
-margin: 50px auto;
-padding: 30px;
-background: #ffffff;
-border-radius: 12px;
-box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-font-family: 'Inter', sans-serif;
+  max-width: 400px;
+  margin: 50px auto;
+  padding: 30px;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+  font-family: 'Inter', sans-serif;
 }
 [gs-component="register"] .auth-card h2 {
-margin-top: 0;
-margin-bottom: 24px;
-color: #1a1a1a;
-font-weight: 700;
-text-align: center;
+  margin-top: 0;
+  margin-bottom: 24px;
+  color: #1a1a1a;
+  font-weight: 700;
+  text-align: center;
 }
 [gs-component="register"] .form-group {
-margin-bottom: 20px;
+  margin-bottom: 20px;
 }
 [gs-component="register"] .form-group label {
-display: block;
-margin-bottom: 8px;
-font-size: 14px;
-font-weight: 500;
-color: #4a4a4a;
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #4a4a4a;
 }
 [gs-component="register"] .form-group input {
-width: 100%;
-padding: 12px 16px;
-border: 1px solid #dcdcdc;
-border-radius: 8px;
-box-sizing: border-box;
-font-size: 15px;
-transition: border-color 0.2s;
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid #dcdcdc;
+  border-radius: 8px;
+  box-sizing: border-box;
+  font-size: 15px;
+  transition: border-color 0.2s;
 }
 [gs-component="register"] .form-group input:focus {
-outline: none;
-border-color: #4f46e5;
+  outline: none;
+  border-color: #4f46e5;
 }
 [gs-component="register"] .btn {
-display: block;
-width: 100%;
-padding: 14px;
-background: #4f46e5;
-color: #ffffff;
-border: none;
-border-radius: 8px;
-font-size: 16px;
-font-weight: 600;
-cursor: pointer;
-transition: background-color 0.2s;
+  display: block;
+  width: 100%;
+  padding: 14px;
+  background: #4f46e5;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s;
 }
 [gs-component="register"] .btn:hover {
-background: #4338ca;
+  background: #4338ca;
 }
 [gs-component="register"] .alert {
-padding: 12px;
-border-radius: 8px;
-margin-bottom: 20px;
-font-size: 14px;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  font-size: 14px;
 }
 [gs-component="register"] .alert:empty {
-display: none;
+  display: none;
 }
 [gs-component="register"] .alert-danger {
-background: #fee2e2;
-color: #991b1b;
+  background: #fee2e2;
+  color: #991b1b;
 }
 [gs-component="register"] .auth-switch {
-margin-top: 24px;
-text-align: center;
-font-size: 14px;
-color: #6b7280;
+  margin-top: 24px;
+  text-align: center;
+  font-size: 14px;
+  color: #6b7280;
 }
 [gs-component="register"] .auth-switch a {
-color: #4f46e5;
-text-decoration: none;
-font-weight: 500;
+  color: #4f46e5;
+  text-decoration: none;
+  font-weight: 500;
 }
 [gs-component="register"] .auth-switch a:hover {
-text-decoration: underline;
+  text-decoration: underline;
 }`)
 
 	ui.RegisterComponentScript("register", `// Register client scripts`)
@@ -717,6 +717,6 @@ text-decoration: underline;
 		return nil
 	})
 
-	ui.RegisterAssetURLs("/assets/css/gostack.css?v=aa441cb3", "/assets/js/gostack.js?v=2a5a4a87")
+	ui.RegisterAssetURLs("/assets/css/gostack.css?v=1e6ab559", "/assets/js/gostack.js?v=2a5a4a87")
 
 }

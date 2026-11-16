@@ -875,25 +875,113 @@ func (c *AssetCompiler) preprocessLayouts(rawHTML string) (string, error) {
 	return merged, nil
 }
 
+var cssCommentRegex = regexp.MustCompile(`(?s)/\*.*?\*/`)
+
 // scopeCSS transforms raw CSS into component-scoped CSS by prepending a unique
 // selector prefix to every rule block, preventing styles from leaking globally.
+//
+// Rules:
+//  1. All comments (single-line, multi-line, inline) are stripped upfront.
+//  2. Multi-selector rules (e.g. "h1, h2, .title") have each selector prefixed individually.
+//  3. At-rules like "@keyframes" are handled specially: keyframe steps (from, to, 0%, 100%)
+//     remain unscoped so CSS animations function properly.
+//  4. Nested rules inside "@media" or "@supports" have their selectors scoped correctly.
 func (c *AssetCompiler) scopeCSS(componentName, rawCSS string) string {
-	var scoped []string
+	cleaned := cssCommentRegex.ReplaceAllString(rawCSS, "")
 	prefix := fmt.Sprintf("[gs-component=\"%s\"]", componentName)
 
-	lines := strings.Split(rawCSS, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "/*") {
-			continue
-		}
-		if strings.Contains(line, "{") && !strings.HasPrefix(line, "@") {
-			scoped = append(scoped, prefix+" "+line)
-		} else {
-			scoped = append(scoped, line)
+	var sb strings.Builder
+	sb.Grow(len(cleaned) + len(cleaned)/4)
+
+	var (
+		tokenBuffer    strings.Builder
+		braceDepth     int
+		keyframesDepth int = -1
+	)
+
+	for i := 0; i < len(cleaned); i++ {
+		ch := cleaned[i]
+
+		switch ch {
+		case '{':
+			header := strings.TrimSpace(tokenBuffer.String())
+			tokenBuffer.Reset()
+			braceDepth++
+
+			if strings.HasPrefix(header, "@") {
+				lower := strings.ToLower(header)
+				if strings.HasPrefix(lower, "@keyframes") || strings.HasPrefix(lower, "@-webkit-keyframes") {
+					keyframesDepth = braceDepth
+				}
+				sb.WriteString(header)
+				sb.WriteString(" {\n")
+			} else if keyframesDepth != -1 && braceDepth > keyframesDepth {
+				// Inside @keyframes block: keyframe stops (e.g. from, to, 50%) must remain unscoped
+				sb.WriteString(header)
+				sb.WriteString(" {\n")
+			} else {
+				// Regular selector: may contain multiple comma-separated targets
+				scopedHeader := scopeSelectorList(prefix, header)
+				sb.WriteString(scopedHeader)
+				sb.WriteString(" {\n")
+			}
+
+		case '}':
+			content := strings.TrimSpace(tokenBuffer.String())
+			tokenBuffer.Reset()
+
+			if content != "" {
+				lines := strings.Split(content, "\n")
+				for _, line := range lines {
+					trimmed := strings.TrimSpace(line)
+					if trimmed != "" {
+						sb.WriteString("  ")
+						sb.WriteString(trimmed)
+						sb.WriteString("\n")
+					}
+				}
+			}
+
+			if keyframesDepth == braceDepth {
+				keyframesDepth = -1
+			}
+			braceDepth--
+			if braceDepth < 0 {
+				braceDepth = 0
+			}
+
+			sb.WriteString("}\n")
+
+		default:
+			tokenBuffer.WriteByte(ch)
 		}
 	}
-	return strings.Join(scoped, "\n")
+
+	tail := strings.TrimSpace(tokenBuffer.String())
+	if tail != "" {
+		sb.WriteString(tail)
+		sb.WriteString("\n")
+	}
+
+	return strings.TrimSpace(sb.String())
+}
+
+// scopeSelectorList splits comma-separated selectors and prefixes each one individually.
+func scopeSelectorList(prefix, header string) string {
+	parts := strings.Split(header, ",")
+	var scopedParts []string
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, ":root") || strings.HasPrefix(trimmed, ":host") {
+			scopedParts = append(scopedParts, trimmed)
+		} else {
+			scopedParts = append(scopedParts, prefix+" "+trimmed)
+		}
+	}
+	return strings.Join(scopedParts, ", ")
 }
 
 // ── Dev Hot-Reload Watcher ───────────────────────────────────────────────────

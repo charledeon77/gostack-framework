@@ -86,14 +86,75 @@ func TestAssetCompiler_CompileHTMLDirectives(t *testing.T) {
 
 func TestAssetCompiler_ScopeCSS(t *testing.T) {
 	c := NewAssetCompiler("", "")
+
+	// 1. Basic rules
 	rawCSS := `.btn { color: red; }
 #title { font-size: 20px; }`
-	expected := `[gs-component="test"] .btn { color: red; }
-[gs-component="test"] #title { font-size: 20px; }`
-
 	scoped := c.scopeCSS("test", rawCSS)
-	if strings.TrimSpace(scoped) != strings.TrimSpace(expected) {
-		t.Errorf("Expected scoped CSS to be:\n%s\n\nGot:\n%s", expected, scoped)
+	if !strings.Contains(scoped, `[gs-component="test"] .btn {`) {
+		t.Errorf("Expected scoped .btn, got:\n%s", scoped)
+	}
+	if !strings.Contains(scoped, `[gs-component="test"] #title {`) {
+		t.Errorf("Expected scoped #title, got:\n%s", scoped)
+	}
+
+	// 2. Multi-line comments are stripped cleanly without corrupting the next selector
+	commentCSS := `/* Sign-in card styles
+   for floating inputs */
+.floating-field {
+  color: blue;
+}
+/* inline comment */ .subtext { font-size: 12px; }`
+	scopedComments := c.scopeCSS("auth", commentCSS)
+	if strings.Contains(scopedComments, "/*") || strings.Contains(scopedComments, "*/") {
+		t.Errorf("Expected all comments to be stripped, got:\n%s", scopedComments)
+	}
+	if !strings.Contains(scopedComments, `[gs-component="auth"] .floating-field {`) {
+		t.Errorf("Expected [gs-component=\"auth\"] .floating-field, got:\n%s", scopedComments)
+	}
+	if !strings.Contains(scopedComments, `[gs-component="auth"] .subtext {`) {
+		t.Errorf("Expected [gs-component=\"auth\"] .subtext, got:\n%s", scopedComments)
+	}
+
+	// 3. Comma-separated selectors: each selector must be individually prefixed
+	commaCSS := `h1, h2, .custom-heading {
+  margin: 0;
+}`
+	scopedComma := c.scopeCSS("headings", commaCSS)
+	expectedComma := `[gs-component="headings"] h1, [gs-component="headings"] h2, [gs-component="headings"] .custom-heading {`
+	if !strings.Contains(scopedComma, expectedComma) {
+		t.Errorf("Expected comma-separated selectors to all be scoped, got:\n%s", scopedComma)
+	}
+
+	// 4. @keyframes: keyframe steps (from, to, 0%, 100%) must NOT be scoped
+	keyframeCSS := `@keyframes slideIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}`
+	scopedKeyframe := c.scopeCSS("anim", keyframeCSS)
+	if strings.Contains(scopedKeyframe, `[gs-component="anim"] from`) || strings.Contains(scopedKeyframe, `[gs-component="anim"] to`) {
+		t.Errorf("Keyframe steps must NOT be prefixed with component selector, got:\n%s", scopedKeyframe)
+	}
+	if !strings.Contains(scopedKeyframe, "from {") || !strings.Contains(scopedKeyframe, "to {") {
+		t.Errorf("Keyframe steps from/to must be preserved, got:\n%s", scopedKeyframe)
+	}
+
+	// 5. @media query: inner selectors must be scoped, but @media itself is not prefixed
+	mediaCSS := `@media (min-width: 768px) {
+  .responsive-box {
+    width: 50%;
+  }
+}`
+	scopedMedia := c.scopeCSS("layout", mediaCSS)
+	if strings.HasPrefix(strings.TrimSpace(scopedMedia), `[gs-component="layout"] @media`) {
+		t.Errorf("@media must not be prefixed itself, got:\n%s", scopedMedia)
+	}
+	if !strings.Contains(scopedMedia, `[gs-component="layout"] .responsive-box {`) {
+		t.Errorf("Inner selector within @media must be scoped, got:\n%s", scopedMedia)
 	}
 }
 
