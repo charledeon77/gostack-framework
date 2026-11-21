@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -323,7 +324,7 @@ func evaluateSingle(data any, field string) any {
 		}
 	case reflect.Struct:
 		f := val.FieldByName(field)
-		if f.IsValid() {
+		if f.IsValid() && f.CanInterface() {
 			return f.Interface()
 		}
 		// Try method lookup
@@ -346,7 +347,8 @@ func EvaluateBool(data any, field string) bool {
 	case bool:
 		return v
 	case string:
-		return v != "" && v != "false" && v != "0"
+		lower := strings.ToLower(strings.TrimSpace(v))
+		return lower != "" && lower != "false" && lower != "0" && lower != "no" && lower != "off"
 	case int:
 		return v != 0
 	case int8:
@@ -389,6 +391,17 @@ func EvaluateSlice(data any, field string) []any {
 	val := reflect.ValueOf(res)
 	if val.Kind() == reflect.Ptr {
 		val = val.Elem()
+	}
+	if val.Kind() == reflect.Map {
+		keys := val.MapKeys()
+		sort.Slice(keys, func(i, j int) bool {
+			return fmt.Sprint(keys[i].Interface()) < fmt.Sprint(keys[j].Interface())
+		})
+		out := make([]any, len(keys))
+		for i, k := range keys {
+			out[i] = val.MapIndex(k).Interface()
+		}
+		return out
 	}
 	if val.Kind() != reflect.Slice && val.Kind() != reflect.Array {
 		return nil

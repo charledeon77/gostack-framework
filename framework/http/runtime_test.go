@@ -213,3 +213,57 @@ func TestRouter_Static(t *testing.T) {
 	}
 }
 
+func TestContext_RenderBuffersBeforeStatus(t *testing.T) {
+	tempose := NewTempose()
+	tempose.Register("failing-view", func(w io.Writer, data any, trans ViewTranslator) error {
+		return errors.New("template syntax or evaluation failed")
+	})
+	tempose.Register("successful-view", func(w io.Writer, data any, trans ViewTranslator) error {
+		_, err := w.Write([]byte("<h1>Success</h1>"))
+		return err
+	})
+
+	// Test 1: Failing render does NOT commit 200 OK header
+	w1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest("GET", "/fail", nil)
+	ctx1 := &Context{
+		Writer:  w1,
+		Request: req1,
+		Tempose: tempose,
+	}
+
+	err := ctx1.Render("failing-view", nil)
+	if err == nil {
+		t.Fatal("expected Render to return error on failed view, got nil")
+	}
+	if w1.Flushed {
+		t.Errorf("expected response not to be committed when render fails")
+	}
+	if w1.Body.Len() > 0 {
+		t.Errorf("expected empty body when render fails, got %q", w1.Body.String())
+	}
+
+	// Test 2: Successful render commits 200 OK and body
+	w2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", "/success", nil)
+	ctx2 := &Context{
+		Writer:  w2,
+		Request: req2,
+		Tempose: tempose,
+	}
+
+	err = ctx2.Render("successful-view", nil)
+	if err != nil {
+		t.Fatalf("expected successful render, got %v", err)
+	}
+	if w2.Code != netHTTP.StatusOK {
+		t.Errorf("expected 200 OK on success, got %d", w2.Code)
+	}
+	if w2.Header().Get("Content-Type") != "text/html; charset=utf-8" {
+		t.Errorf("expected text/html charset=utf-8 Content-Type, got %q", w2.Header().Get("Content-Type"))
+	}
+	if w2.Body.String() != "<h1>Success</h1>" {
+		t.Errorf("expected '<h1>Success</h1>', got %q", w2.Body.String())
+	}
+}
+

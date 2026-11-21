@@ -42,11 +42,26 @@ import (
 	"database/sql"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"sync/atomic"
 
 	"github.com/charledeon77/gostack-framework/framework/contract"
 )
+
+var pgPlaceholderRegex = regexp.MustCompile(`\$(\d+)`)
+
+func shiftPgPlaceholders(sql string, offset int) string {
+	if offset == 0 {
+		return sql
+	}
+	return pgPlaceholderRegex.ReplaceAllStringFunc(sql, func(m string) string {
+		numStr := m[1:]
+		var n int
+		fmt.Sscanf(numStr, "%d", &n)
+		return fmt.Sprintf("$%d", n+offset)
+	})
+}
 
 var (
 	identRegex  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -284,6 +299,78 @@ func (qb *QueryBuilder) OrWhere(col, op string, val any) *QueryBuilder {
 		qb.where = append(qb.where, clause)
 	}
 	qb.bindings = append(qb.bindings, val)
+	return qb
+}
+
+// WhereGroup evaluates a nested WHERE clause wrapped in parentheses: AND (condition1 OR condition2)
+func (qb *QueryBuilder) WhereGroup(fn func(q *QueryBuilder)) *QueryBuilder {
+	sub := &QueryBuilder{db: qb.db, tx: qb.tx, table: qb.table}
+	fn(sub)
+	if sub.err != nil {
+		qb.setErr(sub.err)
+		return qb
+	}
+	if len(sub.where) == 0 {
+		return qb
+	}
+
+	subWhere := sub.whereSQL()
+	subWhere = strings.TrimPrefix(subWhere, " WHERE ")
+
+	drv := ""
+	if qb.db != nil {
+		drv = qb.db.Driver()
+	}
+	if drv == "postgres" || drv == "cockroach" || drv == "cockroachdb" {
+		offset := len(qb.bindings)
+		if offset > 0 {
+			subWhere = shiftPgPlaceholders(subWhere, offset)
+		}
+	}
+
+	clause := fmt.Sprintf("(%s)", subWhere)
+	if len(qb.where) > 0 {
+		qb.where = append(qb.where, "AND "+clause)
+	} else {
+		qb.where = append(qb.where, clause)
+	}
+	qb.bindings = append(qb.bindings, sub.bindings...)
+	return qb
+}
+
+// OrWhereGroup evaluates a nested WHERE clause wrapped in parentheses preceded by OR: OR (condition1 AND condition2)
+func (qb *QueryBuilder) OrWhereGroup(fn func(q *QueryBuilder)) *QueryBuilder {
+	sub := &QueryBuilder{db: qb.db, tx: qb.tx, table: qb.table}
+	fn(sub)
+	if sub.err != nil {
+		qb.setErr(sub.err)
+		return qb
+	}
+	if len(sub.where) == 0 {
+		return qb
+	}
+
+	subWhere := sub.whereSQL()
+	subWhere = strings.TrimPrefix(subWhere, " WHERE ")
+
+	drv := ""
+	if qb.db != nil {
+		drv = qb.db.Driver()
+	}
+	if drv == "postgres" || drv == "cockroach" || drv == "cockroachdb" {
+		offset := len(qb.bindings)
+		if offset > 0 {
+			subWhere = shiftPgPlaceholders(subWhere, offset)
+		}
+	}
+
+	clause := fmt.Sprintf("(%s)", subWhere)
+	if len(qb.where) > 0 {
+		qb.where = append(qb.where, "OR "+clause)
+	} else {
+		qb.where = append(qb.where, clause)
+	}
+	qb.bindings = append(qb.bindings, sub.bindings...)
 	return qb
 }
 
@@ -611,6 +698,12 @@ func (qb *QueryBuilder) UpdateModel(model any, data map[string]any) error {
 		}
 	}
 
+	keys := make([]string, 0, len(data))
+	for col := range data {
+		keys = append(keys, col)
+	}
+	sort.Strings(keys)
+
 	var setClauses []string
 	var bindings []any
 
@@ -618,7 +711,8 @@ func (qb *QueryBuilder) UpdateModel(model any, data map[string]any) error {
 	if qb.db != nil {
 		drv = qb.db.Driver()
 	}
-	for col, val := range data {
+	for _, col := range keys {
+		val := data[col]
 		var placeholder string
 		if drv == "postgres" || drv == "cockroach" || drv == "cockroachdb" {
 			placeholder = fmt.Sprintf("$%d", len(bindings)+1)
@@ -629,8 +723,12 @@ func (qb *QueryBuilder) UpdateModel(model any, data map[string]any) error {
 		bindings = append(bindings, val)
 	}
 
-	sqlStr := fmt.Sprintf("UPDATE %s SET %s", qb.table, strings.Join(setClauses, ", "))
-	sqlStr += qb.whereSQL()
+	whereClause := qb.whereSQL()
+	if drv == "postgres" || drv == "cockroach" || drv == "cockroachdb" {
+		whereClause = shiftPgPlaceholders(whereClause, len(bindings))
+	}
+
+	sqlStr := fmt.Sprintf("UPDATE %s SET %s%s", qb.table, strings.Join(setClauses, ", "), whereClause)
 	
 	if len(qb.where) > 0 {
 		bindings = append(bindings, qb.bindings...)

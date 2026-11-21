@@ -503,6 +503,15 @@ import (
 )
 
 // AuthController coordinates user logins, registration, and logouts.
+//
+// Recommended Route Wiring in routes/web.go or main.go:
+//   authCtrl := controller.NewAuthController(gostack.DB, auth.NewBcryptHasher(10))
+//   web := router.Group("/", sessionMiddleware, auth.CSRF(""))
+//   web.Get("/login", authCtrl.ShowLogin)
+//   web.Post("/login", authCtrl.Login)
+//   web.Get("/register", authCtrl.ShowRegister)
+//   web.Post("/register", authCtrl.Register)
+//   web.Post("/logout", authCtrl.Logout)
 type AuthController struct {
 	db     contract.Database
 	hasher contract.Hasher
@@ -513,9 +522,26 @@ func NewAuthController(db contract.Database, hasher contract.Hasher) *AuthContro
 	return &AuthController{db: db, hasher: hasher}
 }
 
+// getCSRFToken resolves the CSRF token from the request context or session.
+func getCSRFToken(ctx *http.Context) string {
+	if token := ctx.Get("csrf_token"); token != nil {
+		if s, ok := token.(string); ok && s != "" {
+			return s
+		}
+	}
+	if sessVal := ctx.Get("session"); sessVal != nil {
+		if sess, ok := sessVal.(contract.Session); ok {
+			if tokenVal := sess.Get("csrf_token"); tokenVal != nil {
+				return fmt.Sprint(tokenVal)
+			}
+		}
+	}
+	return ""
+}
+
 // ShowLogin renders the login UI page.
 func (c *AuthController) ShowLogin(ctx *http.Context) error {
-	csrfToken := ctx.Get("csrf_token")
+	csrfToken := getCSRFToken(ctx)
 	return ctx.Render("login", map[string]any{
 		"csrf_token": csrfToken,
 		"error":      "",
@@ -524,7 +550,7 @@ func (c *AuthController) ShowLogin(ctx *http.Context) error {
 
 // ShowRegister renders the registration page.
 func (c *AuthController) ShowRegister(ctx *http.Context) error {
-	csrfToken := ctx.Get("csrf_token")
+	csrfToken := getCSRFToken(ctx)
 	return ctx.Render("register", map[string]any{
 		"csrf_token": csrfToken,
 		"error":      "",
@@ -540,7 +566,7 @@ func (c *AuthController) Login(ctx *http.Context) error {
 	credentials := map[string]any{"email": email, "password": password}
 
 	if err := guard.Attempt(ctx.Writer, ctx.Request, credentials); err != nil {
-		csrfToken := ctx.Get("csrf_token")
+		csrfToken := getCSRFToken(ctx)
 		return ctx.Render("login", map[string]any{
 			"csrf_token": csrfToken,
 			"error":      "Invalid email or password",
@@ -558,7 +584,7 @@ func (c *AuthController) Register(ctx *http.Context) error {
 	password := ctx.Post("password")
 
 	if email == "" || password == "" {
-		csrfToken := ctx.Get("csrf_token")
+		csrfToken := getCSRFToken(ctx)
 		return ctx.Render("register", map[string]any{
 			"csrf_token": csrfToken,
 			"error":      "Email and password cannot be empty",
@@ -567,7 +593,7 @@ func (c *AuthController) Register(ctx *http.Context) error {
 
 	hashed, err := c.hasher.Hash(password)
 	if err != nil {
-		csrfToken := ctx.Get("csrf_token")
+		csrfToken := getCSRFToken(ctx)
 		return ctx.Render("register", map[string]any{
 			"csrf_token": csrfToken,
 			"error":      "Failed to hash password",
@@ -582,7 +608,7 @@ func (c *AuthController) Register(ctx *http.Context) error {
 		"updated_at": time.Now(),
 	})
 	if err != nil {
-		csrfToken := ctx.Get("csrf_token")
+		csrfToken := getCSRFToken(ctx)
 		return ctx.Render("register", map[string]any{
 			"csrf_token": csrfToken,
 			"error":      "User already exists or database error",
@@ -593,7 +619,7 @@ func (c *AuthController) Register(ctx *http.Context) error {
 	guard := gostack.Auth.Guard("session").(*auth.SessionGuard)
 	credentials := map[string]any{"email": email, "password": password}
 	if err := guard.Attempt(ctx.Writer, ctx.Request, credentials); err != nil {
-		csrfToken := ctx.Get("csrf_token")
+		csrfToken := getCSRFToken(ctx)
 		return ctx.Render("login", map[string]any{
 			"csrf_token": csrfToken,
 			"error":      "Registration successful, but login failed. Please sign in.",
@@ -894,6 +920,14 @@ func (c *AuthController) APILogin(ctx *http.Context) error {
 	fmt.Println("  1. Import the generated user and userprovider models in main.go")
 	fmt.Println("  2. Call gostack.InitAuth(\"session\", model.NewUserProvider(auth.NewBcryptHasher(10)))")
 	fmt.Println("  3. Run your migrations: go run cmd/gostack/main.go migrate")
+	fmt.Println("  4. Wire routes protected with session and CSRF middleware:")
+	fmt.Println("       authCtrl := controller.NewAuthController(gostack.DB, auth.NewBcryptHasher(10))")
+	fmt.Println("       web := router.Group(\"/\", sessionMiddleware, auth.CSRF(\"\"))")
+	fmt.Println("       web.Get(\"/login\", authCtrl.ShowLogin)")
+	fmt.Println("       web.Post(\"/login\", authCtrl.Login)")
+	fmt.Println("       web.Get(\"/register\", authCtrl.ShowRegister)")
+	fmt.Println("       web.Post(\"/register\", authCtrl.Register)")
+	fmt.Println("       web.Post(\"/logout\", authCtrl.Logout)")
 	return nil
 }
 

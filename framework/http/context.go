@@ -3,8 +3,10 @@
 package http
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 )
 
@@ -51,20 +53,26 @@ func (c *Context) Get(key string) any {
 
 // Render facilitates the server-side composition of HTML view templates.
 //
-// Architectural Note:
-// Because the Tempose engine is intentionally built as a "pure" compiler (relying strictly on io.Writer),
-// the HTTP Context acts as the protocol bridge here. It explicitly commits the HTTP 200 OK status header
-// into the response wire right before handing the stream over to the compiler pass.
+// In GoStack, rendering buffers the template output first before committing HTTP 200 OK headers.
+// This ensures that any template execution or reflection error stops the pipeline safely, enabling
+// downstream 500 error handlers to take over without corrupting the response with prematurely
+// committed headers or a half-written document.
 //
 // Parameters:
 //   - viewName: The logical identifier or path of the template file to execute (e.g., "home").
 //   - data: Any arbitrary structure, struct, or map to bind dynamically inside the template bindings.
 //
 // Returns:
-//   - An error if template reading, compilation, or streaming fails.
+//   - An error if template reading, compilation, or execution fails.
 func (c *Context) Render(viewName string, data any) error {
+	var buf bytes.Buffer
+	if err := c.Tempose.Render(&buf, viewName, data, c); err != nil {
+		return err
+	}
+	c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 	c.Writer.WriteHeader(http.StatusOK)
-	return c.Tempose.Render(c.Writer, viewName, data, c)
+	_, writeErr := io.Copy(c.Writer, &buf)
+	return writeErr
 }
 
 // JSON standardizes the API response delivery pipeline.

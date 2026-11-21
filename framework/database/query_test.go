@@ -1166,3 +1166,120 @@ func TestQueryBuilder_SEC48_NoRawPlaceholdersOutsideDatabasePackage(t *testing.T
 			len(violations), strings.Join(violations, "\n"))
 	}
 }
+
+type execRecordingMockDB struct {
+	driver   string
+	lastSQL  string
+	lastArgs []any
+}
+
+func (m *execRecordingMockDB) Connect() error                             { return nil }
+func (m *execRecordingMockDB) Query(sql string, args ...any) (any, error) { return nil, nil }
+func (m *execRecordingMockDB) Exec(sql string, args ...any) error {
+	m.lastSQL = sql
+	m.lastArgs = args
+	return nil
+}
+func (m *execRecordingMockDB) BeginTx() (contract.Tx, error) { return nil, nil }
+func (m *execRecordingMockDB) Driver() string               { return m.driver }
+func (m *execRecordingMockDB) Close() error                 { return nil }
+
+func TestUpdateModelPostgresPlaceholderAlignment(t *testing.T) {
+	db := &execRecordingMockDB{driver: "postgres"}
+	qb := New(db, "users").Where("id", "=", 42).Where("status", "=", "active")
+
+	data := map[string]any{
+		"email": "user@example.com",
+		"name":  "Alice",
+	}
+	err := qb.UpdateModel(nil, data)
+	if err != nil {
+		t.Fatalf("UpdateModel failed: %v", err)
+	}
+
+	// Because keys are sorted alphabetically: email ($1), name ($2).
+	// WHERE clause placeholders are shifted by len(SET bindings)=2: id ($3), status ($4).
+	expectedSQL := "UPDATE users SET email = $1, name = $2 WHERE id = $3 AND status = $4"
+	if db.lastSQL != expectedSQL {
+		t.Errorf("Expected SQL:\n%s\nGot:\n%s", expectedSQL, db.lastSQL)
+	}
+
+	// Verify bindings order: email, name, id, status
+	expectedArgs := []any{"user@example.com", "Alice", 42, "active"}
+	if len(db.lastArgs) != len(expectedArgs) {
+		t.Fatalf("Expected %d args, got %d", len(expectedArgs), len(db.lastArgs))
+	}
+	for i, arg := range expectedArgs {
+		if db.lastArgs[i] != arg {
+			t.Errorf("Arg %d: expected %v, got %v", i, arg, db.lastArgs[i])
+		}
+	}
+}
+
+func TestUpdatePostgresSingleAndMultiColumn(t *testing.T) {
+	db := &execRecordingMockDB{driver: "postgres"}
+
+	// 1-column UPDATE with WHERE
+	qb1 := New(db, "users").Where("id", "=", 10)
+	err := qb1.Update(map[string]any{"status": "verified"})
+	if err != nil {
+		t.Fatalf("1-column Update failed: %v", err)
+	}
+	expected1 := "UPDATE users SET status = $1 WHERE id = $2"
+	if db.lastSQL != expected1 {
+		t.Errorf("Expected SQL:\n%s\nGot:\n%s", expected1, db.lastSQL)
+	}
+	if len(db.lastArgs) != 2 || db.lastArgs[0] != "verified" || db.lastArgs[1] != 10 {
+		t.Errorf("Expected args [verified, 10], got %v", db.lastArgs)
+	}
+
+	// 2-column UPDATE with WHERE
+	qb2 := New(db, "users").Where("id", "=", 20)
+	err = qb2.Update(map[string]any{"name": "Bob", "email": "bob@example.com"})
+	if err != nil {
+		t.Fatalf("2-column Update failed: %v", err)
+	}
+	expected2 := "UPDATE users SET email = $1, name = $2 WHERE id = $3"
+	if db.lastSQL != expected2 {
+		t.Errorf("Expected SQL:\n%s\nGot:\n%s", expected2, db.lastSQL)
+	}
+	if len(db.lastArgs) != 3 || db.lastArgs[0] != "bob@example.com" || db.lastArgs[1] != "Bob" || db.lastArgs[2] != 20 {
+		t.Errorf("Expected args [bob@example.com, Bob, 20], got %v", db.lastArgs)
+	}
+}
+
+func TestQueryBuilderWhereGroupPostgres(t *testing.T) {
+	db := &mockDB{driver: "postgres"}
+	qb := New(db, "users").
+		Where("active", "=", true).
+		WhereGroup(func(q *QueryBuilder) {
+			q.Where("role", "=", "admin").OrWhere("role", "=", "manager")
+		})
+
+	got := qb.ToSQL()
+	want := "SELECT * FROM users WHERE active = $1 AND (role = $2 OR role = $3)"
+	if got != want {
+		t.Errorf("Expected SQL: %s, got: %s", want, got)
+	}
+	if len(qb.bindings) != 3 {
+		t.Fatalf("Expected 3 bindings, got: %d", len(qb.bindings))
+	}
+}
+
+func TestQueryBuilderOrWhereGroupPostgres(t *testing.T) {
+	db := &mockDB{driver: "postgres"}
+	qb := New(db, "users").
+		Where("id", "=", 1).
+		OrWhereGroup(func(q *QueryBuilder) {
+			q.Where("role", "=", "editor").Where("status", "=", "pending")
+		})
+
+	got := qb.ToSQL()
+	want := "SELECT * FROM users WHERE id = $1 OR (role = $2 AND status = $3)"
+	if got != want {
+		t.Errorf("Expected SQL: %s, got: %s", want, got)
+	}
+	if len(qb.bindings) != 3 {
+		t.Fatalf("Expected 3 bindings, got: %d", len(qb.bindings))
+	}
+}

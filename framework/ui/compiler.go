@@ -384,7 +384,16 @@ func (c *AssetCompiler) compileHTML(componentName, rawHTML string) (string, bool
 	}
 	rawHTML = preprocessed
 
-	wrappedHTML := fmt.Sprintf("<div gs-component=\"%s\">\n%s\n</div>", componentName, strings.TrimSpace(rawHTML))
+	trimmedHTML := strings.TrimSpace(rawHTML)
+	lower := strings.ToLower(trimmedHTML)
+	isFullDoc := strings.HasPrefix(lower, "<!doctype") || strings.HasPrefix(lower, "<html")
+
+	var wrappedHTML string
+	if isFullDoc {
+		wrappedHTML = trimmedHTML
+	} else {
+		wrappedHTML = fmt.Sprintf("<div gs-component=\"%s\">\n%s\n</div>", componentName, trimmedHTML)
+	}
 
 	var sb strings.Builder
 	needsFmt := false
@@ -398,6 +407,11 @@ func (c *AssetCompiler) compileHTML(componentName, rawHTML string) (string, bool
 		return sb.String(), needsFmt, nil
 	}
 
+	var dirStack []struct {
+		name string
+		line int
+	}
+
 	lastIdx := 0
 	for _, match := range matches {
 		start, end := match[0], match[1]
@@ -407,8 +421,42 @@ func (c *AssetCompiler) compileHTML(componentName, rawHTML string) (string, bool
 				return "", false, fmt.Errorf("%s:%d: %w", componentName, line, errExp.err)
 			}
 		}
-		if err := c.compileDirective(wrappedHTML[start:end], &sb, &needsFmt); err != nil {
-			line := calculateLine(wrappedHTML, wrappedHTML[start:end])
+
+		dirSnippet := wrappedHTML[start:end]
+		line := calculateLine(wrappedHTML, dirSnippet)
+
+		switch {
+		case strings.HasPrefix(dirSnippet, "@if("):
+			dirStack = append(dirStack, struct {
+				name string
+				line int
+			}{name: "if", line: line})
+		case strings.HasPrefix(dirSnippet, "@elseif("):
+			if len(dirStack) == 0 || dirStack[len(dirStack)-1].name != "if" {
+				return "", false, fmt.Errorf("%s:%d: @elseif without matching @if", componentName, line)
+			}
+		case dirSnippet == "@else":
+			if len(dirStack) == 0 || dirStack[len(dirStack)-1].name != "if" {
+				return "", false, fmt.Errorf("%s:%d: @else without matching @if", componentName, line)
+			}
+		case dirSnippet == "@endif":
+			if len(dirStack) == 0 || dirStack[len(dirStack)-1].name != "if" {
+				return "", false, fmt.Errorf("%s:%d: @endif without matching @if", componentName, line)
+			}
+			dirStack = dirStack[:len(dirStack)-1]
+		case strings.HasPrefix(dirSnippet, "@foreach("):
+			dirStack = append(dirStack, struct {
+				name string
+				line int
+			}{name: "foreach", line: line})
+		case dirSnippet == "@endforeach":
+			if len(dirStack) == 0 || dirStack[len(dirStack)-1].name != "foreach" {
+				return "", false, fmt.Errorf("%s:%d: @endforeach without matching @foreach", componentName, line)
+			}
+			dirStack = dirStack[:len(dirStack)-1]
+		}
+
+		if err := c.compileDirective(dirSnippet, &sb, &needsFmt); err != nil {
 			return "", false, fmt.Errorf("%s:%d: %w", componentName, line, err)
 		}
 		lastIdx = end
@@ -418,6 +466,11 @@ func (c *AssetCompiler) compileHTML(componentName, rawHTML string) (string, bool
 			line := calculateLine(wrappedHTML, errExp.expr)
 			return "", false, fmt.Errorf("%s:%d: %w", componentName, line, errExp.err)
 		}
+	}
+
+	if len(dirStack) > 0 {
+		top := dirStack[len(dirStack)-1]
+		return "", false, fmt.Errorf("%s:%d: unclosed @%s directive (expected @end%s)", componentName, top.line, top.name, top.name)
 	}
 
 	return sb.String(), needsFmt, nil

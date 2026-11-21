@@ -560,3 +560,161 @@ func TestCompiler_BundledStaticAssetsAndRegistration(t *testing.T) {
 		t.Errorf("master asset block must NOT contain inline style tag; got:\n%s", assetBlock)
 	}
 }
+
+func TestCompiler_NoDivWrapperOnFullDocument(t *testing.T) {
+	c := NewAssetCompiler("", "")
+
+	// 1. Full document with <!DOCTYPE html> must NOT be wrapped in <div gs-component="...">
+	doc := `<!DOCTYPE html>
+<html lang="en">
+<head><title>Test</title></head>
+<body><h1>Hello</h1></body>
+</html>`
+	compiledDoc, _, err := c.compileHTML("home", doc)
+	if err != nil {
+		t.Fatalf("compileHTML failed: %v", err)
+	}
+	if strings.Contains(compiledDoc, `[gs-component="home"]`) || strings.Contains(compiledDoc, `<div gs-component="home">`) {
+		t.Errorf("Full document must not be wrapped in div gs-component; got:\n%s", compiledDoc)
+	}
+
+	// 2. Component fragment must still be wrapped
+	fragment := `<div class="card"><h2>Hello</h2></div>`
+	compiledFrag, _, err := c.compileHTML("card", fragment)
+	if err != nil {
+		t.Fatalf("compileHTML failed: %v", err)
+	}
+	if !strings.Contains(compiledFrag, `<div gs-component="card">`) {
+		t.Errorf("Component fragment should be wrapped in div gs-component; got:\n%s", compiledFrag)
+	}
+}
+
+func TestCompiler_DirectiveNestingValidation(t *testing.T) {
+	c := NewAssetCompiler("", "")
+
+	// Unclosed @if
+	_, _, err := c.compileHTML("test-unclosed-if", `@if(.flag)
+<p>Open</p>`)
+	if err == nil {
+		t.Fatal("Expected error for unclosed @if, got nil")
+	}
+	if !strings.Contains(err.Error(), "unclosed @if") {
+		t.Errorf("Expected 'unclosed @if' error message, got: %v", err)
+	}
+
+	// Unmatched @endif
+	_, _, err = c.compileHTML("test-unmatched-endif", `<p>Hello</p>
+@endif`)
+	if err == nil {
+		t.Fatal("Expected error for unmatched @endif, got nil")
+	}
+	if !strings.Contains(err.Error(), "@endif without matching @if") {
+		t.Errorf("Expected '@endif without matching @if' error message, got: %v", err)
+	}
+
+	// Unmatched @else
+	_, _, err = c.compileHTML("test-unmatched-else", `@else
+<p>Hello</p>`)
+	if err == nil {
+		t.Fatal("Expected error for unmatched @else, got nil")
+	}
+	if !strings.Contains(err.Error(), "@else without matching @if") {
+		t.Errorf("Expected '@else without matching @if' error message, got: %v", err)
+	}
+
+	// Unmatched @endforeach
+	_, _, err = c.compileHTML("test-unmatched-endforeach", `<p>Loop</p>
+@endforeach`)
+	if err == nil {
+		t.Fatal("Expected error for unmatched @endforeach, got nil")
+	}
+	if !strings.Contains(err.Error(), "@endforeach without matching @foreach") {
+		t.Errorf("Expected '@endforeach without matching @foreach' error message, got: %v", err)
+	}
+
+	// Unclosed @foreach
+	_, _, err = c.compileHTML("test-unclosed-foreach", `@foreach(.items as item)
+<p>Loop</p>`)
+	if err == nil {
+		t.Fatal("Expected error for unclosed @foreach, got nil")
+	}
+	if !strings.Contains(err.Error(), "unclosed @foreach") {
+		t.Errorf("Expected 'unclosed @foreach' error message, got: %v", err)
+	}
+}
+
+func TestRegistry_EvaluateSliceMaps(t *testing.T) {
+	data := map[string]any{
+		"users": map[string]string{
+			"c": "Charlie",
+			"a": "Alice",
+			"b": "Bob",
+		},
+	}
+	items := EvaluateSlice(data, "users")
+	if len(items) != 3 {
+		t.Fatalf("Expected 3 items from map, got %d", len(items))
+	}
+	// Because keys are sorted: "a"->"Alice", "b"->"Bob", "c"->"Charlie"
+	if items[0] != "Alice" || items[1] != "Bob" || items[2] != "Charlie" {
+		t.Errorf("Expected sorted slice [Alice Bob Charlie], got: %v", items)
+	}
+}
+
+func TestRegistry_EvaluateBoolCaseInsensitive(t *testing.T) {
+	cases := []struct {
+		input any
+		want  bool
+	}{
+		{"false", false},
+		{"False", false},
+		{"FALSE", false},
+		{"0", false},
+		{"no", false},
+		{"No", false},
+		{"off", false},
+		{"", false},
+		{"true", true},
+		{"True", true},
+		{"yes", true},
+		{"1", true},
+	}
+
+	for _, tc := range cases {
+		data := map[string]any{"v": tc.input}
+		got := EvaluateBool(data, "v")
+		if got != tc.want {
+			t.Errorf("EvaluateBool(%q): expected %v, got %v", tc.input, tc.want, got)
+		}
+	}
+}
+
+type unexportedFieldsHolder struct {
+	Exported   string
+	unexported string
+}
+
+func TestRegistry_EvaluateUnexportedStructFieldSafe(t *testing.T) {
+	obj := unexportedFieldsHolder{
+		Exported:   "visible",
+		unexported: "secret",
+	}
+
+	// Exported field should resolve
+	exp := Evaluate(obj, "Exported")
+	if exp != "visible" {
+		t.Errorf("Expected 'visible', got %v", exp)
+	}
+
+	// Unexported field should safely return nil, NOT panic!
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Evaluate panicked on unexported struct field: %v", r)
+		}
+	}()
+
+	unexp := Evaluate(obj, "unexported")
+	if unexp != "" && unexp != nil {
+		t.Errorf("Expected empty value for unexported field, got %v", unexp)
+	}
+}
