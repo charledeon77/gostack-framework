@@ -31,9 +31,139 @@ This ledger details the step-by-step history, architectural justifications, and 
 | **Validator** | Request Validation Engine | `framework/http` |
 | **GowSocket** | Real-Time WebSocket Hub | `framework/http` |
 | **Transios** | Localization & Translation Engine | `framework/foundation/lang` |
-| **GoMon** | MongoDB Integration (NoSQL Document Store) | `framework/database` |
-| **Nexus** | Neo4j Graph Database Integration | `framework/database` |
-| **Aether** | Cassandra Wide-Column Database Integration | `framework/database` |
+| **GoMon** | MongoDB Integration (NoSQL Document Store) | `framework/database` (Moved to `gostack-extensions` in v1.0.12) |
+| **Nexus** | Neo4j Graph Database Integration | `framework/database` (Moved to `gostack-extensions` in v1.0.12) |
+| **Aether** | Cassandra Wide-Column Database Integration | `framework/database` (Moved to `gostack-extensions` in v1.0.12) |
+
+## [v1.0.20] - Comprehensive Framework Hardening & Core Defect Elimination
+*Released on 21 November, 2026*
+
+### Database Query Builder (Crafter Subsystem)
+*   **Postgres Parameter Dynamic Shifting**: Resolved placeholder collisions when chaining `Where()` with `Update()`/`UpdateModel()`. Implemented `shiftPgPlaceholders()` using regex replacement to dynamically offset WHERE `$N` tokens by the number of SET parameters (`len(bindings)`), guaranteeing index alignment and sequential binding order.
+*   **Deterministic SET Generation**: Enforced alphabetical sorting of map column keys prior to query emission, eliminating non-deterministic SQL statement strings across calls.
+*   **Precedence Grouping (`WhereGroup` / `OrWhereGroup`)**: Added closure-based nested grouping for `AND (...)` and `OR (...)` clauses with recursive driver-aware Postgres parameter offset shifting.
+
+### UI Compiler & Tempose Engine (Tempose Subsystem)
+*   **Quirks Mode Elimination**: Full document templates beginning with `<!DOCTYPE` or `<html` (case-insensitive) are no longer wrapped in `<div gs-component="...">`. `<!DOCTYPE html>` is emitted cleanly at byte index 0, guaranteeing Standards Mode across all browsers.
+*   **Directive Nesting Validation Stack**: Added compile-time stack tracking open `@if` and `@foreach` directives. Emits descriptive compile-time errors with template name and line number on unmatched closing directives (`@endif`, `@endforeach`) or orphaned `@else`/`@elseif` statements.
+*   **Deterministic Map Support in `@foreach`**: Upgraded `EvaluateSlice()` to accept `reflect.Map`, deterministically sorting keys alphabetically before returning slice values.
+*   **Case-Insensitive String Truthiness**: `EvaluateBool()` normalizes input strings with `strings.ToLower(strings.TrimSpace(v))` and treats `"false"`, `"0"`, `"off"`, and `"no"` as falsy.
+*   **Safe Struct Reflection**: Guarded struct field evaluation with `f.IsValid() && f.CanInterface()`, safely returning `nil` (rendered as `""`) for private/unexported fields rather than panicking.
+
+### HTTP Runtime & Controller Scaffolding (Navigator Subsystem & Gost CLI)
+*   **Buffered HTTP View Rendering**: `Context.Render()` now executes the view pipeline into an in-memory `bytes.Buffer` before committing HTTP status headers. View execution failures abort cleanly to 500 error handlers without emitting broken 200 OK headers or half-written documents.
+*   **CLI Auth Scaffolding CSRF Resilience**: Updated `make:auth` scaffolding with `getCSRFToken` fallback resolving tokens from both request context and active session, and documented recommended route wiring with `auth.CSRF("")`.
+
+## [v1.0.19] - Robust CSS Scoping, Clean Comment Stripping & Keyframe Preservation
+*Released on 16 November, 2026*
+
+### UI Compiler & Asset Pipeline (Tempose Subsystem)
+*   **Upfront Comment Stripping**: All single-line, multi-line, and inline CSS comments (`/* ... */`) are cleanly stripped from compiled component bundles upfront, preventing orphaned comment tokens from invalidating adjacent CSS selectors.
+*   **Keyframe Animation Preservation**: Depth tracking distinguishes `@keyframes` blocks from standard rules. Keyframe steps (`from`, `to`, `0%`, `50%`, `100%`) remain unscoped inside animation blocks, ensuring CSS animations run smoothly across all browsers.
+*   **Multi-Target Comma Selector Scoping**: Selector lists separated by commas (e.g. `h1, h2, .title`) have each selector prefixed individually (`[gs-component="name"] h1, [gs-component="name"] h2, ...`), preventing unscoped styles from leaking globally.
+
+## [v1.0.18] - Core CSS Font Purge & Glide Runtime Optimization
+*Released on 15 November, 2026*
+
+### UI Compiler & Reactive Runtime (Tempose & Glide Engine)
+*   **Embedded Base64 Font Purge**: Purged 470 KB dead base64 font payload from `framework/ui/core_css.go`, drastically reducing memory overhead and binary size.
+*   **Static Core Styles**: Moved `[gs-cloak]` display rules to static CSS bundles served through HTTP asset routes.
+*   **Eliminated Runtime Style Elements**: Removed `document.createElement('style')` DOM mutations from Glide client runtime, enforcing full compliance with strict Content Security Policies (`style-src 'self'`).
+
+## [v1.0.17] - Production Static Asset Bundling, SHA-256 Fingerprinting & CSP Safe Links
+*Released on 15 November, 2026*
+
+### UI Compiler & Asset Delivery (Tempose & Navigator Subsystems)
+*   **External Asset Bundler**: Component CSS and JS files are compiled directly into public static asset files (`public/assets/css/gostack.css` and `public/assets/js/gostack.js`).
+*   **Cache Invalidation Fingerprinting**: Asset bundles are fingerprinted via SHA-256 content hashes (`?v=<hash>`), enabling aggressive HTTP browser caching while guaranteeing immediate cache busting on updates.
+*   **HTTP Static Asset Route**: Added `router.Static(prefix, dir)` to Navigator HTTP router for high-throughput static asset streaming with MIME detection and path-traversal guards.
+*   **CSP-Compliant Master Asset Block**: `WriteMasterAssetBlock` emits standard external `<link rel="stylesheet">` and `<script defer>` tags, eliminating the need for `unsafe-inline` CSP relaxations.
+
+## [v1.0.16] - Template Translations, Safe Includes & Clean Code Generation
+*Released on 15 November, 2026*
+
+### UI Compiler (Tempose Subsystem)
+*   **First-Class Template Translation Helpers**: Added native compiler support for `{{ trans("key") }}`, `{{ transRaw("key") }}`, and `{{ transChoice("key", count) }}` expressions.
+*   **HTML Comment Pre-Processing**: Strips HTML comments (`<!-- ... -->`) before directive scanning to prevent commented-out `@include` statements from triggering false circular dependency errors.
+*   **Automatic `gofmt` Formatting**: Generated component source files (`gostack_components_gen.go`) are formatted via `go/format.Source` prior to writing.
+*   **Idiomatic Hot Reload Cancellation**: Standardized `HotReloadWatcher.Start` to accept a standard `context.Context`.
+
+## [v1.0.15] - Cryptography, Account Recovery, Mass-Assignment Protection & Live Reload
+*Released on 14 November, 2026*
+
+### Authentication & Account Recovery (Guard Subsystem)
+*   **Password Reset Broker**: Added built-in token generator and validator storing hashed tokens at rest with configurable expiration TTL, single-use consumption, and rate-limited throttling.
+*   **Signed Email Verification**: HMAC-SHA256 signed URL generation and `EmailVerificationMiddleware` route guard.
+*   **Persistent Remember-Me Cookies**: Two-factor series/token cookie authentication with automatic token rotation on every login.
+*   **Authorization Policy Gates**: Added `Gate.Define`, `Allows`, `Denies`, and `Authorize` in `framework/auth/gate`.
+
+### Cryptographic Security (Crypto Subsystem)
+*   **AES-256-GCM Envelope Encryption**: Authenticated symmetric encryption supporting raw 32-byte and base64 keys with random 12-byte nonces and tamper-evident authentication tags.
+*   **Signed URLs**: Added `framework/http/urlsign` for tamper-proof temporary and permanent URL signing.
+
+### Database ORM & Active Record (Crafter & Conflex Subsystems)
+*   **Mass-Assignment Protection**: Added `FillableModel` and `GuardedModel` interfaces. Models default to guarded-by-default to prevent unauthorized column updates.
+*   **Accidental Table Mutation Safeguard**: `QueryBuilder.Update()` and `Delete()` reject executions lacking a `WHERE` clause unless explicitly overridden with `.AllowMassMutation()`.
+*   **Primary Key Retrieval (`InsertGetId`)**: Cross-database primary key retrieval across PostgreSQL (`RETURNING id`), MySQL, and SQLite (`LastInsertId`).
+*   **Soft Deletion Extensions**: Added `Restore[T]()`, `ForceDelete[T]()`, `WithTrashed[T]()`, and `OnlyTrashed[T]()`.
+
+### Reactive UI & Dev Experience (Glide & Tempose Subsystems)
+*   **Progressive Form Enhancement (`gs-enhance`)**: No-reload form submissions via background AJAX with reactive loading indicators (`gs-submitting`) and fragment swapping (`gs-enhance-target`).
+*   **Live SSE Hot-Reload Watcher**: Development watcher monitoring `templates/components`, automatically recompiling on file save and streaming Server-Sent Events to connected browsers via `/__gostack_reload`.
+
+### HTTP Runtime & Observability (Navigator Subsystem)
+*   **CORS Middleware**: Flexible origin allowlists, credentials verification, preflight `OPTIONS` handling, and `Vary: Origin` headers (`framework/http/cors`).
+*   **HTTP Method Spoofing**: Support for `_method=PUT/PATCH/DELETE` via query parameters, form payloads, and `X-HTTP-Method-Override`.
+*   **Kubernetes Health Probes**: Out-of-the-box `/healthz` (liveness) and `/ready` (readiness checking DB and cache connectivity).
+*   **Request Correlation**: `X-Request-ID` middleware assigning unique tracing identifiers to every request context and response header.
+*   **Fault-Tolerant Multi-Channel Notifications**: Independent channel execution outside lock contention with error aggregation (`errors.Join`) and batch user fan-out (`SendMany`).
+
+## [v1.0.14] - Enterprise Security Hardening (All 48 SEC Items)
+*Released on 14 November, 2026*
+
+### Zero-Trust Authentication & Sessions (Guard Subsystem)
+*   **Privilege-Aware Admin Guard**: Strict role and permission checks across administrative control panels.
+*   **Timing-Attack Resistance**: Token and session verification upgraded to constant-time comparisons (`crypto/subtle.ConstantTimeCompare` and `hmac.Equal`).
+*   **Automatic Session Rotation**: Session IDs regenerate upon login and privilege escalation, neutralizing session-fixation attacks.
+*   **Tamper-Evident Session Signatures**: Database-backed sessions feature HMAC-SHA256 signature verification.
+*   **Strict Cookie Defaults**: Cookies default to `HttpOnly`, `Secure`, and `SameSite=Strict/Lax`. Minimum bcrypt cost raised to 12.
+
+### Hardened HTTP Runtime (Navigator Subsystem)
+*   **Anti-Slowloris Timeouts**: Server defaults configured with `ReadTimeout: 10s`, `WriteTimeout: 30s`, `IdleTimeout: 120s`, and `MaxHeaderBytes: 1MB`.
+*   **Default Security Headers**: Integrated middleware enforcing CSP, HSTS, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, and `Referrer-Policy`.
+*   **Sliding-Window Rate Limiting**: High-performance, concurrent rate limiting per IP with per-route configurable throttling policies.
+*   **Zero Open-Redirects**: Built-in redirection helpers reject protocol-relative and external target URLs.
+*   **Safe Multipart Uploads**: Uploaded files undergo MIME type sniffing, strict extension validation, and bounded byte limits.
+*   **Origin-Guarded WebSockets**: Handshake validates `Origin` against domain allowlists prior to upgrade.
+
+### Database Parameterization & Multi-Dialect Parity (Crafter Subsystem)
+*   **Strict SQL Identifier Whitelisting**: Sanitizes table and column names against strict allowlists, preventing SQL injection through dynamic identifiers.
+*   **Multi-Dialect Parameterization**: Native SQL parameterization support for PostgreSQL, CockroachDB, MySQL, and SQLite.
+*   **Safe Eager Loading at Scale**: Relationship `WhereIn` queries automatically chunked in batches of 500 to prevent parameter limit overflows.
+*   **Safe Database Sessions**: Native driver-aware upsert logic (`ON CONFLICT` for PostgreSQL/SQLite and `ON DUPLICATE KEY UPDATE` for MySQL) with automated background garbage collection.
+
+### Caching Subsystem (Mory Subsystem)
+*   **Typed Error Surfacing**: `CacheStore` surfaces explicit, typed errors (`contract.ErrCacheMiss` vs. driver outages) instead of masking network or database failures as empty misses.
+*   **Cache Stampede Prevention**: `cache.Remember[T]()` surfaces infrastructure failures immediately rather than triggering thundering-herd database queries.
+*   **Safe Redis Namespacing**: Cache keys default to isolated application namespaces (`gostack:cache:`) with scoped `SCAN` + `DEL` key evictions.
+*   **Context Timeouts**: Distributed cache operations enforce strict 5-second context deadlines.
+
+## [v1.0.13] - CLI Self-Updating Engine
+*Released on 13 November, 2026*
+
+### CLI Command Runner (Gost Subsystem)
+*   **Automatic Self-Updating**: Added `gost upgrade` command enabling developers to pull and install the latest framework CLI binary seamlessly.
+
+## [v1.0.12] - Core Packaging Modernization, First-Party Extension Isolation & Production Hardening
+*Released on 13 November, 2026*
+
+### Core Framework Architecture & Dependency Decoupling
+*   **Extension Decoupling**: Decoupled heavy NoSQL, Graph, and OAuth drivers (MongoDB, Neo4j, Cassandra, SocialHub, RBAC) into the dedicated `gostack-extensions` repository, preserving database paradigm neutrality in core GoStack.
+*   **Dependency Pruning**: Cleaned core dependencies from `go.mod` to achieve a minimal binary footprint and zero transitive CVE noise.
+*   **Timing-Safe Cryptographic Comparisons**: Hardened CSRF verification using `crypto/subtle.ConstantTimeCompare`.
+*   **Production Security Headers**: Integrated default production `SecurityHeaders` middleware.
+*   **Standard Application Skeleton**: Added modern project starter template in `templates/app-skeleton`.
+*   **Architectural Metaphor Ledger**: Formalized subsystem naming metaphors and architectural contract documentation headers across all 29 subsystems.
 
 ## [v1.0.11] - Robust Embedded Struct Hydration Support
 *Released on 24 July, 2026*
