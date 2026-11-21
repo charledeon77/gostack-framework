@@ -1,7 +1,10 @@
 package admin
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"html"
 	"log"
@@ -11,6 +14,42 @@ import (
 
 	"github.com/charledeon77/gostack-framework/framework/contract"
 )
+
+const adminCSRFCookieName = "admin_csrf"
+
+func getOrSetAdminCSRF(w http.ResponseWriter, r *http.Request) string {
+	cookie, err := r.Cookie(adminCSRFCookieName)
+	if err == nil && cookie.Value != "" {
+		return cookie.Value
+	}
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	token := hex.EncodeToString(b)
+	http.SetCookie(w, &http.Cookie{
+		Name:     adminCSRFCookieName,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+	})
+	return token
+}
+
+func verifyAdminCSRF(r *http.Request) bool {
+	cookie, err := r.Cookie(adminCSRFCookieName)
+	if err != nil || cookie.Value == "" {
+		return false
+	}
+	submitted := r.FormValue("_csrf")
+	if submitted == "" {
+		submitted = r.Header.Get("X-CSRF-Token")
+	}
+	if submitted == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(submitted)) == 1
+}
 
 func isPostgresDB(db *sql.DB) bool {
 	if db != nil && db.Driver() != nil {
@@ -61,21 +100,29 @@ func Mount(mux *http.ServeMux, db *sql.DB, prefix string) error {
 		path := strings.TrimPrefix(r.URL.Path, prefix)
 		parts := strings.Split(strings.Trim(path, "/"), "/")
 
+		csrfToken := getOrSetAdminCSRF(w, r)
+		if r.Method == http.MethodPost {
+			if !verifyAdminCSRF(r) {
+				http.Error(w, "403 Forbidden: Invalid or missing CSRF token", http.StatusForbidden)
+				return
+			}
+		}
+
 		switch {
 		case path == "" || path == "/":
 			handleDashboard(w, r)
 		case path == "/sequence" || path == "sequence" || (len(parts) == 1 && parts[0] == "sequence"):
-			handleSequenceDashboard(w, r)
+			handleSequenceDashboard(w, r, csrfToken)
 		case len(parts) == 2 && parts[0] == "sequence" && parts[1] == "retry":
 			handleSequenceRetry(w, r)
 		case len(parts) == 2 && parts[0] == "sequence" && parts[1] == "delete":
 			handleSequenceDelete(w, r)
 		case len(parts) == 1 && parts[0] != "":
-			handleList(w, r, db, parts[0])
+			handleList(w, r, db, parts[0], csrfToken)
 		case len(parts) == 2 && parts[1] == "create":
-			handleCreate(w, r, db, parts[0])
+			handleCreate(w, r, db, parts[0], csrfToken)
 		case len(parts) == 2:
-			handleEdit(w, r, db, parts[0], parts[1])
+			handleEdit(w, r, db, parts[0], parts[1], csrfToken)
 		case len(parts) == 3 && parts[2] == "delete":
 			handleDestroy(w, r, db, parts[0], parts[1])
 		default:
@@ -97,7 +144,7 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, dashboardTpl, rows)
 }
 
-func handleList(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName string) {
+func handleList(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, csrfToken string) {
 	entry, ok := Find(modelName)
 	if !ok {
 		http.NotFound(w, r)
@@ -115,6 +162,7 @@ func handleList(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName st
 
 	cols, _ := rows.Columns()
 	var tableRows string
+	escCSRF := html.EscapeString(csrfToken)
 	for rows.Next() {
 		vals := make([]any, len(cols))
 		ptrs := make([]any, len(cols))
@@ -135,7 +183,7 @@ func handleList(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName st
 		}
 		escModel := html.EscapeString(modelName)
 		escID := html.EscapeString(fmt.Sprintf("%v", id))
-		tableRows += fmt.Sprintf(`<td><a href="/admin/%s/%s">Edit</a> | <form method="POST" action="/admin/%s/%s/delete" style="display:inline"><button type="submit" onclick="return confirm('Delete?')" style="background:none;border:none;color:#ef4444;cursor:pointer;padding:0;font:inherit;text-decoration:underline">Delete</button></form></td></tr>`, escModel, escID, escModel, escID)
+		tableRows += fmt.Sprintf(`<td><a href="/admin/%s/%s">Edit</a> | <form method="POST" action="/admin/%s/%s/delete" style="display:inline"><input type="hidden" name="_csrf" value="%s"><button type="submit" onclick="return confirm('Delete?')" style="background:none;border:none;color:#ef4444;cursor:pointer;padding:0;font:inherit;text-decoration:underline">Delete</button></form></td></tr>`, escModel, escID, escModel, escID, escCSRF)
 	}
 
 	var headers string
@@ -148,7 +196,7 @@ func handleList(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName st
 	fmt.Fprintf(w, listTpl, html.EscapeString(entry.Label), html.EscapeString(entry.Label), html.EscapeString(modelName), headers, tableRows)
 }
 
-func handleCreate(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName string) {
+func handleCreate(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, csrfToken string) {
 	entry, ok := Find(modelName)
 	if !ok {
 		http.NotFound(w, r)
@@ -182,7 +230,7 @@ func handleCreate(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName 
 		return
 	}
 
-	var fields string
+	fields := fmt.Sprintf(`<input type="hidden" name="_csrf" value="%s">`, html.EscapeString(csrfToken))
 	for _, col := range entry.Columns {
 		if col.Name == "id" {
 			continue
@@ -193,7 +241,7 @@ func handleCreate(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName 
 	fmt.Fprintf(w, editTpl, "Create "+html.EscapeString(entry.Label), "Create "+html.EscapeString(entry.Label), "/admin/"+html.EscapeString(modelName)+"/create", fields)
 }
 
-func handleEdit(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, id string) {
+func handleEdit(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, id, csrfToken string) {
 	entry, ok := Find(modelName)
 	if !ok {
 		http.NotFound(w, r)
@@ -244,7 +292,7 @@ func handleEdit(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, i
 		colMap[c] = vals[i]
 	}
 
-	var fields string
+	fields := fmt.Sprintf(`<input type="hidden" name="_csrf" value="%s">`, html.EscapeString(csrfToken))
 	for _, col := range entry.Columns {
 		if col.Name == "id" {
 			continue
@@ -280,7 +328,7 @@ func handleDestroy(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName
 	http.Redirect(w, r, "/admin/"+modelName, http.StatusFound)
 }
 
-func handleSequenceDashboard(w http.ResponseWriter, r *http.Request) {
+func handleSequenceDashboard(w http.ResponseWriter, r *http.Request, csrfToken string) {
 	w.Header().Set("Content-Type", "text/html")
 
 	if Queue == nil {
@@ -309,6 +357,7 @@ func handleSequenceDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var rows string
+	escCSRF := html.EscapeString(csrfToken)
 	if len(failedJobs) == 0 {
 		rows = `<tr><td colspan="5" class="empty-state">No failed jobs found in the dead-letter queue. Everything is running smoothly!</td></tr>`
 	} else {
@@ -322,9 +371,11 @@ func handleSequenceDashboard(w http.ResponseWriter, r *http.Request) {
 				<td>
 					<div class="action-buttons">
 						<form method="POST" action="/admin/sequence/retry?id=%s" style="display:inline">
+							<input type="hidden" name="_csrf" value="%s">
 							<button type="submit" class="btn-action btn-retry">Retry</button>
 						</form>
 						<form method="POST" action="/admin/sequence/delete?id=%s" style="display:inline">
+							<input type="hidden" name="_csrf" value="%s">
 							<button type="submit" class="btn-action btn-delete" onclick="return confirm('Are you sure you want to permanently delete this job?')">Delete</button>
 						</form>
 					</div>
@@ -335,7 +386,9 @@ func handleSequenceDashboard(w http.ResponseWriter, r *http.Request) {
 				job.Attempts,
 				html.EscapeString(job.Error),
 				html.EscapeString(job.ID),
+				escCSRF,
 				html.EscapeString(job.ID),
+				escCSRF,
 			)
 		}
 	}

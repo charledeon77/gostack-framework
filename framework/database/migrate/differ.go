@@ -74,7 +74,7 @@ func Diff(db *sql.DB, driver string, models ...any) ([]DiffResult, error) {
 			}
 
 			if _, exists := existingCols[dbTag]; !exists {
-				sqlType := goTypeToSQL(field.Type.Kind())
+				sqlType := goTypeToSQL(field.Type, driver)
 				stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s;", tableName, dbTag, sqlType)
 				stmts = append(stmts, stmt)
 			}
@@ -91,16 +91,25 @@ func Diff(db *sql.DB, driver string, models ...any) ([]DiffResult, error) {
 	return results, nil
 }
 
-// ApplyDiff executes the generated ALTER TABLE statements against the database.
+// ApplyDiff executes the generated ALTER TABLE statements transactionally.
 func ApplyDiff(db *sql.DB, results []DiffResult) error {
+	if len(results) == 0 {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("differ: failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
 	for _, result := range results {
 		for _, stmt := range result.Statements {
-			if _, err := db.Exec(stmt); err != nil {
+			if _, err := tx.Exec(stmt); err != nil {
 				return fmt.Errorf("differ: failed to apply migration '%s': %w", stmt, err)
 			}
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // fetchColumns queries the database schema for the column names of a table,
@@ -116,7 +125,7 @@ func fetchColumns(db *sql.DB, driver string, table string) (map[string]struct{},
 		rows, err = db.Query("SELECT name FROM pragma_table_info(?)", table)
 	case "postgres", "cockroach", "cockroachdb":
 		rows, err = db.Query(
-			`SELECT column_name FROM information_schema.columns WHERE table_name = $1`, table,
+			`SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND table_schema = current_schema()`, table,
 		)
 	default:
 		// MySQL and other INFORMATION_SCHEMA-compatible databases.
@@ -140,17 +149,64 @@ func fetchColumns(db *sql.DB, driver string, table string) (map[string]struct{},
 	return cols, rows.Err()
 }
 
-// goTypeToSQL maps a Go reflect.Kind to a sensible default SQL column type.
-func goTypeToSQL(k reflect.Kind) string {
-	switch k {
+// goTypeToSQL maps a Go reflect.Type and database driver to a sensible SQL column type.
+func goTypeToSQL(t reflect.Type, driver string) string {
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	drv := strings.ToLower(driver)
+	isPg := drv == "postgres" || drv == "cockroach" || drv == "cockroachdb"
+	isSQLite := drv == "sqlite" || drv == "sqlite3"
+
+	// Check time.Time (struct or type name)
+	if t.PkgPath() == "time" && t.Name() == "Time" {
+		if isPg {
+			return "TIMESTAMPTZ"
+		}
+		return "DATETIME"
+	}
+
+	// Check []byte (binary blob)
+	if t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Uint8 {
+		if isPg {
+			return "BYTEA"
+		}
+		return "BLOB"
+	}
+
+	switch t.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if isSQLite {
+			return "INTEGER"
+		}
 		return "BIGINT"
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if isPg {
+			return "BIGINT"
+		}
+		if isSQLite {
+			return "INTEGER"
+		}
 		return "BIGINT UNSIGNED"
 	case reflect.Float32, reflect.Float64:
+		if isPg {
+			return "DOUBLE PRECISION"
+		}
+		if isSQLite {
+			return "REAL"
+		}
 		return "DOUBLE"
 	case reflect.Bool:
+		if isPg {
+			return "BOOLEAN"
+		}
+		if isSQLite {
+			return "INTEGER"
+		}
 		return "TINYINT(1)"
+	case reflect.String:
+		return "VARCHAR(255)"
 	default:
 		return "VARCHAR(255)"
 	}

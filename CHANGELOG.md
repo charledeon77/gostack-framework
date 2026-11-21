@@ -35,6 +35,33 @@ This ledger details the step-by-step history, architectural justifications, and 
 | **Nexus** | Neo4j Graph Database Integration | `framework/database` (Moved to `gostack-extensions` in v1.0.12) |
 | **Aether** | Cassandra Wide-Column Database Integration | `framework/database` (Moved to `gostack-extensions` in v1.0.12) |
 
+## [v1.0.21] - Enterprise Profile Defect Elimination & Multi-Dialect Hardening
+*Released on 21 November, 2026*
+
+### Admin Subsystem (GoDash & Guard)
+*   **CSRF Protection**: Secured all administrative mutating routes (`POST /admin/:model`, `POST /admin/:model/:id`, `POST /admin/:model/:id/delete`, and sequence monitor retries/deletes). Generated HttpOnly `SameSite=Lax` companion cookie `admin_csrf` via `crypto/rand`, validated requests with `crypto/subtle.ConstantTimeCompare`, and auto-injected `<input type="hidden" name="_csrf" value="...">` into all forms.
+*   **Public CSRF Generator**: Exported `auth.GenerateCSRFToken() string` in `framework/auth` for secure token creation across administrative and extension modules.
+
+### Database Migration Differ (Traveller Subsystem)
+*   **Multi-Dialect SQL Type Mapping**: Refactored `goTypeToSQL` to take `reflect.Type` and driver string. Dialect mappings:
+    *   `bool`: `BOOLEAN` (PostgreSQL), `INTEGER` (SQLite), `TINYINT(1)` (MySQL).
+    *   `float32/float64`: `DOUBLE PRECISION` (PostgreSQL), `REAL` (SQLite), `DOUBLE` (MySQL).
+    *   Unsigned integers: `BIGINT` (PostgreSQL), `INTEGER` (SQLite), `BIGINT UNSIGNED` (MySQL).
+    *   `time.Time`: `TIMESTAMPTZ` (PostgreSQL), `DATETIME` (MySQL/SQLite).
+    *   `[]byte`: `BYTEA` (PostgreSQL), `BLOB` (MySQL/SQLite).
+    *   Pointer types automatically dereference to underlying element type.
+*   **Postgres Schema Isolation**: Enforced `AND table_schema = current_schema()` in `fetchColumns()` to avoid cross-schema column name collisions in multi-tenant or multi-schema PostgreSQL environments.
+*   **Transactional Schema Execution**: Encapsulated `ApplyDiff()` within a `db.Begin()` transaction with `tx.Rollback()` on failure, preventing partial/corrupt database schema states.
+
+### Query Builder (Crafter Subsystem)
+*   **Pagination Upper Bound Ceiling**: Introduced `DefaultMaxPaginationPerPage = 100`. Clamped `perPage` values in `Paginate()` to prevent memory exhaustion and Denial-of-Service attacks via oversized pagination queries (e.g. `?per_page=1000000`).
+
+### Configuration Subsystem (GoCon)
+*   **Quoted Hash Character Preservation**: Reordered `.env` parsing so quoted strings (`"..."` or `'...'`) are extracted prior to comment stripping, ensuring secrets or passwords containing `#` are not prematurely truncated.
+
+### CLI Generator (Gost Subsystem)
+*   **Auto-Wired Auth Routes & CSRF Seeding**: `make:auth` scaffolds `internal/routes/auth_routes.go` pre-wiring `auth.CSRF("")`, while `getCSRFToken()` auto-seeds a token into active sessions when missing.
+
 ## [v1.0.20] - Comprehensive Framework Hardening & Core Defect Elimination
 *Released on 21 November, 2026*
 

@@ -598,6 +598,29 @@ func TestQueryBuilder_Paginate(t *testing.T) {
 	}
 }
 
+func TestQueryBuilder_PaginateCeiling(t *testing.T) {
+	relClearQueries()
+	dbConn, err := sql.Open("gostack_relations_mock", "")
+	if err != nil {
+		t.Fatalf("Failed to open mock db: %v", err)
+	}
+	defer dbConn.Close()
+
+	testDB := &relationsTestDB{db: dbConn, driver: "mysql"}
+	var posts []PostRelModel
+	meta, err := New(testDB, "posts").Paginate(&posts, 1, 1000000)
+	if err != nil {
+		t.Fatalf("Paginate failed: %v", err)
+	}
+	if meta.PerPage != 100 {
+		t.Errorf("Expected per_page to be capped at 100, got %d", meta.PerPage)
+	}
+	queries := relGetQueries()
+	if len(queries) < 2 || !strings.Contains(queries[1], "LIMIT 100") {
+		t.Errorf("Expected second query to have LIMIT 100, got queries: %v", queries)
+	}
+}
+
 func TestQueryBuilder_SelectColumns(t *testing.T) {
 	qb := New(nil, "users").Select("id", "email", "name")
 	sqlStr := qb.ToSQL()

@@ -1067,6 +1067,10 @@ func (qb *QueryBuilder) countSQL() string {
 	return sqlStr
 }
 
+// DefaultMaxPaginationPerPage defines the maximum rows per page returned by Paginate
+// to prevent memory exhaustion / denial of service attacks via unbounded pagination requests.
+const DefaultMaxPaginationPerPage = 100
+
 // Paginate counts total records matching current query conditions, retrieves the requested
 // chunk of rows for the target page, and hydrates them into dest.
 func (qb *QueryBuilder) Paginate(dest any, page, perPage int) (*PageMeta, error) {
@@ -1078,6 +1082,8 @@ func (qb *QueryBuilder) Paginate(dest any, page, perPage int) (*PageMeta, error)
 	}
 	if perPage < 1 {
 		perPage = 15
+	} else if perPage > DefaultMaxPaginationPerPage {
+		perPage = DefaultMaxPaginationPerPage
 	}
 
 	total, err := qb.Count()

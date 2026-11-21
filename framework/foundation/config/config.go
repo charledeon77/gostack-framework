@@ -77,11 +77,6 @@ func (m *Manager) Load(path string) error {
 			continue
 		}
 
-		// Strip inline comments (anything after an unquoted #).
-		if idx := strings.Index(line, " #"); idx != -1 {
-			line = strings.TrimSpace(line[:idx])
-		}
-
 		eqIdx := strings.Index(line, "=")
 		if eqIdx == -1 {
 			continue
@@ -90,11 +85,24 @@ func (m *Manager) Load(path string) error {
 		key := strings.TrimSpace(line[:eqIdx])
 		val := strings.TrimSpace(line[eqIdx+1:])
 
-		// Strip surrounding quotes.
-		if len(val) >= 2 {
-			if (val[0] == '"' && val[len(val)-1] == '"') ||
-				(val[0] == '\'' && val[len(val)-1] == '\'') {
-				val = val[1 : len(val)-1]
+		// Parse value respecting quotes: comments (' #') outside quotes are stripped.
+		if len(val) >= 2 && (val[0] == '"' || val[0] == '\'') {
+			quoteChar := val[0]
+			endQuote := strings.IndexByte(val[1:], quoteChar)
+			if endQuote != -1 {
+				// Extract inner content between quotes
+				val = val[1 : endQuote+1]
+			} else {
+				// Unclosed quote: strip quote and keep value
+				val = val[1:]
+			}
+		} else {
+			// Unquoted value: strip trailing inline comments
+			if idx := strings.Index(val, " #"); idx != -1 {
+				val = strings.TrimSpace(val[:idx])
+			}
+			if strings.HasPrefix(val, "#") {
+				val = ""
 			}
 		}
 

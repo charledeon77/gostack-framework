@@ -110,10 +110,15 @@ func CSRF(cookieName string) http.Middleware {
 	}
 }
 
-func generateCSRFToken() string {
+// GenerateCSRFToken generates a cryptographically secure 32-byte hexadecimal CSRF token.
+func GenerateCSRFToken() string {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		panic("csrf: failed to generate secure token")
 	}
 	return hex.EncodeToString(b)
+}
+
+func generateCSRFToken() string {
+	return GenerateCSRFToken()
 }

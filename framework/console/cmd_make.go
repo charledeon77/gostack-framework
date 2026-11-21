@@ -531,9 +531,15 @@ func getCSRFToken(ctx *http.Context) string {
 	}
 	if sessVal := ctx.Get("session"); sessVal != nil {
 		if sess, ok := sessVal.(contract.Session); ok {
-			if tokenVal := sess.Get("csrf_token"); tokenVal != nil {
+			if tokenVal := sess.Get("csrf_token"); tokenVal != nil && fmt.Sprint(tokenVal) != "" {
+				ctx.Set("csrf_token", fmt.Sprint(tokenVal))
 				return fmt.Sprint(tokenVal)
 			}
+			// Automatic session token generation if auth.CSRF middleware was omitted
+			token := auth.GenerateCSRFToken()
+			sess.Set("csrf_token", token)
+			ctx.Set("csrf_token", token)
+			return token
 		}
 	}
 	return ""
@@ -915,19 +921,42 @@ func (c *AuthController) APILogin(ctx *http.Context) error {
 		return fmt.Errorf("failed to compile view assets: %w", err)
 	}
 
+	// 6. Scaffold internal/routes/auth_routes.go with CSRF and session wiring
+	routesDir := filepath.Join("internal", "routes")
+	_ = os.MkdirAll(routesDir, 0755)
+	authRoutesContent := `package routes
+
+import (
+	"github.com/charledeon77/gostack-framework/framework/auth"
+	"github.com/charledeon77/gostack-framework/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/http"
+	"github.com/charledeon77/gostack-framework/internal/controller"
+)
+
+// RegisterAuthRoutes mounts fully CSRF-protected session authentication routes.
+func RegisterAuthRoutes(router *http.Router, db contract.Database, hasher contract.Hasher, sessionMiddleware http.Middleware) {
+	authCtrl := controller.NewAuthController(db, hasher)
+	web := router.Group("/", sessionMiddleware, auth.CSRF(""))
+	web.Get("/login", authCtrl.ShowLogin)
+	web.Post("/login", authCtrl.Login)
+	web.Get("/register", authCtrl.ShowRegister)
+	web.Post("/register", authCtrl.Register)
+	web.Post("/logout", authCtrl.Logout)
+}
+`
+	routesPath := filepath.Join(routesDir, "auth_routes.go")
+	if formattedRoutes, err := format.Source([]byte(authRoutesContent)); err == nil {
+		_ = os.WriteFile(routesPath, formattedRoutes, 0644)
+		fmt.Printf("[GoStack CLI] Scaffolding route registrar: %s\n", routesPath)
+	}
+
 	fmt.Println("[GoStack CLI] Scaffolding authentication subsystem completed successfully!")
 	fmt.Println("[GoStack CLI] Next steps:")
 	fmt.Println("  1. Import the generated user and userprovider models in main.go")
 	fmt.Println("  2. Call gostack.InitAuth(\"session\", model.NewUserProvider(auth.NewBcryptHasher(10)))")
 	fmt.Println("  3. Run your migrations: go run cmd/gostack/main.go migrate")
-	fmt.Println("  4. Wire routes protected with session and CSRF middleware:")
-	fmt.Println("       authCtrl := controller.NewAuthController(gostack.DB, auth.NewBcryptHasher(10))")
-	fmt.Println("       web := router.Group(\"/\", sessionMiddleware, auth.CSRF(\"\"))")
-	fmt.Println("       web.Get(\"/login\", authCtrl.ShowLogin)")
-	fmt.Println("       web.Post(\"/login\", authCtrl.Login)")
-	fmt.Println("       web.Get(\"/register\", authCtrl.ShowRegister)")
-	fmt.Println("       web.Post(\"/register\", authCtrl.Register)")
-	fmt.Println("       web.Post(\"/logout\", authCtrl.Logout)")
+	fmt.Println("  4. Wire authentication routes in main.go:")
+	fmt.Println("       routes.RegisterAuthRoutes(router, gostack.DB, auth.NewBcryptHasher(10), sessionMiddleware)")
 	return nil
 }
 

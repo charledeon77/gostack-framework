@@ -169,3 +169,21 @@ func TestLoad_MissingFile(t *testing.T) {
 		t.Error("expected error for missing file, got nil")
 	}
 }
+
+// TestLoad_QuotedValueWithHash verifies that a '#' character inside a quoted
+// value is preserved intact and not treated as an inline comment delimiter.
+// This covers the bug fixed in v1.0.21 where passwords containing '#' were
+// silently truncated.
+func TestLoad_QuotedValueWithHash(t *testing.T) {
+	path := writeTempEnv(t, "PASSWORD=\"my secret # key\"\nTOKEN='abc#def'\n")
+	m := New()
+	if err := m.Load(path); err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if got := m.Get("PASSWORD"); got != "my secret # key" {
+		t.Errorf("PASSWORD = %q, want %q", got, "my secret # key")
+	}
+	if got := m.Get("TOKEN"); got != "abc#def" {
+		t.Errorf("TOKEN = %q, want %q", got, "abc#def")
+	}
+}
