@@ -718,3 +718,170 @@ func TestRegistry_EvaluateUnexportedStructFieldSafe(t *testing.T) {
 		t.Errorf("Expected empty value for unexported field, got %v", unexp)
 	}
 }
+
+func TestCompiler_LayoutYieldComponentBadge(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "gostack_comp_layout_*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	compRoot := filepath.Join(tmpDir, "resources", "components")
+	layoutsDir := filepath.Join(compRoot, "layouts")
+	_ = os.MkdirAll(layoutsDir, 0755)
+
+	layoutContent := `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>@yield('title')</title>
+</head>
+<body>
+  <header>Site Header</header>
+  <main>
+    @yield('content')
+  </main>
+</body>
+</html>`
+	if err := os.WriteFile(filepath.Join(layoutsDir, "app.html"), []byte(layoutContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := NewAssetCompiler(compRoot, "")
+
+	childTemplate := `@extends("layouts/app")
+@section('title')
+Login Page
+@endsection
+@section('content')
+<form action="/login" method="POST">
+  <input type="text" name="email" />
+  <button type="submit">Sign In</button>
+</form>
+@endsection`
+
+	compiled, _, err := c.compileHTML("login", childTemplate)
+	if err != nil {
+		t.Fatalf("compileHTML with layout failed: %v", err)
+	}
+
+	// 1. Must retain <!DOCTYPE html> at byte 0 (not wrapped in outer div)
+	if !strings.HasPrefix(strings.TrimSpace(compiled), "<!DOCTYPE html>") && !strings.Contains(compiled, "<!DOCTYPE html>") {
+		t.Errorf("Expected compiled document to retain <!DOCTYPE html>, got:\n%s", compiled)
+	}
+	if strings.HasPrefix(strings.TrimSpace(compiled), "<div gs-component=\"login\">") {
+		t.Errorf("Document must NOT be wrapped on outer boundary in div gs-component; got:\n%s", compiled)
+	}
+
+	// 2. The @yield('title') slot in <head> must NOT be wrapped in a <div>
+	if strings.Contains(compiled, "<title><div") || strings.Contains(compiled, "gs-component=\"login\">Login Page") {
+		t.Errorf("Title slot in <head> must NOT be wrapped in div gs-component; got:\n%s", compiled)
+	}
+
+	// 3. The @yield('content') slot inside <main> MUST be wrapped in <div gs-component="login">
+	expectedBadge := `<div gs-component="login">`
+	if !strings.Contains(compiled, expectedBadge) {
+		t.Errorf("Expected child content in @yield('content') to be badged with %s; got:\n%s", expectedBadge, compiled)
+	}
+	if !strings.Contains(compiled, `<form action="/login" method="POST">`) {
+		t.Errorf("Expected child form to be inside compiled document; got:\n%s", compiled)
+	}
+}
+
+func TestCompiler_ExtendsChildContainsHtmlBodyError(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "gostack_comp_err_*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	compRoot := filepath.Join(tmpDir, "resources", "components")
+	layoutsDir := filepath.Join(compRoot, "layouts")
+	_ = os.MkdirAll(layoutsDir, 0755)
+
+	layoutContent := `<!DOCTYPE html><html><body>@yield('content')</body></html>`
+	if err := os.WriteFile(filepath.Join(layoutsDir, "app.html"), []byte(layoutContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := NewAssetCompiler(compRoot, "")
+
+	// Child template mistakenly authoring <body> inside @section
+	badChild := `@extends("layouts/app")
+@section('content')
+<body>
+  <h1>Duplicate Body</h1>
+</body>
+@endsection`
+
+	_, _, err = c.compileHTML("bad-page", badChild)
+	if err == nil {
+		t.Fatal("Expected compile error when extending child authors <body>, got nil")
+	}
+	if !strings.Contains(err.Error(), "must not author <!DOCTYPE>, <html>, <head>, or <body>") {
+		t.Errorf("Expected descriptive error about forbidden document tags, got: %v", err)
+	}
+}
+
+func TestCompiler_ExtendsImplicitContentSection(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "gostack_comp_implicit_*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	compRoot := filepath.Join(tmpDir, "resources", "components")
+	layoutsDir := filepath.Join(compRoot, "layouts")
+	_ = os.MkdirAll(layoutsDir, 0755)
+
+	layoutContent := `<!DOCTYPE html><html><body>@yield('content')</body></html>`
+	if err := os.WriteFile(filepath.Join(layoutsDir, "app.html"), []byte(layoutContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := NewAssetCompiler(compRoot, "")
+
+	// Child template without explicit @section('content')
+	implicitChild := `@extends("layouts/app")
+<h2>Implicit Page Content</h2>`
+
+	compiled, _, err := c.compileHTML("dashboard", implicitChild)
+	if err != nil {
+		t.Fatalf("compileHTML failed: %v", err)
+	}
+
+	expectedBadge := `<div gs-component="dashboard">`
+	if !strings.Contains(compiled, expectedBadge) {
+		t.Errorf("Expected implicit child content to be wrapped in %s, got:\n%s", expectedBadge, compiled)
+	}
+	if !strings.Contains(compiled, `<h2>Implicit Page Content</h2>`) {
+		t.Errorf("Expected child content in compiled output, got:\n%s", compiled)
+	}
+}
+
+func TestCompiler_FullDocumentStandaloneBodyBadge(t *testing.T) {
+	c := NewAssetCompiler("", "")
+
+	standalone := `<!DOCTYPE html>
+<html lang="en">
+<head><title>Standalone</title></head>
+<body class="page-body">
+  <h1>Standalone Page</h1>
+</body>
+</html>`
+
+	compiled, _, err := c.compileHTML("account", standalone)
+	if err != nil {
+		t.Fatalf("compileHTML failed: %v", err)
+	}
+
+	// 1. Must NOT wrap outer document in <div gs-component="account">
+	if strings.HasPrefix(strings.TrimSpace(compiled), "<div gs-component=\"account\">") {
+		t.Errorf("Must not wrap outer document in div; got:\n%s", compiled)
+	}
+
+	// 2. <body> tag must be badged with gs-component="account"
+	if !strings.Contains(compiled, `<body class="page-body" gs-component="account">`) &&
+		!strings.Contains(compiled, `<body gs-component="account"`) {
+		t.Errorf("Expected <body> to be tagged with gs-component=\"account\", got:\n%s", compiled)
+	}
+}

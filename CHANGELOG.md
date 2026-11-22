@@ -35,6 +35,16 @@ This ledger details the step-by-step history, architectural justifications, and 
 | **Nexus** | Neo4j Graph Database Integration | `framework/database` (Moved to `gostack-extensions` in v1.0.12) |
 | **Aether** | Cassandra Wide-Column Database Integration | `framework/database` (Moved to `gostack-extensions` in v1.0.12) |
 
+## [v1.0.22] - Tempose Layout Architecture, Fragment Badging & Standards Mode CSS Isolation
+*Released on 22 November, 2026*
+
+### UI Compiler & Tempose Engine (Tempose Subsystem)
+*   **Automatic Fragment Badging at `@yield` Sites**: Upgraded layout resolution in `preprocessLayouts` to automatically wrap child page fragments inserted into content slots (`@yield('content')`, `<slot/>`) with `<div gs-component="componentName">`. Non-body head slots (`title`, `meta`, `head`, `styles`, `scripts`) are passed through un-wrapped to preserve valid document metadata.
+*   **Zero-Cost Layout Transparency (`display: contents`)**: Injected `[gs-component] { display: contents; }` into `GoStackCoreCSS`. The component scope wrapper generates no box of its own, ensuring flexbox, CSS grid, and flow layouts are never altered or disrupted by the isolation wrapper.
+*   **Compile-Time Document Tag Guard**: Enforced that child templates extending a layout (`@extends`) must not author document-level tags (`<!DOCTYPE>`, `<html>`, `<head>`, `<body>`) inside `@section` blocks or raw content. Misplaced tags fail compilation immediately with actionable errors naming the component and layout.
+*   **Implicit `@section('content')` Support**: Child templates using `@extends` without explicit `@section('content')` blocks automatically have their un-sectioned markup treated as the primary content slot.
+*   **Standalone Full Document Badging**: Standalone full documents (authoring `<!DOCTYPE html>` directly without `@extends`) have their `<body>` tag automatically tagged with `gs-component="componentName"`, ensuring component-scoped CSS rules match reliably without breaking `<!DOCTYPE html>` at byte index 0.
+
 ## [v1.0.21] - Enterprise Profile Defect Elimination & Multi-Dialect Hardening
 *Released on 21 November, 2026*
 

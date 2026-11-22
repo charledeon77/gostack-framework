@@ -717,6 +717,6 @@ to {
 		return nil
 	})
 
-	ui.RegisterAssetURLs("/assets/css/gostack.css?v=1e6ab559", "/assets/js/gostack.js?v=2a5a4a87")
+	ui.RegisterAssetURLs("/assets/css/gostack.css?v=8bf83a69", "/assets/js/gostack.js?v=2a5a4a87")
 
 }

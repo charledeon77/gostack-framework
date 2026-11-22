@@ -6,7 +6,7 @@
 <!-- Badges -->
 <p align="center">
   <img src="https://img.shields.io/badge/License-Apache%202.0-orange?logo=apache" />
-  <img src="https://img.shields.io/badge/version-1.0.21-1FB249?logo=github" />
+  <img src="https://img.shields.io/badge/version-1.0.22-1FB249?logo=github" />
   <img src="https://img.shields.io/badge/build-passing-brightgreen?logo=githubactions" />
   <img src="https://img.shields.io/badge/tests-passing-brightgreen?logo=githubactions" />
   <img src="https://img.shields.io/badge/coverage-80%25-yellowgreen?logo=codecov" />
@@ -316,7 +316,7 @@ GoStack was designed with a simple belief: **building web apps should feel like 
 
 ## 🛡️ Production Ready Assurance
 
-Over a rigorous release cadence (*culminating in current version **`v1.0.21`** released 21 November 2026*), **GoStack** has matured into an enterprise-grade, hardened, and battle-tested fullstack framework.
+Over a rigorous release cadence (*culminating in current version **`v1.0.22`** released 22 November 2026*), **GoStack** has matured into an enterprise-grade, hardened, and battle-tested fullstack framework.
 
 Below is an overview of GoStack's production architecture, security engineering, and extension ecosystem.
 
@@ -332,6 +332,11 @@ Every major framework layer is co-developed, branded, and unified via the dynami
 ### 2. Crucial Production-Grade Hardening & Security Features
 GoStack features an extensive, defense-in-depth security and stability foundation (*detailed in* **`CHANGELOG.md`**):
 
+*   **Tempose Layout Architecture & Scoped Fragment Isolation (`v1.0.22`)**:
+    *   **Automatic Fragment Badging**: Automatically wraps page fragments inserted at layout content slots (`@yield('content')`, `<slot/>`) in `<div gs-component="name">`, guaranteeing page-specific CSS matches with surgical precision while keeping outer document doctypes at byte index 0 (100% Standards Mode).
+    *   **Layout-Transparent Scope (`display: contents`)**: Injected `[gs-component] { display: contents; }` into `GoStackCoreCSS` so isolation wrappers never disrupt flexbox, CSS grid, or flow geometry.
+    *   **Compile-Time Document Tag Guard**: Rejects child templates authoring `<!DOCTYPE>`, `<html>`, `<head>`, or `<body>` inside `@extends` sections, preventing corrupt multi-document nesting at build time.
+    *   **Standalone Document Badging**: Automatically badges `<body>` tags in standalone full documents so component styles bind without breaking Standards Mode.
 *   **Enterprise Security & Multi-Dialect Hardening (`v1.0.21`)**:
     *   **GoDash Admin CSRF Armor**: Intercepts all administrative mutations (`/admin/:model`, `/admin/:model/:id/delete`, sequence monitor actions) with `SameSite=Lax` HttpOnly companion cookies and constant-time token validation (`crypto/subtle.ConstantTimeCompare`).
     *   **Multi-Dialect Schema Differ**: Dialect-native type mapping for PostgreSQL (`BOOLEAN`, `DOUBLE PRECISION`, `TIMESTAMPTZ`, `BYTEA`), MySQL, and SQLite.

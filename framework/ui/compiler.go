@@ -272,6 +272,16 @@ var yieldRe            = regexp.MustCompile(`@yield\(["']([^"'\n]+)["']\)`)
 // Used in preprocessLayouts to strip comments before scanning for directives,
 // preventing false positives such as <!-- @include("x") --> from being processed.
 var htmlCommentRe      = regexp.MustCompile(`(?s)<!--.*?-->`)
+var bodyTagRe          = regexp.MustCompile(`(?i)<body(\s+[^>]*)?>`)
+
+func isHeadSlot(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "title", "meta", "head", "styles", "scripts", "headers", "header_scripts":
+		return true
+	default:
+		return false
+	}
+}
 
 func isValidComponentName(name string) bool {
 	return componentNameRegex.MatchString(name)
@@ -378,7 +388,7 @@ type exprError struct {
 // Returns the compiled Go source, whether fmt.Sprint is used (for import tracking), and any validation error.
 func (c *AssetCompiler) compileHTML(componentName, rawHTML string) (string, bool, error) {
 	// Resolve layout inheritance and partial includes at compile time.
-	preprocessed, err := c.preprocessLayouts(rawHTML)
+	preprocessed, err := c.preprocessLayouts(componentName, rawHTML)
 	if err != nil {
 		return "", false, fmt.Errorf("component %q: %w", componentName, err)
 	}
@@ -390,7 +400,22 @@ func (c *AssetCompiler) compileHTML(componentName, rawHTML string) (string, bool
 
 	var wrappedHTML string
 	if isFullDoc {
-		wrappedHTML = trimmedHTML
+		// If the document already contains this component's badge (e.g. from @yield insertion), leave as-is.
+		badgeAttr := fmt.Sprintf(`gs-component="%s"`, componentName)
+		if strings.Contains(trimmedHTML, badgeAttr) {
+			wrappedHTML = trimmedHTML
+		} else if bodyTagRe.MatchString(trimmedHTML) {
+			// Standalone document with <body>: tag <body> with the component badge so scoped styles match
+			// without wrapping <!DOCTYPE html> in an outer <div> (preserving Standards Mode).
+			wrappedHTML = bodyTagRe.ReplaceAllStringFunc(trimmedHTML, func(bodyTag string) string {
+				if strings.Contains(bodyTag, "gs-component=") {
+					return bodyTag
+				}
+				return bodyTag[:len(bodyTag)-1] + " " + badgeAttr + ">"
+			})
+		} else {
+			wrappedHTML = trimmedHTML
+		}
 	} else {
 		wrappedHTML = fmt.Sprintf("<div gs-component=\"%s\">\n%s\n</div>", componentName, trimmedHTML)
 	}
@@ -817,7 +842,7 @@ func (c *AssetCompiler) resolveTemplateFile(relPath string) (string, error) {
 // preprocessLayouts resolves template inheritance at compile time.
 // Supports @extends, @section/@endsection, @yield, @include, and <slot> composition.
 // All regexes use RE2 syntax (no backreferences) for Go compatibility.
-func (c *AssetCompiler) preprocessLayouts(rawHTML string) (string, error) {
+func (c *AssetCompiler) preprocessLayouts(componentName, rawHTML string) (string, error) {
 	// 0. Convert <slot name="..."> HTML syntax to @yield, and slot="..." attributes to @section blocks.
 	// This allows Svelte-style slot composition alongside Blade-style directives.
 	rawHTML = regexp.MustCompile(`(?i)<slot name=["']([^"']+)["'][^>]*></slot>`).ReplaceAllStringFunc(rawHTML, func(s string) string {
@@ -904,25 +929,50 @@ func (c *AssetCompiler) preprocessLayouts(rawHTML string) (string, error) {
 	}
 	layoutHTML := string(layoutBytes)
 
-	// 3. Extract all @section blocks from the child template.
+	// 3. Extract all @section blocks from the child template and validate against document tags.
 	sections := sectionRe.FindAllStringSubmatch(rawHTML, -1)
 	sectionMap := make(map[string]string)
 	for _, sec := range sections {
 		if len(sec) >= 3 {
-			sectionMap[sec[1]] = sec[2] // sec[1]=name, sec[2]=content
+			secContent := sec[2]
+			lowerSec := strings.ToLower(secContent)
+			if strings.Contains(lowerSec, "<!doctype") || strings.Contains(lowerSec, "<html") || strings.Contains(lowerSec, "<head") || strings.Contains(lowerSec, "<body") {
+				return "", fmt.Errorf("child template extending layout %q must not author <!DOCTYPE>, <html>, <head>, or <body> tags (author page content inside @section)", layoutPath)
+			}
+			sectionMap[sec[1]] = secContent
+		}
+	}
+
+	// If no explicit @section tags were provided, treat the un-extended remainder as the default 'content' section.
+	if len(sections) == 0 {
+		remainder := extendsRe.ReplaceAllString(rawHTML, "")
+		trimmedRemainder := strings.TrimSpace(remainder)
+		if trimmedRemainder != "" {
+			lowerRem := strings.ToLower(trimmedRemainder)
+			if strings.Contains(lowerRem, "<!doctype") || strings.Contains(lowerRem, "<html") || strings.Contains(lowerRem, "<head") || strings.Contains(lowerRem, "<body") {
+				return "", fmt.Errorf("child template extending layout %q must not author <!DOCTYPE>, <html>, <head>, or <body> tags (author page content inside @section)", layoutPath)
+			}
+			sectionMap["content"] = trimmedRemainder
 		}
 	}
 
 	// 4. Replace @yield placeholders in the layout with section content.
+	// Primary content slots are automatically wrapped in a component scope badge (<div gs-component="...">)
+	// so that component-scoped CSS rules match with surgical precision while preserving outer <!DOCTYPE> Standards Mode.
 	merged := yieldRe.ReplaceAllStringFunc(layoutHTML, func(yieldStr string) string {
 		ym := yieldRe.FindStringSubmatch(yieldStr)
 		if len(ym) < 2 {
 			return ""
 		}
-		if content, ok := sectionMap[ym[1]]; ok {
+		slotName := ym[1]
+		content, ok := sectionMap[slotName]
+		if !ok {
+			return ""
+		}
+		if isHeadSlot(slotName) {
 			return content
 		}
-		return ""
+		return fmt.Sprintf("<div gs-component=\"%s\">\n%s\n</div>", componentName, strings.TrimSpace(content))
 	})
 
 	return merged, nil
