@@ -35,7 +35,7 @@ This ledger details the step-by-step history, architectural justifications, and 
 | **Nexus** | Neo4j Graph Database Integration | `framework/database` (Moved to `gostack-extensions` in v1.0.12) |
 | **Aether** | Cassandra Wide-Column Database Integration | `framework/database` (Moved to `gostack-extensions` in v1.0.12) |
 
-## [v1.0.25] - Strict Component Contract, Scoped Shell Architecture & Anti-Smuggling Armor
+## [v1.0.26] - Strict Component Contract, Scoped Shell Architecture & Anti-Smuggling Armor
 *Released on 22 November, 2026*
 
 ### UI Compiler & Tempose Engine (Tempose Subsystem)
