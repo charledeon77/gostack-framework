@@ -931,3 +931,36 @@ func TestCompiler_StandaloneFullDocumentError(t *testing.T) {
 		t.Fatalf("Commented-out tags should not trigger error: %v", err)
 	}
 }
+
+func TestCompiler_SmuggledRootDocumentTagsViaInclude(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "gostack_comp_smuggle_*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	compRoot := filepath.Join(tmpDir, "resources", "components")
+	partialsDir := filepath.Join(compRoot, "partials")
+	_ = os.MkdirAll(partialsDir, 0755)
+
+	// Partial file smuggling <body>
+	smuggledPartial := `<body class="smuggled"><h1>Smuggled</h1></body>`
+	if err := os.WriteFile(filepath.Join(partialsDir, "smuggled.html"), []byte(smuggledPartial), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := NewAssetCompiler(compRoot, "")
+
+	// Component attempts to smuggle <body> via @include without @extends
+	trojanComponent := `<div class="wrapper">
+@include("partials/smuggled")
+</div>`
+
+	_, _, err = c.compileHTML("trojan", trojanComponent)
+	if err == nil {
+		t.Fatal("Expected compile error when component smuggles <body> via @include without @extends, got nil")
+	}
+	if !strings.Contains(err.Error(), "authors root document tags") {
+		t.Errorf("Expected root document tags error, got: %v", err)
+	}
+}

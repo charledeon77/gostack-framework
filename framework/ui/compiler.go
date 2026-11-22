@@ -388,20 +388,23 @@ type exprError struct {
 // compileHTML transforms a raw HTML template string into a sequence of Go statements.
 // Returns the compiled Go source, whether fmt.Sprint is used (for import tracking), and any validation error.
 func (c *AssetCompiler) compileHTML(componentName, rawHTML string) (string, bool, error) {
-	// Strict Framework Contract: Standalone components must not author root document tags.
-	// A component cannot author <!DOCTYPE, <html>, <head>, or <body> directly unless it extends a layout via @extends.
-	if !strings.Contains(rawHTML, "@extends") {
-		cleanHTML := htmlCommentRe.ReplaceAllString(rawHTML, "")
-		if rootDocTagsRe.MatchString(cleanHTML) {
-			return "", false, fmt.Errorf("component %q authors root document tags (<!DOCTYPE>, <html>, <head>, or <body>) without @extends. Use @extends(\"layouts/app\") for pages, or author as a component fragment.", componentName)
-		}
-	}
+	hasExtends := strings.Contains(rawHTML, "@extends")
 
 	// Resolve layout inheritance and partial includes at compile time.
 	preprocessed, err := c.preprocessLayouts(componentName, rawHTML)
 	if err != nil {
 		return "", false, fmt.Errorf("component %q: %w", componentName, err)
 	}
+
+	// Strict Framework Contract: Standalone components must not author root document tags
+	// directly or smuggled through @include partials.
+	if !hasExtends {
+		cleanHTML := htmlCommentRe.ReplaceAllString(preprocessed, "")
+		if rootDocTagsRe.MatchString(cleanHTML) {
+			return "", false, fmt.Errorf("component %q authors root document tags (<!DOCTYPE>, <html>, <head>, or <body>) without @extends. Use @extends(\"layouts/app\") for pages, or author as a component fragment.", componentName)
+		}
+	}
+
 	rawHTML = preprocessed
 
 	trimmedHTML := strings.TrimSpace(rawHTML)
