@@ -562,20 +562,44 @@ func TestCompiler_BundledStaticAssetsAndRegistration(t *testing.T) {
 }
 
 func TestCompiler_NoDivWrapperOnFullDocument(t *testing.T) {
-	c := NewAssetCompiler("", "")
+	tmpDir, err := os.MkdirTemp("", "gostack_comp_nodiv_*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
 
-	// 1. Full document with <!DOCTYPE html> must NOT be wrapped in <div gs-component="...">
-	doc := `<!DOCTYPE html>
+	compRoot := filepath.Join(tmpDir, "resources", "components")
+	layoutsDir := filepath.Join(compRoot, "layouts")
+	_ = os.MkdirAll(layoutsDir, 0755)
+
+	layoutContent := `<!DOCTYPE html>
 <html lang="en">
 <head><title>Test</title></head>
-<body><h1>Hello</h1></body>
+<body>@yield('content')</body>
 </html>`
-	compiledDoc, _, err := c.compileHTML("home", doc)
+	if err := os.WriteFile(filepath.Join(layoutsDir, "app.html"), []byte(layoutContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := NewAssetCompiler(compRoot, "")
+
+	// 1. Document generated via @extends must retain <!DOCTYPE html> at byte 0 and NOT wrap outer doc in <div gs-component="...">
+	childDoc := `@extends("layouts/app")
+@section('content')
+<h1>Hello</h1>
+@endsection`
+	compiledDoc, _, err := c.compileHTML("home", childDoc)
 	if err != nil {
 		t.Fatalf("compileHTML failed: %v", err)
 	}
-	if strings.Contains(compiledDoc, `[gs-component="home"]`) || strings.Contains(compiledDoc, `<div gs-component="home">`) {
-		t.Errorf("Full document must not be wrapped in div gs-component; got:\n%s", compiledDoc)
+	if strings.Contains(compiledDoc, `<div gs-component="home"><!DOCTYPE`) {
+		t.Errorf("Full document must not be wrapped in div gs-component at root; got:\n%s", compiledDoc)
+	}
+	if !strings.Contains(compiledDoc, "<!DOCTYPE html>") {
+		t.Errorf("Full document must retain <!DOCTYPE html>; got:\n%s", compiledDoc)
+	}
+	if !strings.Contains(compiledDoc, `<div gs-component="home">`) {
+		t.Errorf("Expected content slot to be wrapped in div gs-component=\"home\"; got:\n%s", compiledDoc)
 	}
 
 	// 2. Component fragment must still be wrapped
@@ -858,30 +882,52 @@ func TestCompiler_ExtendsImplicitContentSection(t *testing.T) {
 	}
 }
 
-func TestCompiler_FullDocumentStandaloneBodyBadge(t *testing.T) {
+func TestCompiler_StandaloneFullDocumentError(t *testing.T) {
 	c := NewAssetCompiler("", "")
 
-	standalone := `<!DOCTYPE html>
+	// 1. Full document rejected
+	fullDoc := `<!DOCTYPE html>
 <html lang="en">
 <head><title>Standalone</title></head>
-<body class="page-body">
-  <h1>Standalone Page</h1>
-</body>
+<body class="page-body"><h1>Standalone Page</h1></body>
 </html>`
+	_, _, err := c.compileHTML("account", fullDoc)
+	if err == nil {
+		t.Fatal("Expected compile error when component authors full document without @extends, got nil")
+	}
+	if !strings.Contains(err.Error(), "authors root document tags") {
+		t.Errorf("Expected descriptive error about root document tags, got: %v", err)
+	}
 
-	compiled, _, err := c.compileHTML("account", standalone)
+	// 2. Standalone <body> directly rejected
+	standaloneBody := `<body class="page-body"><h1>Bare Body</h1></body>`
+	_, _, err = c.compileHTML("bare-body", standaloneBody)
+	if err == nil {
+		t.Fatal("Expected compile error when component authors bare <body> without @extends, got nil")
+	}
+
+	// 3. Standalone <head> directly rejected
+	standaloneHead := `<head><title>Bare Head</title></head><div>Content</div>`
+	_, _, err = c.compileHTML("bare-head", standaloneHead)
+	if err == nil {
+		t.Fatal("Expected compile error when component authors bare <head> without @extends, got nil")
+	}
+
+	// 4. Custom elements and attributes containing "body" must NOT be falsely rejected
+	validCustomElement := `<div data-body="custom"><body-widget>Valid Content</body-widget></div>`
+	compiled, _, err := c.compileHTML("custom-el", validCustomElement)
 	if err != nil {
-		t.Fatalf("compileHTML failed: %v", err)
+		t.Fatalf("Valid custom element should not be rejected: %v", err)
+	}
+	if !strings.Contains(compiled, `<div gs-component="custom-el">`) {
+		t.Errorf("Expected custom element component to be wrapped in div gs-component; got:\n%s", compiled)
 	}
 
-	// 1. Must NOT wrap outer document in <div gs-component="account">
-	if strings.HasPrefix(strings.TrimSpace(compiled), "<div gs-component=\"account\">") {
-		t.Errorf("Must not wrap outer document in div; got:\n%s", compiled)
-	}
-
-	// 2. <body> tag must be badged with gs-component="account"
-	if !strings.Contains(compiled, `<body class="page-body" gs-component="account">`) &&
-		!strings.Contains(compiled, `<body gs-component="account"`) {
-		t.Errorf("Expected <body> to be tagged with gs-component=\"account\", got:\n%s", compiled)
+	// 5. Commented-out document tags must NOT be falsely rejected
+	commentedDoc := `<!-- <body>Legacy code</body> -->
+<div class="card"><h1>Active Content</h1></div>`
+	_, _, err = c.compileHTML("commented", commentedDoc)
+	if err != nil {
+		t.Fatalf("Commented-out tags should not trigger error: %v", err)
 	}
 }

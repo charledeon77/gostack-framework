@@ -35,6 +35,15 @@ This ledger details the step-by-step history, architectural justifications, and 
 | **Nexus** | Neo4j Graph Database Integration | `framework/database` (Moved to `gostack-extensions` in v1.0.12) |
 | **Aether** | Cassandra Wide-Column Database Integration | `framework/database` (Moved to `gostack-extensions` in v1.0.12) |
 
+## [v1.0.24] - Strict Component Contract, Scoped Shell Architecture & Elimination of Document-Tag Leakage
+*Released on 22 November, 2026*
+
+### UI Compiler & Tempose Engine (Tempose Subsystem)
+*   **Compile-Time Root Document Tag Guard**: Enforced strict architectural law in `compiler.go`: components are pieces, not documents. Any standalone component authoring root document tags (`<!DOCTYPE>`, `<html>`, `<head>`, `<body>`) without `@extends` fails compilation immediately with actionable diagnostic errors.
+*   **Tag-Boundary Precision & Comment Transparency**: Utilized `rootDocTagsRe` with word-boundary matching to prevent false positives on custom elements (`<body-component>`) or attributes (`data-body`), while stripping HTML comments prior to inspection.
+*   **Elimination of Body-Stamping Symptom Patch**: Completely removed regex mutation of `<body>` tags in standalone documents. Full pages are authored via `@extends("layouts/app")`, where content slots are cleanly encapsulated in `<div gs-component="...">` inside `@yield('content')`.
+*   **Pristine Document Isolation**: Guaranteed that `<html>` and `<body>` remain completely neutral and untouched, preventing cross-page CSS pollution while ensuring all component-scoped CSS rules match reliably.
+
 ## [v1.0.23] - Vault Zero-Memory Streaming Storage Engine (PutStream & GetStream)
 *Released on 22 November, 2026*
 

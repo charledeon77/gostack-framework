@@ -273,6 +273,7 @@ var yieldRe            = regexp.MustCompile(`@yield\(["']([^"'\n]+)["']\)`)
 // preventing false positives such as <!-- @include("x") --> from being processed.
 var htmlCommentRe      = regexp.MustCompile(`(?s)<!--.*?-->`)
 var bodyTagRe          = regexp.MustCompile(`(?i)<body(\s+[^>]*)?>`)
+var rootDocTagsRe      = regexp.MustCompile(`(?i)<(!doctype|html|head|body)(\s+[^>]*)?>`)
 
 func isHeadSlot(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
@@ -387,6 +388,15 @@ type exprError struct {
 // compileHTML transforms a raw HTML template string into a sequence of Go statements.
 // Returns the compiled Go source, whether fmt.Sprint is used (for import tracking), and any validation error.
 func (c *AssetCompiler) compileHTML(componentName, rawHTML string) (string, bool, error) {
+	// Strict Framework Contract: Standalone components must not author root document tags.
+	// A component cannot author <!DOCTYPE, <html>, <head>, or <body> directly unless it extends a layout via @extends.
+	if !strings.Contains(rawHTML, "@extends") {
+		cleanHTML := htmlCommentRe.ReplaceAllString(rawHTML, "")
+		if rootDocTagsRe.MatchString(cleanHTML) {
+			return "", false, fmt.Errorf("component %q authors root document tags (<!DOCTYPE>, <html>, <head>, or <body>) without @extends. Use @extends(\"layouts/app\") for pages, or author as a component fragment.", componentName)
+		}
+	}
+
 	// Resolve layout inheritance and partial includes at compile time.
 	preprocessed, err := c.preprocessLayouts(componentName, rawHTML)
 	if err != nil {
@@ -400,22 +410,9 @@ func (c *AssetCompiler) compileHTML(componentName, rawHTML string) (string, bool
 
 	var wrappedHTML string
 	if isFullDoc {
-		// If the document already contains this component's badge (e.g. from @yield insertion), leave as-is.
-		badgeAttr := fmt.Sprintf(`gs-component="%s"`, componentName)
-		if strings.Contains(trimmedHTML, badgeAttr) {
-			wrappedHTML = trimmedHTML
-		} else if bodyTagRe.MatchString(trimmedHTML) {
-			// Standalone document with <body>: tag <body> with the component badge so scoped styles match
-			// without wrapping <!DOCTYPE html> in an outer <div> (preserving Standards Mode).
-			wrappedHTML = bodyTagRe.ReplaceAllStringFunc(trimmedHTML, func(bodyTag string) string {
-				if strings.Contains(bodyTag, "gs-component=") {
-					return bodyTag
-				}
-				return bodyTag[:len(bodyTag)-1] + " " + badgeAttr + ">"
-			})
-		} else {
-			wrappedHTML = trimmedHTML
-		}
+		// Document generated via layout inheritance (@extends) already has the component badge
+		// injected into the layout's primary @yield slot (<div gs-component="...">).
+		wrappedHTML = trimmedHTML
 	} else {
 		wrappedHTML = fmt.Sprintf("<div gs-component=\"%s\">\n%s\n</div>", componentName, trimmedHTML)
 	}
@@ -935,8 +932,7 @@ func (c *AssetCompiler) preprocessLayouts(componentName, rawHTML string) (string
 	for _, sec := range sections {
 		if len(sec) >= 3 {
 			secContent := sec[2]
-			lowerSec := strings.ToLower(secContent)
-			if strings.Contains(lowerSec, "<!doctype") || strings.Contains(lowerSec, "<html") || strings.Contains(lowerSec, "<head") || strings.Contains(lowerSec, "<body") {
+			if rootDocTagsRe.MatchString(secContent) {
 				return "", fmt.Errorf("child template extending layout %q must not author <!DOCTYPE>, <html>, <head>, or <body> tags (author page content inside @section)", layoutPath)
 			}
 			sectionMap[sec[1]] = secContent
@@ -948,8 +944,7 @@ func (c *AssetCompiler) preprocessLayouts(componentName, rawHTML string) (string
 		remainder := extendsRe.ReplaceAllString(rawHTML, "")
 		trimmedRemainder := strings.TrimSpace(remainder)
 		if trimmedRemainder != "" {
-			lowerRem := strings.ToLower(trimmedRemainder)
-			if strings.Contains(lowerRem, "<!doctype") || strings.Contains(lowerRem, "<html") || strings.Contains(lowerRem, "<head") || strings.Contains(lowerRem, "<body") {
+			if rootDocTagsRe.MatchString(trimmedRemainder) {
 				return "", fmt.Errorf("child template extending layout %q must not author <!DOCTYPE>, <html>, <head>, or <body> tags (author page content inside @section)", layoutPath)
 			}
 			sectionMap["content"] = trimmedRemainder
