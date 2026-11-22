@@ -35,6 +35,7 @@ package contract
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"time"
 )
@@ -307,6 +308,13 @@ type Storage interface {
 
 	// Exists checks for the presence of a file at a target filepath.
 	Exists(path string) bool
+
+	// PutStream streams content from an io.Reader to a target filepath without buffering in memory.
+	PutStream(path string, r io.Reader) error
+
+	// GetStream returns an io.ReadCloser stream for reading file contents without loading into memory.
+	// The caller is responsible for closing the returned reader.
+	GetStream(path string) (io.ReadCloser, error)
 }
 
 // CacheStore defines the contract for an underlying caching driver (Memory, Redis).

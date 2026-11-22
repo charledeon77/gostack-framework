@@ -35,6 +35,14 @@ This ledger details the step-by-step history, architectural justifications, and 
 | **Nexus** | Neo4j Graph Database Integration | `framework/database` (Moved to `gostack-extensions` in v1.0.12) |
 | **Aether** | Cassandra Wide-Column Database Integration | `framework/database` (Moved to `gostack-extensions` in v1.0.12) |
 
+## [v1.0.23] - Vault Zero-Memory Streaming Storage Engine (PutStream & GetStream)
+*Released on 22 November, 2026*
+
+### Storage Subsystem (Vault & Contract)
+*   **Zero-Memory Stream Uploads (`PutStream`)**: Extended the `contract.Storage` interface and implemented `PutStream(path string, r io.Reader) error` across `LocalStorage` and `S3Driver`. Large files and email attachments (50MB+) stream directly to local disk or S3-compatible object stores (Backblaze B2, Cloudflare R2, AWS S3) with near-zero server RAM allocation (~32 KB stream buffer).
+*   **Direct Stream Reads (`GetStream`)**: Implemented `GetStream(path string) (io.ReadCloser, error)` across `LocalStorage` (returning `*os.File`) and `S3Driver` (returning `s3.GetObjectOutput.Body`), allowing web controllers, mailbox parsers, and background workers to stream large objects without loading multi-megabyte byte slices into memory.
+*   **Path-Traversal Sandbox Armor on Streams**: Maintained strict path traversal sanitization (`resolvePath`) across stream operations in `LocalStorage`, rejecting any `..` escape attempts prior to file opening.
+
 ## [v1.0.22] - Tempose Layout Architecture, Fragment Badging & Standards Mode CSS Isolation
 *Released on 22 November, 2026*
 

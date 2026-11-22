@@ -39,6 +39,7 @@ package storage
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,6 +128,47 @@ func (s *LocalStorage) Exists(path string) bool {
 	}
 
 	return !info.IsDir()
+}
+
+// PutStream writes content from the provided reader to the relative target path,
+// creating parent folders if missing. Content is streamed with minimal RAM footprint.
+func (s *LocalStorage) PutStream(path string, r io.Reader) error {
+	fullPath, err := s.resolvePath(path)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+		return fmt.Errorf("storage: failed to create subdirectories: %w", err)
+	}
+
+	f, err := os.OpenFile(fullPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("storage: failed to open target file for writing: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(f, r); err != nil {
+		return fmt.Errorf("storage: failed to write stream to file: %w", err)
+	}
+
+	return nil
+}
+
+// GetStream opens the file at the relative target path and returns an io.ReadCloser stream.
+// The caller is responsible for closing the returned reader when finished.
+func (s *LocalStorage) GetStream(path string) (io.ReadCloser, error) {
+	fullPath, err := s.resolvePath(path)
+	if err != nil {
+		return nil, err
+	}
+
+	f, err := os.Open(fullPath)
+	if err != nil {
+		return nil, fmt.Errorf("storage: failed to open file stream: %w", err)
+	}
+
+	return f, nil
 }
 
 // resolvePath sanitizes paths, evaluates symlinks, and prevents directory traversal attacks (SEC-07).

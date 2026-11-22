@@ -11,8 +11,10 @@ package storage
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -104,5 +106,57 @@ func TestLocalStorage_DirectoryTraversalDefense(t *testing.T) {
 	// 4. Exists should return false
 	if store.Exists(traversalPath) {
 		t.Error("expected Exists with directory traversal path to return false, but it returned true")
+	}
+}
+
+func TestLocalStorage_Streaming(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "gostack-storage-stream-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp test directory: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	store, err := NewLocalStorage(tempDir)
+	if err != nil {
+		t.Fatalf("failed to create LocalStorage driver: %v", err)
+	}
+
+	testPath := "streams/large_attachment.dat"
+	content := "This is a stream of bytes representing a large email attachment."
+	reader := strings.NewReader(content)
+
+	// 1. PutStream
+	if err := store.PutStream(testPath, reader); err != nil {
+		t.Fatalf("PutStream failed: %v", err)
+	}
+
+	// 2. Exists
+	if !store.Exists(testPath) {
+		t.Fatal("expected streamed file to exist")
+	}
+
+	// 3. GetStream
+	rc, err := store.GetStream(testPath)
+	if err != nil {
+		t.Fatalf("GetStream failed: %v", err)
+	}
+	defer rc.Close()
+
+	streamedBytes, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("failed to read from stream: %v", err)
+	}
+
+	if string(streamedBytes) != content {
+		t.Errorf("expected stream content %q, got %q", content, string(streamedBytes))
+	}
+
+	// 4. Traversal protection on streaming
+	traversalPath := filepath.Join("..", "escaped_stream.txt")
+	if err := store.PutStream(traversalPath, strings.NewReader("bad")); err == nil {
+		t.Error("expected PutStream with directory traversal path to fail, but it succeeded")
+	}
+	if _, err := store.GetStream(traversalPath); err == nil {
+		t.Error("expected GetStream with directory traversal path to fail, but it succeeded")
 	}
 }

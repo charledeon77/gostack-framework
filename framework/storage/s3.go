@@ -133,3 +133,30 @@ func (s *S3Driver) Exists(path string) bool {
 	})
 	return err == nil
 }
+
+// PutStream streams content from an io.Reader to S3 under the given path key.
+// The stream is passed directly to the S3 PutObject API without buffering into server RAM.
+func (s *S3Driver) PutStream(path string, r io.Reader) error {
+	_, err := s.client.PutObject(s.ctx, &s3.PutObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(s.key(path)),
+		Body:   r,
+	})
+	if err != nil {
+		return fmt.Errorf("s3driver: put stream failed for key '%s': %w", path, err)
+	}
+	return nil
+}
+
+// GetStream downloads the S3 object at the given path and returns its body as an io.ReadCloser stream.
+// The caller is responsible for closing the returned stream.
+func (s *S3Driver) GetStream(path string) (io.ReadCloser, error) {
+	result, err := s.client.GetObject(s.ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(s.key(path)),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("s3driver: get stream failed for key '%s': %w", path, err)
+	}
+	return result.Body, nil
+}
