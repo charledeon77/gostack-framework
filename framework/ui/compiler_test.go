@@ -964,3 +964,21 @@ func TestCompiler_SmuggledRootDocumentTagsViaInclude(t *testing.T) {
 		t.Errorf("Expected root document tags error, got: %v", err)
 	}
 }
+
+func TestCompiler_CommentedOutExtendsDoesNotBypassRootTagCheck(t *testing.T) {
+	c := NewAssetCompiler("", "")
+	commentedExtends := `<!-- @extends("layouts/app") -->
+<!DOCTYPE html>
+<html lang="en">
+<head><title>Fake</title></head>
+<body><h1>Fake Extends Page</h1></body>
+</html>`
+
+	_, _, err := c.compileHTML("fake-extends", commentedExtends)
+	if err == nil {
+		t.Fatal("Expected compile error when @extends is commented out and template authors root document tags, got nil")
+	}
+	if !strings.Contains(err.Error(), "authors root document tags") {
+		t.Errorf("Expected root document tags error, got: %v", err)
+	}
+}

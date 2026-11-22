@@ -388,17 +388,16 @@ type exprError struct {
 // compileHTML transforms a raw HTML template string into a sequence of Go statements.
 // Returns the compiled Go source, whether fmt.Sprint is used (for import tracking), and any validation error.
 func (c *AssetCompiler) compileHTML(componentName, rawHTML string) (string, bool, error) {
-	hasExtends := strings.Contains(rawHTML, "@extends")
-
 	// Resolve layout inheritance and partial includes at compile time.
-	preprocessed, err := c.preprocessLayouts(componentName, rawHTML)
+	// didExtend is only true if a layout was actually extended and applied after comment stripping.
+	preprocessed, didExtend, err := c.preprocessLayouts(componentName, rawHTML)
 	if err != nil {
 		return "", false, fmt.Errorf("component %q: %w", componentName, err)
 	}
 
 	// Strict Framework Contract: Standalone components must not author root document tags
-	// directly or smuggled through @include partials.
-	if !hasExtends {
+	// directly, smuggled through @include partials, or masked by commented-out @extends directives.
+	if !didExtend {
 		cleanHTML := htmlCommentRe.ReplaceAllString(preprocessed, "")
 		if rootDocTagsRe.MatchString(cleanHTML) {
 			return "", false, fmt.Errorf("component %q authors root document tags (<!DOCTYPE>, <html>, <head>, or <body>) without @extends. Use @extends(\"layouts/app\") for pages, or author as a component fragment.", componentName)
@@ -841,8 +840,9 @@ func (c *AssetCompiler) resolveTemplateFile(relPath string) (string, error) {
 
 // preprocessLayouts resolves template inheritance at compile time.
 // Supports @extends, @section/@endsection, @yield, @include, and <slot> composition.
+// Returns the preprocessed HTML, whether a layout was actually extended, and any error.
 // All regexes use RE2 syntax (no backreferences) for Go compatibility.
-func (c *AssetCompiler) preprocessLayouts(componentName, rawHTML string) (string, error) {
+func (c *AssetCompiler) preprocessLayouts(componentName, rawHTML string) (string, bool, error) {
 	// 0. Convert <slot name="..."> HTML syntax to @yield, and slot="..." attributes to @section blocks.
 	// This allows Svelte-style slot composition alongside Blade-style directives.
 	rawHTML = regexp.MustCompile(`(?i)<slot name=["']([^"']+)["'][^>]*></slot>`).ReplaceAllStringFunc(rawHTML, func(s string) string {
@@ -900,32 +900,32 @@ func (c *AssetCompiler) preprocessLayouts(componentName, rawHTML string) (string
 			return string(b)
 		})
 		if incErr != nil {
-			return "", incErr
+			return "", false, incErr
 		}
 	}
 
 	if strings.Contains(rawHTML, "@include(") {
-		return "", fmt.Errorf("circular or excessively deep @include detected")
+		return "", false, fmt.Errorf("circular or excessively deep @include detected")
 	}
 
 	if !strings.Contains(rawHTML, "@extends") {
-		return rawHTML, nil
+		return rawHTML, false, nil
 	}
 
 	// 2. Extract layout path from @extends("layouts/app").
 	m := extendsRe.FindStringSubmatch(rawHTML)
 	if len(m) < 2 {
-		return rawHTML, nil
+		return rawHTML, false, nil
 	}
 	layoutPath := m[1]
 
 	layoutFile, err := c.resolveTemplateFile(layoutPath + ".html")
 	if err != nil {
-		return "", fmt.Errorf("layout file %q not found: %w", layoutPath, err)
+		return "", false, fmt.Errorf("layout file %q not found: %w", layoutPath, err)
 	}
 	layoutBytes, err := os.ReadFile(layoutFile)
 	if err != nil {
-		return "", fmt.Errorf("layout file %q not readable: %w", layoutPath, err)
+		return "", false, fmt.Errorf("layout file %q not readable: %w", layoutPath, err)
 	}
 	layoutHTML := string(layoutBytes)
 
@@ -936,7 +936,7 @@ func (c *AssetCompiler) preprocessLayouts(componentName, rawHTML string) (string
 		if len(sec) >= 3 {
 			secContent := sec[2]
 			if rootDocTagsRe.MatchString(secContent) {
-				return "", fmt.Errorf("child template extending layout %q must not author <!DOCTYPE>, <html>, <head>, or <body> tags (author page content inside @section)", layoutPath)
+				return "", false, fmt.Errorf("child template extending layout %q must not author <!DOCTYPE>, <html>, <head>, or <body> tags (author page content inside @section)", layoutPath)
 			}
 			sectionMap[sec[1]] = secContent
 		}
@@ -948,7 +948,7 @@ func (c *AssetCompiler) preprocessLayouts(componentName, rawHTML string) (string
 		trimmedRemainder := strings.TrimSpace(remainder)
 		if trimmedRemainder != "" {
 			if rootDocTagsRe.MatchString(trimmedRemainder) {
-				return "", fmt.Errorf("child template extending layout %q must not author <!DOCTYPE>, <html>, <head>, or <body> tags (author page content inside @section)", layoutPath)
+				return "", false, fmt.Errorf("child template extending layout %q must not author <!DOCTYPE>, <html>, <head>, or <body> tags (author page content inside @section)", layoutPath)
 			}
 			sectionMap["content"] = trimmedRemainder
 		}
@@ -973,7 +973,7 @@ func (c *AssetCompiler) preprocessLayouts(componentName, rawHTML string) (string
 		return fmt.Sprintf("<div gs-component=\"%s\">\n%s\n</div>", componentName, strings.TrimSpace(content))
 	})
 
-	return merged, nil
+	return merged, true, nil
 }
 
 var cssCommentRegex = regexp.MustCompile(`(?s)/\*.*?\*/`)
