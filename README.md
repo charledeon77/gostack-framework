@@ -6,7 +6,7 @@
 <!-- Badges -->
 <p align="center">
   <img src="https://img.shields.io/badge/License-Apache%202.0-orange?logo=apache" />
-  <img src="https://img.shields.io/badge/version-1.0.0-1FB249?logo=github" />
+  <img src="https://img.shields.io/badge/version-1.0.21-1FB249?logo=github" />
   <img src="https://img.shields.io/badge/build-passing-brightgreen?logo=githubactions" />
   <img src="https://img.shields.io/badge/tests-passing-brightgreen?logo=githubactions" />
   <img src="https://img.shields.io/badge/coverage-80%25-yellowgreen?logo=codecov" />
@@ -106,18 +106,17 @@ And that's just the backend. If you need a modern frontend:
 
 26.) ✅ **Translation Engine** *(Transios)* — Localization manager supporting language dictionaries and formatting templates.
 
-27.) ✅ **NoSQL MongoDB** *(GoMon)* — Active Record engine support mapping NoSQL document stores to Go models.
-
-28.) ✅ **Graph Database** *(Nexus)* — Native Cypher query mapping and relation graph nodes for Neo4j database instances.
-
-29.) ✅ **Wide-Column Cassandra** *(Aether)* — Distributed CQL query mapper and table optimizer for Apache Cassandra database structures.
+*(Note: In v1.0.12, database-paradigm specific engines GoMon, Nexus, and Aether were transitioned into official isolated packages in `gostack-extensions` to preserve core lightweight boundaries.)*
 
 ---
 
 ### 📦 Official Extensions (Isolated Packages)
-To respect core design rationale and keep database/architecture boundaries perfectly clean, complex plug-and-play extensions are managed in isolated packages:
+To respect core design rationale and keep database/architecture boundaries perfectly clean, complex plug-and-play extensions and alternative database paradigms are managed in isolated packages:
 *   🔑 **Multi-Factor Auth** *(MFA)* — RFC 6238 TOTP validation and QR code generation wrappers.
 *   🛡️ **Role-Based Access Control** *(RBAC)* — Relational & NoSQL database-agnostic role permission middlewares and policy resolvers.
+*   🍃 **MongoDB Document Store** *(GoMon)* — Active Record BSON hydration engine mapping MongoDB collections to Go models.
+*   🕸️ **Neo4j Graph Database** *(Nexus)* — Native Cypher query mapper and relation graph nodes for Neo4j database instances.
+*   ⚡ **Cassandra Wide-Column** *(Aether)* — Distributed CQL query mapper and table optimizer for Apache Cassandra database structures.
 
 ---
 
@@ -248,9 +247,9 @@ Every major capability in GoStack is a fully tested, co-developed, and branded s
 | 24 | **Validator** | Request Validation Engine | Evaluates incoming request JSON payloads or form data against declared rules. It acts as the gateway validation layer, mapping error details onto contexts before reaching controller logic. |
 | 25 | **GowSocket** | Real-Time WebSocket Hub | Orchestrates bi-directional, persistent WebSocket client connections. It manages socket groups, processes message frames, and runs real-time pushes with native Go channels. |
 | 26 | **Transios** | Localization & Translation Engine | Dynamically formats dates, currencies, and localized strings based on user languages. It reads translation directories at boot time, mapping language templates for client renderers. |
-| 27 | **GoMon** | MongoDB Integration (NoSQL Document Store) | Provides native NoSQL document store mappings. It extends Crafter's hydration engine to parse BSON objects, enabling schema-less database operations alongside relational models. |
-| 28 | **Nexus** | Neo4j Graph Database Integration | Bridges GoStack with Neo4j graph nodes. It supports execution of Cypher query patterns, mapping complex relational graphs onto Go models. |
-| 29 | **Aether** | Cassandra Wide-Column Database Integration | Cassandra Wide-Column Database Integration. It optimizes CQL queries and handles massive, distributed tables, mapping wide-column records into structured entities. |
+| 27 | **GoMon** | MongoDB Integration (Official Extension) | Provides native NoSQL document store mappings. Extends Crafter's hydration engine to parse BSON objects, enabling schema-less database operations in `gostack-extensions/gomon`. |
+| 28 | **Nexus** | Neo4j Graph Database Integration (Official Extension) | Bridges GoStack with Neo4j graph nodes. Supports execution of Cypher query patterns, mapping complex relational graphs in `gostack-extensions/nexus`. |
+| 29 | **Aether** | Cassandra Wide-Column Integration (Official Extension) | Distributed CQL query mapper and table optimizer for Apache Cassandra database structures in `gostack-extensions/aether`. |
 
 ---
 
@@ -265,6 +264,18 @@ GoStack supports optional plug-and-play extensions that are fully isolated from 
 *   **RBAC (Role-Based Access Control):** Dynamic roles, permissions, HTTP middlewares, and database-agnostic resolvers (supporting both relational SQL databases and NoSQL/Cassandra).
     ```bash
     go get github.com/charledeon77/gostack-extensions/rbac
+    ```
+*   **GoMon (MongoDB Document Store):** BSON hydration and NoSQL Active Record queries for MongoDB.
+    ```bash
+    go get github.com/charledeon77/gostack-extensions/gomon
+    ```
+*   **Nexus (Neo4j Graph Database):** Cypher query builders and graph relation mapping for Neo4j.
+    ```bash
+    go get github.com/charledeon77/gostack-extensions/nexus
+    ```
+*   **Aether (Cassandra Wide-Column Store):** Distributed CQL queries and wide-column optimizations for Apache Cassandra.
+    ```bash
+    go get github.com/charledeon77/gostack-extensions/aether
     ```
 
 ---
@@ -305,54 +316,57 @@ GoStack was designed with a simple belief: **building web apps should feel like 
 
 ## 🛡️ Production Ready Assurance
 
-Over the past few release cycles (*leading up to the current version **`v1.0.11`** released 24 July 2026*), **GoStack** has transitioned from a lightweight full-stack prototype into a robust, enterprise-grade, and highly reliable framework.
+Over a rigorous release cadence (*culminating in current version **`v1.0.21`** released 21 November 2026*), **GoStack** has matured into an enterprise-grade, hardened, and battle-tested fullstack framework.
 
-Below is an overview of why GoStack is production-ready, its architecture, and its security details.
+Below is an overview of GoStack's production architecture, security engineering, and extension ecosystem.
 
 ---
 
 ### 1. Robust Core Architecture & Subsystem Maturity
-Every major framework layer has been branded and fully integrated via the dynamic **Citadel** container bootstrapper and the **Anchor** Dependency Injection engine defined in **`gostack.go`**.
+Every major framework layer is co-developed, branded, and unified via the dynamic **Citadel** container bootstrapper and the **Anchor** Dependency Injection engine:
 
-*   **Navigator** (HTTP Router) and **Bridge** (Middleware Pipeline) handle request orchestration with built-in trailing slash normalization and routing conflict warning checks.
-
-*   **Crafter** (ORM / Query Builder), **Conflex** (Relations Mapper), and **Grapher** (Schema Builder) automate database logic with full support for SQL dialects (PostgreSQL, MySQL, CockroachDB, SQLite) and NoSQL databases (MongoDB, Neo4j, Cassandra).
-
-*   [**Glide**](./GLIDE.md) (*Reactive Runtime*) and **Tempose** (AOT UI Compiler) provide reactive UI rendering compiled directly into Go source code, completely removing node/npm dependencies from production binaries.
+*   **Navigator** (HTTP Router) and **Bridge** (Middleware Pipeline) handle request orchestration with built-in trailing slash normalization, route conflict detection, and zero-allocation path parameter binding.
+*   **Crafter** (ORM / Query Builder), **Conflex** (Relations Mapper), and **Grapher** (Schema Builder) automate database access across SQL dialects (PostgreSQL, MySQL, CockroachDB, SQLite) with deterministic parameter binding and savepoint transaction nesting.
+*   [**Glide**](./GLIDE.md) (*Reactive Runtime*) and **Tempose** (AOT UI Compiler) compile component templates, styles, and client reactivity directly into Go source code, completely removing Node.js/npm dependencies from production binaries.
 
 ### 2. Crucial Production-Grade Hardening & Security Features
-Several major updates were implemented to secure and optimize the framework specifically for production environments (*detailed in* **`CHANGELOG.md`**).
+GoStack features an extensive, defense-in-depth security and stability foundation (*detailed in* **`CHANGELOG.md`**):
 
-*   **CSS Scoping Fixed (`v1.0.8`)**: Resolved a critical compilation bug that previously caused scoped styles to be discarded in browser paint steps.
-
-*   **Client Reactivity & DOM Morphing (`v1.0.10`)**: Upgraded Glide to a Proxy-based reactivity engine supporting SPA routing, client-side hydration, and dynamic bindings. It uses a browser-native `DOMParser` to sanitize inputs and safeguard against XSS.
-
+*   **Enterprise Security & Multi-Dialect Hardening (`v1.0.21`)**:
+    *   **GoDash Admin CSRF Armor**: Intercepts all administrative mutations (`/admin/:model`, `/admin/:model/:id/delete`, sequence monitor actions) with `SameSite=Lax` HttpOnly companion cookies and constant-time token validation (`crypto/subtle.ConstantTimeCompare`).
+    *   **Multi-Dialect Schema Differ**: Dialect-native type mapping for PostgreSQL (`BOOLEAN`, `DOUBLE PRECISION`, `TIMESTAMPTZ`, `BYTEA`), MySQL, and SQLite.
+    *   **Postgres Schema Isolation & Transactional Rollbacks**: Appends `AND table_schema = current_schema()` to introspection queries and executes `ApplyDiff()` inside transactions with atomic rollback on failure.
+    *   **QueryBuilder Pagination Ceiling**: Enforces `DefaultMaxPaginationPerPage = 100` to prevent memory-exhaustion Denial-of-Service attacks.
+    *   **GoCon Quoted Hash Preservation**: Preserves `#` in complex passwords, DSNs, and secret keys inside `.env` files.
+*   **Standards Mode Doctype & Compile-Time Validation (`v1.0.20`)**: Guarantees `<!DOCTYPE html>` at byte index 0 to eliminate browser Quirks Mode, accompanied by a compile-time directive nesting validation stack tracking open `@if` and `@foreach` tags with file and line numbers.
+*   **Robust CSS Scoping & Animation Preservation (`v1.0.19`)**: Strips multi-line comments cleanly without corrupting adjacent selectors, preserves `@keyframes` animation steps (`from`, `to`, `0%`), and prefixes comma-separated multi-target selectors.
+*   **Lean Core & Pure CSP Compliance (`v1.0.18`)**: Eradicated the 470 KB embedded base64 font from core, delivering 100% strict Content-Security-Policy compliance with zero inline styles and zero-FOUC static `[gs-cloak]` styling.
+*   **Browser-Cached Static Asset Bundles & `router.Static` (`v1.0.17`)**: Compiles component styles and scripts into fingerprinted static bundles (`/assets/css/gostack.css`, `/assets/js/gostack.js`) with immutable browser caching headers and built-in path-traversal / Zip-Slip protected file serving.
+*   **Client Reactivity & DOM Morphing (`v1.0.10`)**: Upgraded Glide to a Proxy-based reactivity engine supporting SPA routing, client-side hydration, and browser-native `DOMParser` sanitization.
 *   **Nested Transactions (SQL Savepoints) & Connection Pooling (`v1.0.2`)**: Natively supports nested transactions via standard SQL `SAVEPOINT` protocols, together with full connection pool limit management (`MaxOpenConns`, `MaxIdleConns`, `ConnMaxLifetime`).
-
 *   **API Security & Throttling (`v1.0.2` / `v1.0.3`)**: Employs an `AuthThrottle` rate-limiting middleware on auth endpoints (sliding-window composite keys) and alphanumeric identifier validation check allowlists to prevent SQL injection.
-
 *   **Reliable Cron Scheduler (`v1.0.2`)**: Implements timezone-aware schedules with `.WithoutOverlapping()` atomic locks to ensure long-running background tasks never trigger concurrent, degrading runs.
-
 *   **Transios i18n Localization (`v1.0.7`)**: Serves translation keys under zero disk I/O latency, preloading default locale data directly inside binaries.
 
-### 3. Mature Extension Architecture
-Following GoStack's core design rules, complex plug-and-play features are decoupled into the `gostack-extensions` workspace:
+### 3. Mature Isolated Extension Ecosystem
+To respect core design rationale and keep database/architecture boundaries perfectly clean, complex plug-and-play extensions and specialized storage engines are managed in isolated packages under `gostack-extensions`:
 
-*   🔑 **Multi-Factor Auth (MFA)**: Defined in **`mfa.go`** handles RFC 6238 TOTP validation and QR code generation.
-
-*   🛡️ **Role-Based Access Control (RBAC)**: Defined in **`rbac.go`** — controls who is allowed to do what inside your application. You define roles (like `"admin"`, `"editor"`, `"viewer"`), assign them to users, and then restrict any page or action so that only users with the right role or permission can access it. Works with both SQL and NoSQL databases out of the box.
+*   🔑 **Multi-Factor Auth (MFA)**: RFC 6238 TOTP validation and QR code generation (`gostack-extensions/mfa`).
+*   🛡️ **Role-Based Access Control (RBAC)**: Dynamic roles, permissions, HTTP middlewares, and database-agnostic resolvers supporting both relational SQL databases and NoSQL/Cassandra (`gostack-extensions/rbac`).
+*   🍃 **MongoDB Document Store (GoMon)**: BSON hydration and NoSQL Active Record queries (`gostack-extensions/gomon`).
+*   🕸️ **Neo4j Graph Database (Nexus)**: Cypher query builders and graph relation mapping (`gostack-extensions/nexus`).
+*   ⚡ **Cassandra Wide-Column (Aether)**: Distributed CQL queries and wide-column optimizations (`gostack-extensions/aether`).
 
 > [!IMPORTANT]
-> ***Why RBAC is an Extension***
+> ***Why Extensions Remain Isolated***
 >
-> ***GoStack*** *natively supports multiple database paradigms—including SQL (PostgreSQL, MySQL, SQLite) and NoSQL (MongoDB, Cassandra). Keeping RBAC as an isolated extension allows developers using SQL databases to pull it in and run relational checks, while NoSQL developers are not forced to follow a specific database schema and can utilize custom resolver callbacks.*
+> *GoStack natively supports multiple database paradigms—including SQL (PostgreSQL, MySQL, SQLite) and NoSQL (MongoDB, Neo4j, Cassandra). Keeping specialized database engines and features like RBAC as isolated extensions allows developers to include only the database drivers their architecture actually requires, eliminating bloated binaries, cross-dependency pollution, and forced relational schemas.*
 
 ### 4. 100% Green Test Suite
 All test suites across the framework compile, build, and pass cleanly:
 
-*   **Core Framework**: Passed and verified via `go test ./...` in the **`GoStack`** directory.
-
-*   **RBAC & MFA Extensions**: Passed and verified in the `gostack-extensions` subdirectories.
+*   **Core Framework**: Passed across all 23 packages under race condition detection (`go test -race -count=1 ./framework/...`), `go vet`, and `go build`.
+*   **Official Extensions**: Passed and verified in the `gostack-extensions` repositories.
 
 ### Summary
-With zero external node/npm runtime dependencies, built-in security protections (CSRF, XSS filtering, Rate-Limiting, SQL Injection guards), robust database transaction layers, and isolated extensible packages, GoStack is fully prepared to back **Production-Grade Applications**.
+With zero external Node.js/npm runtime dependencies, built-in enterprise security protections (CSRF armor, XSS filtering, Rate-Limiting, SQL Injection guards), robust database transaction layers, fingerprinted static asset delivery, and isolated extensible packages, GoStack is fully prepared to back **Mission-Critical, High-Scale Applications**.
