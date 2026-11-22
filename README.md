@@ -114,6 +114,7 @@ And that's just the backend. If you need a modern frontend:
 To respect core design rationale and keep database/architecture boundaries perfectly clean, complex plug-and-play extensions and alternative database paradigms are managed in isolated packages:
 *   🔑 **Multi-Factor Auth** *(MFA)* — RFC 6238 TOTP validation and QR code generation wrappers.
 *   🛡️ **Role-Based Access Control** *(RBAC)* — Relational & NoSQL database-agnostic role permission middlewares and policy resolvers.
+*   🤖 **AI Toolkit** *(AI)* — PostgreSQL vector embeddings (pgvector), PromptTemplate composition, and Model Context Protocol (MCP) server.
 *   🍃 **MongoDB Document Store** *(GoMon)* — Active Record BSON hydration engine mapping MongoDB collections to Go models.
 *   🕸️ **Neo4j Graph Database** *(Nexus)* — Native Cypher query mapper and relation graph nodes for Neo4j database instances.
 *   ⚡ **Cassandra Wide-Column** *(Aether)* — Distributed CQL query mapper and table optimizer for Apache Cassandra database structures.
@@ -264,6 +265,10 @@ GoStack supports optional plug-and-play extensions that are fully isolated from 
 *   **RBAC (Role-Based Access Control):** Dynamic roles, permissions, HTTP middlewares, and database-agnostic resolvers (supporting both relational SQL databases and NoSQL/Cassandra).
     ```bash
     go get github.com/charledeon77/gostack-extensions/rbac
+    ```
+*   **AI Toolkit (pgvector & MCP):** PostgreSQL vector embeddings, PromptTemplate composition, and Model Context Protocol server.
+    ```bash
+    go get github.com/charledeon77/gostack-extensions/ai
     ```
 *   **GoMon (MongoDB Document Store):** BSON hydration and NoSQL Active Record queries for MongoDB.
     ```bash
