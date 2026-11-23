@@ -18,7 +18,12 @@ import (
 // Unauthenticated requests receive a 401 JSON response or redirect to /login.
 func RequireAuth(manager *AuthManager, guardName string) http.Middleware {
 	return func(ctx *http.Context, next http.NextHandler) error {
-		guard := manager.Guard(guardName)
+		guard, err := manager.Guard(guardName)
+		if err != nil {
+			return ctx.JSON(netHTTP.StatusInternalServerError, map[string]string{
+				"error": "auth guard misconfiguration",
+			})
+		}
 
 		// Initialize request context cache if not already present
 		req := ctx.Request
@@ -53,7 +58,11 @@ func RequireAuth(manager *AuthManager, guardName string) http.Middleware {
 // Guest redirects authenticated users away from public auth pages (e.g. login/register).
 func Guest(manager *AuthManager, guardName string) http.Middleware {
 	return func(ctx *http.Context, next http.NextHandler) error {
-		guard := manager.Guard(guardName)
+		guard, err := manager.Guard(guardName)
+		if err != nil {
+			// Misconfigured guard: fail open (let guest through) rather than blocking legitimate traffic.
+			return next(ctx)
+		}
 
 		req := ctx.Request
 		if req.Context().Value(contract.UserContextKey) == nil {

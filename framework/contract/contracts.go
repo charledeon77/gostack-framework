@@ -257,6 +257,10 @@ type Queue interface {
 
 	// StartWorkers starts a pool of background worker goroutines to process jobs.
 	StartWorkers(workers int)
+
+	// Close gracefully shuts down the queue, draining in-flight jobs and releasing
+	// any held resources (connections, goroutines). F-151.
+	Close() error
 }
 
 // QueueStats holds the metrics for the active queue engine.
@@ -316,7 +320,9 @@ type Storage interface {
 	Delete(path string) error
 
 	// Exists checks for the presence of a file at a target filepath.
-	Exists(path string) bool
+	// Returns (false, err) on a driver or path-resolution error so callers can distinguish
+	// "file not found" from "storage unavailable" (F-021, F-023).
+	Exists(path string) (bool, error)
 
 	// PutStream streams content from an io.Reader to a target filepath without buffering in memory.
 	PutStream(path string, r io.Reader) error

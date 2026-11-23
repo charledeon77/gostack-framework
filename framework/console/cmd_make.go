@@ -592,7 +592,14 @@ func (c *AuthController) Login(ctx *http.Context) error {
 	email := ctx.Post("email")
 	password := ctx.Post("password")
 
-	guard := gostack.Auth.Guard("session").(*auth.SessionGuard)
+	rawGuard, err := gostack.Auth.Guard("session")
+	if err != nil {
+		return ctx.Render("login", map[string]any{
+			"csrf_token": getCSRFToken(ctx),
+			"error":      "Auth guard misconfiguration",
+		})
+	}
+	guard := rawGuard.(*auth.SessionGuard)
 	credentials := map[string]any{"email": email, "password": password}
 
 	if err := guard.Attempt(ctx.Writer, ctx.Request, credentials); err != nil {
@@ -646,7 +653,15 @@ func (c *AuthController) Register(ctx *http.Context) error {
 	}
 
 	// Log them in immediately after registration
-	guard := gostack.Auth.Guard("session").(*auth.SessionGuard)
+	rawGuard2, err2 := gostack.Auth.Guard("session")
+	if err2 != nil {
+		csrfToken := getCSRFToken(ctx)
+		return ctx.Render("login", map[string]any{
+			"csrf_token": csrfToken,
+			"error":      "Auth guard misconfiguration",
+		})
+	}
+	guard := rawGuard2.(*auth.SessionGuard)
 	credentials := map[string]any{"email": email, "password": password}
 	if err := guard.Attempt(ctx.Writer, ctx.Request, credentials); err != nil {
 		csrfToken := getCSRFToken(ctx)

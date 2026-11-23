@@ -243,10 +243,14 @@ func TestMakeAuth_GeneratedCodeCompiles(t *testing.T) {
 	_ = os.RemoveAll("internal")
 	_ = os.RemoveAll("database")
 	_ = os.RemoveAll("templates")
+	_ = os.RemoveAll("cmd")
+	_ = os.RemoveAll("public")
 	defer func() {
 		_ = os.RemoveAll("internal")
 		_ = os.RemoveAll("database")
 		_ = os.RemoveAll("templates")
+		_ = os.RemoveAll("cmd")
+		_ = os.RemoveAll("public")
 	}()
 
 	cmd := &MakeAuthCommand{}

@@ -22,6 +22,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -29,6 +30,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	smithy "github.com/aws/smithy-go"
 )
 
 // S3Driver implements contract.Storage backed by AWS S3 (or any S3-compatible endpoint).
@@ -125,13 +128,28 @@ func (s *S3Driver) Delete(path string) error {
 	return nil
 }
 
-// Exists returns true if the given S3 key exists, using a cheap HeadObject call.
-func (s *S3Driver) Exists(path string) bool {
+// Exists reports whether the given S3 key exists, using a cheap HeadObject call.
+// Returns (false, err) on a driver or network error (F-021, F-023).
+func (s *S3Driver) Exists(path string) (bool, error) {
 	_, err := s.client.HeadObject(s.ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(s.key(path)),
 	})
-	return err == nil
+	if err != nil {
+		// HeadObject returns a 404-flavoured error when the key does not exist.
+		// All other errors are real driver failures we should surface.
+		var nsk *s3types.NoSuchKey
+		if errors.As(err, &nsk) {
+			return false, nil
+		}
+		// S3 returns a generic "NotFound" (404) for missing objects via smithy:
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NotFound" {
+			return false, nil
+		}
+		return false, fmt.Errorf("s3driver: exists check failed for key '%s': %w", path, err)
+	}
+	return true, nil
 }
 
 // PutStream streams content from an io.Reader to S3 under the given path key.

@@ -6,7 +6,7 @@
 <!-- Badges -->
 <p align="center">
   <img src="https://img.shields.io/badge/License-Apache%202.0-orange?logo=apache" />
-  <img src="https://img.shields.io/badge/version-1.0.23-1FB249?logo=github" />
+  <img src="https://img.shields.io/github/v/tag/charledeon77/gostack-framework?label=version&color=1FB249&logo=github&sort=semver" />
   <img src="https://img.shields.io/badge/build-passing-brightgreen?logo=githubactions" />
   <img src="https://img.shields.io/badge/tests-passing-brightgreen?logo=githubactions" />
   <img src="https://img.shields.io/badge/coverage-80%25-yellowgreen?logo=codecov" />

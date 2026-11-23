@@ -50,7 +50,8 @@ func (m *AuthManager) Register(name string, guard contract.Guard) {
 }
 
 // Guard resolves a registered guard by name, falling back to the configured default guard.
-func (m *AuthManager) Guard(name string) contract.Guard {
+// Returns an error instead of panicking when the named guard is not registered (F-065).
+func (m *AuthManager) Guard(name string) (contract.Guard, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -60,29 +61,45 @@ func (m *AuthManager) Guard(name string) contract.Guard {
 
 	guard, exists := m.guards[name]
 	if !exists {
-		panic(fmt.Sprintf("auth: guard [%s] is not registered", name))
+		return nil, fmt.Errorf("auth: guard [%s] is not registered", name)
 	}
-	return guard
+	return guard, nil
 }
 
-// Check delegates to the default guard.
+// Check delegates to the default guard. Returns false on configuration error.
 func (m *AuthManager) Check(r *http.Request) bool {
-	return m.Guard("").Check(r)
+	g, err := m.Guard("")
+	if err != nil {
+		return false
+	}
+	return g.Check(r)
 }
 
-// User delegates to the default guard.
+// User delegates to the default guard. Returns (nil, false) on configuration error.
 func (m *AuthManager) User(r *http.Request) (contract.Authenticatable, bool) {
-	return m.Guard("").User(r)
+	g, err := m.Guard("")
+	if err != nil {
+		return nil, false
+	}
+	return g.User(r)
 }
 
 // Login delegates to the default guard.
 func (m *AuthManager) Login(w http.ResponseWriter, r *http.Request, user contract.Authenticatable) error {
-	return m.Guard("").Login(w, r, user)
+	g, err := m.Guard("")
+	if err != nil {
+		return err
+	}
+	return g.Login(w, r, user)
 }
 
 // Logout delegates to the default guard.
 func (m *AuthManager) Logout(w http.ResponseWriter, r *http.Request) error {
-	return m.Guard("").Logout(w, r)
+	g, err := m.Guard("")
+	if err != nil {
+		return err
+	}
+	return g.Logout(w, r)
 }
 
 // cacheUser writes the authenticated user into the request context's AuthCache (D4).

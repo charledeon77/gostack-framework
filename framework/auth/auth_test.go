@@ -509,6 +509,22 @@ func TestLogin_NoStore_ReturnsError(t *testing.T) {
 	}
 }
 
+// TestAuthManager_Guard_UnregisteredReturnsError certifies F-065:
+// AuthManager.Guard must return an error for unknown guard names instead of panicking.
+func TestAuthManager_Guard_UnregisteredReturnsError(t *testing.T) {
+	manager := NewAuthManager("web")
+	// Intentionally do NOT register any guard.
+	_, err := manager.Guard("nonexistent")
+	if err == nil {
+		t.Fatal("expected Guard to return an error for an unregistered guard name, got nil")
+	}
+	// Verify the default guard path also returns an error (not panic) when nothing is registered.
+	_, err = manager.Guard("")
+	if err == nil {
+		t.Fatal("expected Guard with empty name to return an error when no guards registered, got nil")
+	}
+}
+
 func TestAuthThrottle_SpoofedXFFDoesNotResetBucket(t *testing.T) {
 	os.Unsetenv("TRUSTED_PROXIES")
 	defer os.Unsetenv("TRUSTED_PROXIES")

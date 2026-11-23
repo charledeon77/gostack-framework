@@ -115,19 +115,23 @@ func (s *LocalStorage) Delete(path string) error {
 	return nil
 }
 
-// Exists asserts whether the relative target path matches an existing file on disk.
-func (s *LocalStorage) Exists(path string) bool {
+// Exists reports whether the relative target path resolves to an existing file on disk.
+// Returns (false, err) on a path-resolution or OS-level error (F-021, F-023).
+func (s *LocalStorage) Exists(path string) (bool, error) {
 	fullPath, err := s.resolvePath(path)
 	if err != nil {
-		return false
+		return false, err
 	}
 
 	info, err := os.Stat(fullPath)
 	if err != nil {
-		return false
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("storage: failed to stat file: %w", err)
 	}
 
-	return !info.IsDir()
+	return !info.IsDir(), nil
 }
 
 // PutStream writes content from the provided reader to the relative target path,

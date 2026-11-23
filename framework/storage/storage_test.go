@@ -34,7 +34,11 @@ func TestLocalStorage_FileLifecycle(t *testing.T) {
 	testData := []byte("Hello, GoStack Storage Subsystem!")
 
 	// 1. Assert file does not exist initially
-	if store.Exists(testPath) {
+	exists, err := store.Exists(testPath)
+	if err != nil {
+		t.Fatalf("Exists returned unexpected error: %v", err)
+	}
+	if exists {
 		t.Fatal("expected file to not exist initially")
 	}
 
@@ -44,7 +48,11 @@ func TestLocalStorage_FileLifecycle(t *testing.T) {
 	}
 
 	// 3. Assert file exists now
-	if !store.Exists(testPath) {
+	exists, err = store.Exists(testPath)
+	if err != nil {
+		t.Fatalf("Exists returned unexpected error after write: %v", err)
+	}
+	if !exists {
 		t.Fatal("expected file to exist after write")
 	}
 
@@ -64,7 +72,11 @@ func TestLocalStorage_FileLifecycle(t *testing.T) {
 	}
 
 	// 6. Assert file is gone
-	if store.Exists(testPath) {
+	exists, err = store.Exists(testPath)
+	if err != nil {
+		t.Fatalf("Exists returned unexpected error after delete: %v", err)
+	}
+	if exists {
 		t.Fatal("expected file to not exist after deletion")
 	}
 }
@@ -103,8 +115,8 @@ func TestLocalStorage_DirectoryTraversalDefense(t *testing.T) {
 		t.Error("expected Delete with directory traversal path to fail, but it succeeded")
 	}
 
-	// 4. Exists should return false
-	if store.Exists(traversalPath) {
+	// 4. Exists should return false (not an error — traversal is a path error, not a missing-file error)
+	if exists, _ := store.Exists(traversalPath); exists {
 		t.Error("expected Exists with directory traversal path to return false, but it returned true")
 	}
 }
@@ -131,7 +143,11 @@ func TestLocalStorage_Streaming(t *testing.T) {
 	}
 
 	// 2. Exists
-	if !store.Exists(testPath) {
+	exists, err := store.Exists(testPath)
+	if err != nil {
+		t.Fatalf("Exists after PutStream returned unexpected error: %v", err)
+	}
+	if !exists {
 		t.Fatal("expected streamed file to exist")
 	}
 
