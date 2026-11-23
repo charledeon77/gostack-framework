@@ -28,6 +28,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/charledeon77/gostack-framework/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/foundation"
 )
 
 const redisQueueKey = "gostack:queue:default"
@@ -113,10 +114,10 @@ func (q *RedisQueue) PushDelayed(job contract.Job, delay time.Duration) error {
 // StartWorkers spawns N worker goroutines that each block on BRPOP, waiting for jobs.
 func (q *RedisQueue) StartWorkers(workers int) {
 	for i := 0; i < workers; i++ {
-		go q.runWorker()
+		foundation.SafeGo("redis-queue-worker", q.runWorker)
 	}
 	// Also run a scheduler goroutine that migrates due delayed jobs to the main queue.
-	go q.runDelayedScheduler()
+	foundation.SafeGo("redis-delayed-scheduler", q.runDelayedScheduler)
 }
 
 func (q *RedisQueue) runWorker() {
@@ -146,9 +147,22 @@ func (q *RedisQueue) runWorker() {
 			fmt.Printf("[Sequence Worker] Failed to unmarshal job data: %v\n", err)
 			continue
 		}
-		if err := job.Handle(); err != nil {
+
+		// Isolate individual job panics: a panicking job is treated as a failure
+		// and dead-lettered rather than killing the worker goroutine.
+		var handleErr error
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					handleErr = fmt.Errorf("job %q panicked: %v", payload.Name, r)
+				}
+			}()
+			handleErr = job.Handle()
+		}()
+
+		if handleErr != nil {
 			payload.Attempts++
-			payload.Error = err.Error()
+			payload.Error = handleErr.Error()
 			if retryable, ok := job.(contract.Retryable); ok && payload.Attempts < retryable.MaxAttempts() {
 				// Exponential backoff: factor * 2^attempts
 				factor := q.BackoffFactor

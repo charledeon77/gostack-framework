@@ -36,6 +36,8 @@ package events
 
 import (
 	"fmt"
+	"runtime/debug"
+
 	"github.com/charledeon77/gostack-framework/framework/contract"
 	"sync"
 )
@@ -96,6 +98,14 @@ func (d *Dispatcher) DispatchAsync(eventName string, event any, errHandler func(
 	for _, handler := range handlers {
 		h := handler // Capture closure loop variable
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					errMsg := fmt.Errorf("events async: panic in handler for event %q: %v\n%s", eventName, r, debug.Stack())
+					if errHandler != nil {
+						errHandler(errMsg)
+					}
+				}
+			}()
 			if err := h(event); err != nil && errHandler != nil {
 				errHandler(fmt.Errorf("events async: error running handler for event '%s': %w", eventName, err))
 			}

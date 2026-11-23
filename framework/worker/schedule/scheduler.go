@@ -21,6 +21,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/charledeon77/gostack-framework/framework/foundation"
 )
 //
 // New in this version:
@@ -161,14 +163,20 @@ func (s *Scheduler) Run(ctx context.Context) {
 		// Fire on-boot tasks immediately before entering the tick loop.
 		if job.runOnBoot {
 			s.wg.Add(1)
-			go func(id int, j *Job) {
+			jobID := i
+			targetJob := job
+			foundation.SafeGo(fmt.Sprintf("scheduler-boot-job-%d", jobID), func() {
 				defer s.wg.Done()
-				j.tryRun(id)
-			}(i, job)
+				targetJob.tryRun(jobID)
+			})
 		}
 
 		s.wg.Add(1)
-		go s.runJob(s.ctx, i, job)
+		jobID := i
+		targetJob := job
+		foundation.SafeGo(fmt.Sprintf("scheduler-job-%d", jobID), func() {
+			s.runJob(s.ctx, jobID, targetJob)
+		})
 	}
 
 	<-s.ctx.Done()
@@ -217,7 +225,11 @@ func (s *Scheduler) runJob(ctx context.Context, id int, job *Job) {
 			}
 		}
 	} else {
-		ticker := time.NewTicker(job.Interval)
+		interval := job.Interval
+		if interval <= 0 {
+			interval = time.Minute
+		}
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
 		for {
@@ -256,7 +268,7 @@ func matchField(field string, val int) bool {
 	// Handle steps e.g. */5
 	if strings.HasPrefix(field, "*/") {
 		step, err := strconv.Atoi(field[2:])
-		if err != nil {
+		if err != nil || step <= 0 {
 			return false
 		}
 		return val%step == 0

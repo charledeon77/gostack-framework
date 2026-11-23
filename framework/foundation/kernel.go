@@ -110,7 +110,7 @@ func (k *Kernel) Run(addr string) error {
 	if os.Getenv("APP_ENV") != "production" {
 		compiler := ui.NewAssetCompiler("templates/components", "cmd/app")
 		watcher := ui.NewHotReloadWatcher(compiler, 500*time.Millisecond)
-		go watcher.Start(context.Background())
+		SafeGo("hot-reload-watcher", func() { watcher.Start(context.Background()) })
 
 		k.Router.Get("/__gostack_reload", func(ctx *ghttp.Context) {
 			watcher.ServeSSE(ctx.Writer, ctx.Request)

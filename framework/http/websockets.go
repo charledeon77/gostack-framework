@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"golang.org/x/net/websocket"
+	"github.com/charledeon77/gostack-framework/framework/foundation/safego"
 )
 
 /*
@@ -300,7 +301,7 @@ func (h *Hub) HandlerForUser(userID string) http.Handler {
 			UserID: userID,
 		}
 		h.register <- conn
-		go conn.Write()
+		safego.Go("ws-write-pump", conn.Write)
 		conn.Read()
 	})
 }

@@ -41,6 +41,7 @@ import (
 	"time"
 
 	"github.com/charledeon77/gostack-framework/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/foundation/safego"
 )
 
 var validTableRegex = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -167,7 +168,7 @@ func NewDBSessionStore(db *sql.DB, table string, ttl time.Duration, signingKey s
 	if signingKey != "" {
 		store.signingKey = []byte(signingKey)
 	}
-	go store.runGC()
+	safego.Go("db-session-gc", store.runGC)
 	return store
 }
 

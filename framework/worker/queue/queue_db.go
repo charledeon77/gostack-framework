@@ -52,6 +52,7 @@ import (
 	"time"
 
 	"github.com/charledeon77/gostack-framework/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/foundation"
 )
 
 // dbJobEnvelope is the JSON structure persisted to the jobs table.
@@ -192,7 +193,10 @@ func (q *DatabaseQueue) StartWorkers(workers int) {
 	q.ReclaimReserved(5 * time.Minute)
 	for i := 0; i < workers; i++ {
 		q.wg.Add(1)
-		go q.worker(i)
+		id := i
+		foundation.SafeGo(fmt.Sprintf("db-queue-worker-%d", id), func() {
+			q.worker(id)
+		})
 	}
 }
 
@@ -329,7 +333,17 @@ func (q *DatabaseQueue) processNext(workerID int) error {
 		return fmt.Errorf("failed to hydrate job %q (id=%d): %w", env.Name, jobID, err)
 	}
 
-	runErr := job.Handle()
+	// Isolate individual job panics: a panicking job is treated as a failed
+	// attempt and dead-lettered rather than killing the worker goroutine.
+	var runErr error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				runErr = fmt.Errorf("job %q (id=%d) panicked: %v", env.Name, jobID, r)
+			}
+		}()
+		runErr = job.Handle()
+	}()
 	if runErr != nil {
 		attempts++
 		if retryable, isRetryable := job.(contract.Retryable); isRetryable && attempts < retryable.MaxAttempts() {
