@@ -22,6 +22,7 @@ Implementation:
 package database
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"github.com/charledeon77/gostack-framework/framework/contract"
@@ -80,38 +81,57 @@ func NewSQLAdapter(driver, dsn string) (*SQLAdapter, error) {
 }
 
 // Connect verifies that the database connection is alive by performing a Ping.
+// F-220: use PingContext with a 10 s timeout so a dead server doesn't block forever.
 func (a *SQLAdapter) Connect() error {
 	if a == nil || a.db == nil {
 		return fmt.Errorf("database connection is uninitialized")
 	}
-	if err := a.db.Ping(); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := a.db.PingContext(ctx); err != nil {
 		return fmt.Errorf("failed to connect to database: %w", err)
 	}
 	return nil
 }
 
-// Query executes the provided SQL query with parameters and returns the result set.
-func (a *SQLAdapter) Query(sqlString string, args ...any) (any, error) {
+// QueryContext executes the provided SQL query with a caller-supplied context.
+// F-219: prefer this method when a request context is available.
+func (a *SQLAdapter) QueryContext(ctx context.Context, sqlString string, args ...any) (any, error) {
 	if a == nil || a.db == nil {
 		return nil, fmt.Errorf("database connection is uninitialized")
 	}
-	rows, err := a.db.Query(sqlString, args...)
+	rows, err := a.db.QueryContext(ctx, sqlString, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query execution failed: %w", err)
 	}
 	return rows, nil
 }
 
-// Exec executes a SQL statement that returns no rows (DDL, INSERT, UPDATE, DELETE).
-func (a *SQLAdapter) Exec(sqlString string, args ...any) error {
+// Query executes the provided SQL query using background context.
+// F-219: wraps QueryContext without premature context cancellation (caller owns Rows lifecycle).
+func (a *SQLAdapter) Query(sqlString string, args ...any) (any, error) {
+	return a.QueryContext(context.Background(), sqlString, args...)
+}
+
+// ExecContext executes a SQL statement that returns no rows with a caller-supplied context.
+// F-219: prefer this method when a request context is available.
+func (a *SQLAdapter) ExecContext(ctx context.Context, sqlString string, args ...any) error {
 	if a == nil || a.db == nil {
 		return fmt.Errorf("database connection is uninitialized")
 	}
-	_, err := a.db.Exec(sqlString, args...)
+	_, err := a.db.ExecContext(ctx, sqlString, args...)
 	if err != nil {
 		return fmt.Errorf("exec statement failed: %w", err)
 	}
 	return nil
+}
+
+// Exec executes a SQL statement that returns no rows (DDL, INSERT, UPDATE, DELETE).
+// F-219: wraps ExecContext so callers that have no request context still get a timeout.
+func (a *SQLAdapter) Exec(sqlString string, args ...any) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return a.ExecContext(ctx, sqlString, args...)
 }
 
 // ExecResult executes a SQL statement and returns the sql.Result for retrieving LastInsertId (PAR-13).

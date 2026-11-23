@@ -25,8 +25,10 @@ package database
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 )
 
@@ -138,7 +140,29 @@ func mapRowToStruct(columns []string, values []sql.RawBytes, structVal reflect.V
 				targetField.SetFloat(val)
 			}
 		case reflect.Bool:
-			targetField.SetBool(string(rawValue) == "1" || string(rawValue) == "true")
+			// F-185: Accept Postgres "t"/"f" in addition to "1"/"true"/"0"/"false"
+			s := strings.ToLower(strings.TrimSpace(string(rawValue)))
+			targetField.SetBool(s == "1" || s == "true" || s == "t" || s == "yes" || s == "on")
+		case reflect.Ptr:
+			// F-186: allocate and recurse for pointer fields (e.g. *time.Time)
+			elemType := targetField.Type().Elem()
+			ptr := reflect.New(elemType)
+			tmp := ptr.Elem()
+			if err := mapRawToValue(tmp, rawValue); err == nil {
+				targetField.Set(ptr)
+			}
+		case reflect.Slice:
+			// F-186: []byte columns (BYTEA/BLOB) stored verbatim; other slices JSON-decoded
+			if targetField.Type().Elem().Kind() == reflect.Uint8 {
+				b := make([]byte, len(rawValue))
+				copy(b, rawValue)
+				targetField.SetBytes(b)
+			} else {
+				ptr := reflect.New(targetField.Type())
+				if err := json.Unmarshal(rawValue, ptr.Interface()); err == nil {
+					targetField.Set(ptr.Elem())
+				}
+			}
 		case reflect.Struct:
 			typeName := targetField.Type().String()
 			if typeName == "time.Time" {
@@ -198,6 +222,41 @@ func mapRowToStruct(columns []string, values []sql.RawBytes, structVal reflect.V
 					targetField.FieldByName("Valid").SetBool(true)
 				}
 			}
+		}
+	}
+	return nil
+}
+
+// mapRawToValue sets a reflect.Value from a raw byte slice, used for Ptr recursion.
+func mapRawToValue(v reflect.Value, raw []byte) error {
+	switch v.Kind() {
+	case reflect.String:
+		v.SetString(string(raw))
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		var val int64
+		if _, err := fmt.Sscanf(string(raw), "%d", &val); err != nil {
+			return err
+		}
+		v.SetInt(val)
+	case reflect.Float32, reflect.Float64:
+		var val float64
+		if _, err := fmt.Sscanf(string(raw), "%f", &val); err != nil {
+			return err
+		}
+		v.SetFloat(val)
+	case reflect.Bool:
+		s := strings.ToLower(strings.TrimSpace(string(raw)))
+		v.SetBool(s == "1" || s == "true" || s == "t")
+	case reflect.Struct:
+		if v.Type().String() == "time.Time" {
+			formats := []string{"2006-01-02 15:04:05", time.RFC3339, "2006-01-02"}
+			for _, f := range formats {
+				if t, err := time.Parse(f, string(raw)); err == nil {
+					v.Set(reflect.ValueOf(t))
+					return nil
+				}
+			}
+			return fmt.Errorf("cannot parse time: %s", string(raw))
 		}
 	}
 	return nil

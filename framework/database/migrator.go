@@ -222,7 +222,8 @@ func (m *Migrator) completedVersions() (map[int64]bool, error) {
 
 	rows, ok := result.(*sql.Rows)
 	if !ok {
-		return map[int64]bool{}, nil
+		// F-213: type assertion failure means the adapter returned something unexpected — treat as error.
+		return nil, fmt.Errorf("[Traveller] unexpected result type from migration query")
 	}
 	defer rows.Close()
 
@@ -233,6 +234,10 @@ func (m *Migrator) completedVersions() (map[int64]bool, error) {
 			return nil, err
 		}
 		completed[version] = true
+	}
+	// F-214: check iterator-level error after the loop.
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("[Traveller] error iterating migration rows: %w", err)
 	}
 	return completed, nil
 }

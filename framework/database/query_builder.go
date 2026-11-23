@@ -41,6 +41,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -894,10 +895,34 @@ func (qb *QueryBuilder) InsertModel(model any, data map[string]any) error {
 	}
 
 	// Fire BeforeSave hook if model implements it.
+	// F-187: After the hook fires, re-extract mutated fields from the struct so that
+	// any mutations the hook made (e.g. hashing passwords, setting UpdatedAt) are
+	// included in the INSERT rather than the pre-hook values in `data`.
 	if model != nil {
 		if hook, ok := model.(BeforeSaver); ok {
 			if err := hook.BeforeSave(); err != nil {
 				return fmt.Errorf("[SparkORM] BeforeSave hook failed: %w", err)
+			}
+			// Re-extract column values from the mutated model into data.
+			modelVal := reflect.ValueOf(model)
+			if modelVal.Kind() == reflect.Ptr {
+				modelVal = modelVal.Elem()
+			}
+			if modelVal.Kind() == reflect.Struct {
+				modelType := modelVal.Type()
+				for col := range data {
+					for i := 0; i < modelType.NumField(); i++ {
+						field := modelType.Field(i)
+						dbTag := field.Tag.Get("db")
+						if dbTag == "" {
+							dbTag = strings.ToLower(field.Name)
+						}
+						if dbTag == col {
+							data[col] = modelVal.Field(i).Interface()
+							break
+						}
+					}
+				}
 			}
 		}
 	}

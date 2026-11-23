@@ -34,6 +34,7 @@ Implementation:
 package contract
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -58,8 +59,16 @@ type Database interface {
 	// the result set or an error. 
 	Query(sql string, args ...any) (interface{}, error)
 
+	// QueryContext executes a parameterized SQL string with context deadline/cancellation.
+	// F-219: callers with a request context should prefer this over Query.
+	QueryContext(ctx context.Context, sql string, args ...any) (interface{}, error)
+
 	// Exec executes a parameterized SQL statement that returns no rows (e.g. DDL, INSERT, UPDATE).
 	Exec(sql string, args ...any) error
+
+	// ExecContext executes a parameterized SQL statement with context deadline/cancellation.
+	// F-219: callers with a request context should prefer this over Exec.
+	ExecContext(ctx context.Context, sql string, args ...any) error
 
 	// BeginTx opens a new database transaction and returns it as a Tx interface.
 	BeginTx() (Tx, error)

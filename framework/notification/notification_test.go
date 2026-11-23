@@ -1,6 +1,7 @@
 package notification
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -63,7 +64,15 @@ type MockDatabase struct {
 
 func (m *MockDatabase) Connect() error                                     { return nil }
 func (m *MockDatabase) Query(sql string, args ...any) (interface{}, error) { return nil, nil }
+func (m *MockDatabase) QueryContext(ctx context.Context, sql string, args ...any) (interface{}, error) {
+	return nil, nil
+}
 func (m *MockDatabase) Exec(sql string, args ...any) error {
+	m.ExecutedQueries = append(m.ExecutedQueries, sql)
+	m.ExecutedArgs = append(m.ExecutedArgs, args)
+	return nil
+}
+func (m *MockDatabase) ExecContext(ctx context.Context, sql string, args ...any) error {
 	m.ExecutedQueries = append(m.ExecutedQueries, sql)
 	m.ExecutedArgs = append(m.ExecutedArgs, args)
 	return nil

@@ -143,14 +143,8 @@ func Create[T any](db contract.Database, fields map[string]any) (*T, error) {
 		fName, err := findFieldByDBTag(reflect.TypeOf(model), k)
 		if err == nil {
 			f := val.FieldByName(fName)
-			if f.CanSet() {
-				// Convert types if needed (e.g. float64 from JSON to int/uint)
-				vVal := reflect.ValueOf(v)
-				if f.Type() != vVal.Type() && vVal.Type().ConvertibleTo(f.Type()) {
-					f.Set(vVal.Convert(f.Type()))
-				} else {
-					f.Set(vVal)
-				}
+			if err := applyField(f, fName, v); err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -185,13 +179,8 @@ func ForceCreate[T any](db contract.Database, fields map[string]any) (*T, error)
 		fName, err := findFieldByDBTag(reflect.TypeOf(model), k)
 		if err == nil {
 			f := val.FieldByName(fName)
-			if f.CanSet() {
-				vVal := reflect.ValueOf(v)
-				if f.Type() != vVal.Type() && vVal.Type().ConvertibleTo(f.Type()) {
-					f.Set(vVal.Convert(f.Type()))
-				} else {
-					f.Set(vVal)
-				}
+			if err := applyField(f, fName, v); err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -307,6 +296,33 @@ func OnlyTrashed[T any](db contract.Database) ([]T, error) {
 	return models, nil
 }
 
+func applyField(f reflect.Value, fName string, v any) error {
+	if !f.CanSet() {
+		return nil
+	}
+	if v == nil {
+		if f.Kind() == reflect.Ptr || f.Kind() == reflect.Interface || f.Kind() == reflect.Slice || f.Kind() == reflect.Map {
+			f.Set(reflect.Zero(f.Type()))
+			return nil
+		}
+		return fmt.Errorf("active_record: cannot assign null to non-pointer field %q of type %s", fName, f.Type())
+	}
+	vVal := reflect.ValueOf(v)
+	if !vVal.IsValid() {
+		return nil
+	}
+	if f.Type() != vVal.Type() {
+		if vVal.Type().ConvertibleTo(f.Type()) {
+			f.Set(vVal.Convert(f.Type()))
+		} else {
+			return fmt.Errorf("active_record: cannot convert value of type %s to field %q of type %s", vVal.Type(), fName, f.Type())
+		}
+	} else {
+		f.Set(vVal)
+	}
+	return nil
+}
+
 // getTableName extracts table name dynamically or falls back to pluralized type.
 func getTableName(val any) string {
 	if m, ok := val.(Model); ok {
@@ -315,6 +331,12 @@ func getTableName(val any) string {
 	t := reflect.TypeOf(val)
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
+	} else {
+		// F-183: check pointer receiver if val was passed by value
+		ptr := reflect.New(t).Interface()
+		if m, ok := ptr.(Model); ok {
+			return m.TableName()
+		}
 	}
 	return strings.ToLower(t.Name()) + "s"
 }

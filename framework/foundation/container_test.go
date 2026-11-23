@@ -1,9 +1,11 @@
 package foundation
 
 import (
-	"github.com/charledeon77/gostack-framework/framework/contract"
+	"context"
 	"sync"
 	"testing"
+
+	"github.com/charledeon77/gostack-framework/framework/contract"
 )
 
 // Concrete structural representations used to verify container type alignment behaviors.
@@ -19,7 +21,15 @@ func (m *mockDatabase) Query(sql string, args ...any) (interface{}, error) {
 	return nil, nil
 }
 
+func (m *mockDatabase) QueryContext(ctx context.Context, sql string, args ...any) (interface{}, error) {
+	return nil, nil
+}
+
 func (m *mockDatabase) Exec(sql string, args ...any) error {
+	return nil
+}
+
+func (m *mockDatabase) ExecContext(ctx context.Context, sql string, args ...any) error {
 	return nil
 }
 

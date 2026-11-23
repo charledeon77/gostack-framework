@@ -132,12 +132,20 @@ func (t *Table) Timestamps() {
 func (t *Table) Compile(tableName string) string {
 	var cols []string
 	for _, col := range t.columns {
-		cols = append(cols, t.compileColumn(col))
+		compiled := t.compileColumn(col)
+		if compiled == "" {
+			continue // skip columns with invalid names (already guarded in Builder.Create)
+		}
+		cols = append(cols, compiled)
 	}
 	return fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (\n\t%s\n)", tableName, strings.Join(cols, ",\n\t"))
 }
 
 func (t *Table) compileColumn(col *Column) string {
+	// F-209: validate column name against identifier regex before emitting DDL.
+	if !identRegex.MatchString(col.name) {
+		return ""
+	}
 	var sb strings.Builder
 	sb.WriteString(col.name)
 	sb.WriteString(" ")
@@ -179,7 +187,14 @@ func (t *Table) compileColumn(col *Column) string {
 	}
 
 	if col.hasDefault {
-		sb.WriteString(fmt.Sprintf(" DEFAULT '%v'", col.defaultVal))
+		// F-210, F-211: emit unquoted literals for numeric/boolean; escape single-quotes for strings.
+		switch col.kind {
+		case KindBoolean, KindInteger:
+			sb.WriteString(fmt.Sprintf(" DEFAULT %v", col.defaultVal))
+		default:
+			escaped := strings.ReplaceAll(fmt.Sprintf("%v", col.defaultVal), "'", "''")
+			sb.WriteString(fmt.Sprintf(" DEFAULT '%s'", escaped))
+		}
 	}
 
 	if col.isUnique {
@@ -202,6 +217,10 @@ func NewBuilder(tx contract.Tx, driver string) *Builder {
 
 // Create compiles and executes a CREATE TABLE statement.
 func (b *Builder) Create(tableName string, fn func(*Table)) error {
+	// F-207: validate table name before using it in DDL.
+	if !tableRegex.MatchString(tableName) {
+		return fmt.Errorf("[Grapher] invalid table name %q", tableName)
+	}
 	tbl := NewTable(b.driver)
 	fn(tbl)
 	ddl := tbl.Compile(tableName)
@@ -213,6 +232,10 @@ func (b *Builder) Create(tableName string, fn func(*Table)) error {
 
 // Drop executes a DROP TABLE IF EXISTS statement for the given table name.
 func (b *Builder) Drop(tableName string) error {
+	// F-208: validate table name before using it in DDL.
+	if !tableRegex.MatchString(tableName) {
+		return fmt.Errorf("[Grapher] invalid table name %q for DROP", tableName)
+	}
 	ddl := fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName)
 	if err := b.tx.Exec(ddl); err != nil {
 		return fmt.Errorf("[Grapher] Drop table '%s' failed: %w", tableName, err)

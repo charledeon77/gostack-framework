@@ -502,9 +502,15 @@ func (qb *QueryBuilder) loadManyToMany(sliceVal reflect.Value, relationName, fkT
 	if pivotTable == "" {
 		return fmt.Errorf("[GoStack Relation Engine] many_to_many relation field %s is missing the 'pivot' tag", relationName)
 	}
+	if !tableRegex.MatchString(pivotTable) {
+		return fmt.Errorf("[GoStack Relation Engine] pivot tag %q contains invalid characters", pivotTable)
+	}
 	parentFK := relField.Tag.Get("fk")
 	if parentFK == "" {
 		parentFK = strings.ToLower(parentType.Name()) + "_id"
+	}
+	if !identRegex.MatchString(parentFK) {
+		return fmt.Errorf("[GoStack Relation Engine] fk tag %q contains invalid characters", parentFK)
 	}
 	relatedFK := relField.Tag.Get("related_fk")
 	if relatedFK == "" {
@@ -519,6 +525,12 @@ func (qb *QueryBuilder) loadManyToMany(sliceVal reflect.Value, relationName, fkT
 			childType = childType.Elem()
 		}
 		relatedFK = strings.ToLower(childType.Name()) + "_id"
+	}
+	if !identRegex.MatchString(relatedFK) {
+		return fmt.Errorf("[GoStack Relation Engine] related_fk tag %q contains invalid characters", relatedFK)
+	}
+	if parentFK == relatedFK {
+		return fmt.Errorf("[GoStack Relation Engine] self-referential pivot: fk and related_fk are both %q — every record would map to itself", parentFK)
 	}
 
 	var placeholders []string
@@ -676,9 +688,15 @@ func (qb *QueryBuilder) loadHasManyThrough(sliceVal reflect.Value, relationName,
 	if throughTable == "" {
 		return fmt.Errorf("[GoStack Relation Engine] has_many_through relation field %s is missing the 'through' tag", relationName)
 	}
+	if !tableRegex.MatchString(throughTable) {
+		return fmt.Errorf("[GoStack Relation Engine] through tag %q contains invalid characters", throughTable)
+	}
 	parentFK := relField.Tag.Get("fk")
 	if parentFK == "" {
 		parentFK = strings.ToLower(parentType.Name()) + "_id"
+	}
+	if !identRegex.MatchString(parentFK) {
+		return fmt.Errorf("[GoStack Relation Engine] fk tag %q contains invalid characters", parentFK)
 	}
 	farFK := relField.Tag.Get("through_fk")
 	if farFK == "" {
@@ -687,6 +705,9 @@ func (qb *QueryBuilder) loadHasManyThrough(sliceVal reflect.Value, relationName,
 	if farFK == "" {
 		singularThrough := strings.TrimSuffix(throughTable, "s")
 		farFK = singularThrough + "_id"
+	}
+	if !identRegex.MatchString(farFK) {
+		return fmt.Errorf("[GoStack Relation Engine] through_fk tag %q contains invalid characters", farFK)
 	}
 
 	var placeholders []string
@@ -766,7 +787,8 @@ func (qb *QueryBuilder) loadHasManyThrough(sliceVal reflect.Value, relationName,
 		if fName, err := findFieldByDBTag(structChildType, farFK); err == nil {
 			farFKVal = childStructVal.FieldByName(fName).Interface()
 		} else {
-			farFKVal = childStructVal.FieldByName(structChildType.Field(0).Name).Interface()
+			// F-203: return error instead of silently falling back to Field(0)
+			return fmt.Errorf("[GoStack Relation Engine] cannot find FK field %q in through child struct", farFK)
 		}
 		farFKStr := normalizeKey(farFKVal)
 		farByThroughID[farFKStr] = append(farByThroughID[farFKStr], childVal)

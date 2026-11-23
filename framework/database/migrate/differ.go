@@ -4,8 +4,13 @@ import (
 	"database/sql"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 )
+
+// identRe matches safe SQL identifier names (letters, digits, underscores; must start with letter or underscore).
+// F-227: used to guard tableName and dbTag values before inserting them into ALTER TABLE DDL.
+var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // Purpose: To provide automatic struct-to-database schema diffing for Traveller (Migration Engine).
 // Philosophy: Django's `makemigrations` is one of its most beloved productivity features.
@@ -55,6 +60,11 @@ func Diff(db *sql.DB, driver string, models ...any) ([]DiffResult, error) {
 			tableName = m.TableName()
 		}
 
+		// F-227: validate the derived table name before using it in DDL.
+		if !identRe.MatchString(tableName) {
+			return nil, fmt.Errorf("differ: unsafe table name %q", tableName)
+		}
+
 		// Fetch existing columns from the database
 		existingCols, err := fetchColumns(db, driver, tableName)
 		if err != nil {
@@ -71,6 +81,11 @@ func Diff(db *sql.DB, driver string, models ...any) ([]DiffResult, error) {
 			// Skip relation fields
 			if field.Tag.Get("rel") != "" {
 				continue
+			}
+
+			// F-227: validate the db tag before inserting it into DDL.
+			if !identRe.MatchString(dbTag) {
+				return nil, fmt.Errorf("differ: unsafe column tag %q on field %s", dbTag, field.Name)
 			}
 
 			if _, exists := existingCols[dbTag]; !exists {
@@ -129,8 +144,9 @@ func fetchColumns(db *sql.DB, driver string, table string) (map[string]struct{},
 		)
 	default:
 		// MySQL and other INFORMATION_SCHEMA-compatible databases.
+		// F-228: add TABLE_SCHEMA = DATABASE() to avoid matching identically-named tables in other schemas.
 		rows, err = db.Query(
-			`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ?`, table,
+			`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ? AND TABLE_SCHEMA = DATABASE()`, table,
 		)
 	}
 

@@ -20,6 +20,7 @@ Implementation:
 package database
 
 import (
+	"context"
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
@@ -39,12 +40,14 @@ import (
 
 type mockDB struct{ driver string }
 
-func (m *mockDB) Connect() error                              { return nil }
-func (m *mockDB) Query(sql string, args ...any) (any, error)  { return nil, nil }
-func (m *mockDB) Exec(sql string, args ...any) error          { return nil }
-func (m *mockDB) BeginTx() (contract.Tx, error)              { return nil, nil }
-func (m *mockDB) Driver() string                              { return m.driver }
-func (m *mockDB) Close() error                                { return nil }
+func (m *mockDB) Connect() error                                         { return nil }
+func (m *mockDB) Query(sql string, args ...any) (any, error)             { return nil, nil }
+func (m *mockDB) QueryContext(ctx context.Context, sql string, args ...any) (any, error) { return nil, nil }
+func (m *mockDB) Exec(sql string, args ...any) error                     { return nil }
+func (m *mockDB) ExecContext(ctx context.Context, sql string, args ...any) error { return nil }
+func (m *mockDB) BeginTx() (contract.Tx, error)                         { return nil, nil }
+func (m *mockDB) Driver() string                                         { return m.driver }
+func (m *mockDB) Close() error                                           { return nil }
 
 // ─── QueryBuilder placeholder tests ───────────────────────────────────────────
 
@@ -461,12 +464,19 @@ type relationsTestDB struct {
 	driver string
 }
 
-func (r *relationsTestDB) Connect() error                              { return nil }
-func (r *relationsTestDB) Query(q string, args ...any) (any, error)  { return r.db.Query(q, args...) }
-func (r *relationsTestDB) Exec(q string, args ...any) error          { _, err := r.db.Exec(q, args...); return err }
-func (r *relationsTestDB) BeginTx() (contract.Tx, error)              { return &mockTx{db: r}, nil }
-func (r *relationsTestDB) Driver() string                              { return r.driver }
-func (r *relationsTestDB) Close() error                                { return nil }
+func (r *relationsTestDB) Connect() error                                         { return nil }
+func (r *relationsTestDB) Query(q string, args ...any) (any, error)             { return r.db.Query(q, args...) }
+func (r *relationsTestDB) QueryContext(ctx context.Context, q string, args ...any) (any, error) {
+	return r.db.QueryContext(ctx, q, args...)
+}
+func (r *relationsTestDB) Exec(q string, args ...any) error                     { _, err := r.db.Exec(q, args...); return err }
+func (r *relationsTestDB) ExecContext(ctx context.Context, q string, args ...any) error {
+	_, err := r.db.ExecContext(ctx, q, args...)
+	return err
+}
+func (r *relationsTestDB) BeginTx() (contract.Tx, error)                         { return &mockTx{db: r}, nil }
+func (r *relationsTestDB) Driver() string                                         { return r.driver }
+func (r *relationsTestDB) Close() error                                           { return nil }
 
 type UserRelModel struct {
 	ID    int64          `db:"id"`
@@ -939,7 +949,15 @@ func (s *spyDB) Query(query string, args ...any) (any, error) {
 	s.executed = append(s.executed, query)
 	return nil, nil
 }
+func (s *spyDB) QueryContext(ctx context.Context, query string, args ...any) (any, error) {
+	s.executed = append(s.executed, query)
+	return nil, nil
+}
 func (s *spyDB) Exec(query string, args ...any) error {
+	s.executed = append(s.executed, query)
+	return nil
+}
+func (s *spyDB) ExecContext(ctx context.Context, query string, args ...any) error {
 	s.executed = append(s.executed, query)
 	return nil
 }
@@ -1198,7 +1216,15 @@ type execRecordingMockDB struct {
 
 func (m *execRecordingMockDB) Connect() error                             { return nil }
 func (m *execRecordingMockDB) Query(sql string, args ...any) (any, error) { return nil, nil }
+func (m *execRecordingMockDB) QueryContext(ctx context.Context, sql string, args ...any) (any, error) {
+	return nil, nil
+}
 func (m *execRecordingMockDB) Exec(sql string, args ...any) error {
+	m.lastSQL = sql
+	m.lastArgs = args
+	return nil
+}
+func (m *execRecordingMockDB) ExecContext(ctx context.Context, sql string, args ...any) error {
 	m.lastSQL = sql
 	m.lastArgs = args
 	return nil
