@@ -39,6 +39,8 @@ package console
 
 import (
 	"fmt"
+
+	"github.com/charledeon77/gostack-framework/framework/foundation"
 )
 
 // Command defines the structural rules that all CLI command handlers must implement.
@@ -87,7 +89,7 @@ func (k *Kernel) Run(args []string) error {
 	}
 
 	if subcommand == "--version" || subcommand == "-v" || subcommand == "version" {
-		fmt.Println("GoStack Framework v1.0.0")
+		fmt.Printf("GoStack Framework %s\n", foundation.Version)
 		return nil
 	}
 

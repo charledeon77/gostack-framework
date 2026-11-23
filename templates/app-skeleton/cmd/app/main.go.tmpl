@@ -17,7 +17,7 @@ func main() {
 
 	if dbDSN != "" {
 		if err := gostack.InitDatabase(dbDriver, dbDSN); err != nil {
-			log.Printf("[GoStack App Warning] Database connection returned: %v\n", err)
+			log.Fatalf("[GoStack App Fatal] Failed to initialize database (%s: %s): %v\n", dbDriver, dbDSN, err)
 		}
 	}
 

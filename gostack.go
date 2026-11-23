@@ -5,8 +5,12 @@ import (
 	"github.com/charledeon77/gostack-framework/framework/auth"
 	"github.com/charledeon77/gostack-framework/framework/contract"
 	"github.com/charledeon77/gostack-framework/framework/database"
+	"github.com/charledeon77/gostack-framework/framework/foundation"
 	"github.com/charledeon77/gostack-framework/framework/mail"
 )
+
+// Version is the current semantic release tag of the GoStack framework.
+const Version = foundation.Version
 
 // DB holds the initialized global state application database driver adapter connection.
 // This is populated for relational SQL databases (MySQL, PostgreSQL, CockroachDB, SQLite).

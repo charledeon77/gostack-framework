@@ -15,6 +15,8 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
+
+	"github.com/charledeon77/gostack-framework/framework/foundation"
 )
 
 // NewCommand scaffolds a new GoStack project from the base GitHub repository.
@@ -105,7 +107,7 @@ func (c *NewCommand) Execute(args []string) error {
 	fmt.Println("\033[90m        the defaults. You can easily change them later in your .env file.\033[0m")
 	fmt.Println()
 
-	var dbType string // "sql", "mongodb", "neo4j", "cassandra"
+	var dbType string   // "sql", "mongodb", "neo4j", "cassandra"
 	var dbDriver string // "mysql", "postgres", "sqlite"
 	var dbDSN string
 	var mongoURI, mongoDatabase string
@@ -617,7 +619,7 @@ func (c *NewCommand) Execute(args []string) error {
 			fmt.Printf("⚠️ Warning: Failed to scaffold authentication: %v\n", err)
 		} else {
 			fmt.Println("\033[1;32m✔ Authentication scaffolded successfully!\033[0m")
-			
+
 			// Run go mod tidy again to resolve any new imports added by make:auth
 			tidyAuthCmd := exec.Command("go", "mod", "tidy")
 			tidyAuthCmd.Dir = projectDir
@@ -647,7 +649,7 @@ func (c *NewCommand) Execute(args []string) error {
 	fmt.Println()
 	fmt.Printf("\033[1m📋 Scaffolding Summary:\033[0m\n")
 	fmt.Printf("  • Project Name:    \033[1;36m%s\033[0m\n", projectName)
-	
+
 	switch dbType {
 	case "sql":
 		fmt.Printf("  • Database Engine: \033[1;36mRelational SQL (%s)\033[0m\n", dbDriver)
@@ -677,7 +679,7 @@ func (c *NewCommand) Execute(args []string) error {
 	fmt.Println("\033[1;32m🚀 Next Steps to Get Started:\033[0m")
 	fmt.Printf("  1. Enter your project directory:\n")
 	fmt.Printf("     \033[36mcd %s\033[0m\n\n", projectName)
-	
+
 	if dbType == "sql" {
 		if scaffoldAuth {
 			fmt.Println("  2. Run database migrations to create auth tables:")
@@ -734,7 +736,7 @@ func frameworkReleaseTag() string {
 			return v
 		}
 	}
-	return "v1.0.14"
+	return foundation.Version
 }
 
 // verifyArchiveChecksum fetches the published SHA-256 checksum file for the

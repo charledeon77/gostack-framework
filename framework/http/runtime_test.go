@@ -267,3 +267,49 @@ func TestContext_RenderBuffersBeforeStatus(t *testing.T) {
 	}
 }
 
+func TestRouter_UseGlobalMiddleware(t *testing.T) {
+	router := NewRouter()
+	var order []string
+
+	// Register global middleware via router.Use
+	router.Use(func(ctx *Context, next NextHandler) error {
+		order = append(order, "global-1")
+		return next(ctx)
+	})
+	router.Use(func(ctx *Context, next NextHandler) error {
+		order = append(order, "global-2")
+		return next(ctx)
+	})
+
+	// Route-specific middleware
+	routeMiddleware := func(ctx *Context, next NextHandler) error {
+		order = append(order, "route-specific")
+		return next(ctx)
+	}
+
+	router.Get("/test", func(ctx *Context) {
+		order = append(order, "handler")
+		ctx.Writer.Write([]byte("ok"))
+	}, routeMiddleware)
+
+	engine := NewEngine(router, nil)
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	if w.Code != netHTTP.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", w.Code)
+	}
+
+	expectedOrder := []string{"global-1", "global-2", "route-specific", "handler"}
+	if len(order) != len(expectedOrder) {
+		t.Fatalf("expected %d execution steps, got %d (%v)", len(expectedOrder), len(order), order)
+	}
+	for i, v := range expectedOrder {
+		if order[i] != v {
+			t.Errorf("step %d: expected %q, got %q", i, v, order[i])
+		}
+	}
+}
+
+

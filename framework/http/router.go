@@ -46,15 +46,24 @@ type Router struct {
 	notFoundHandler         func(ctx *Context)
 	methodNotAllowedHandler func(ctx *Context)
 	errorHandler            func(ctx *Context, err error)
+	globalMiddleware        []Middleware
 }
 
 // NewRouter initializes a fresh, memory-isolated routing table.
 func NewRouter() *Router {
 	return &Router{
-		routes:        make(map[string]func(ctx *Context) error),
-		dynamicRoutes: make([]*Route, 0),
-		namedRoutes:   make(map[string]*Route),
+		routes:           make(map[string]func(ctx *Context) error),
+		dynamicRoutes:    make([]*Route, 0),
+		namedRoutes:      make(map[string]*Route),
+		globalMiddleware: make([]Middleware, 0),
 	}
+}
+
+// Use registers one or more global middleware layers that execute on every route.
+// Global middleware runs before route-specific or group-specific middleware.
+func (r *Router) Use(middleware ...Middleware) *Router {
+	r.globalMiddleware = append(r.globalMiddleware, middleware...)
+	return r
 }
 
 // SetNotFoundHandler registers a custom handler for 404 Not Found responses.
@@ -88,7 +97,10 @@ func (r *Router) register(method, path string, handler func(ctx *Context), middl
 
 func (r *Router) registerWithError(method, path string, handler func(ctx *Context) error, middleware []Middleware) *Route {
 	pipeline := NewPipeline()
-	pipeline.Through(middleware...)
+	allMiddleware := make([]Middleware, 0, len(r.globalMiddleware)+len(middleware))
+	allMiddleware = append(allMiddleware, r.globalMiddleware...)
+	allMiddleware = append(allMiddleware, middleware...)
+	pipeline.Through(allMiddleware...)
 	runPipeline := func(ctx *Context) error {
 		return pipeline.Run(ctx, func(c *Context) error {
 			return handler(c)
