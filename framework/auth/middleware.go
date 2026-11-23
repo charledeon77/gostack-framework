@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -145,20 +146,31 @@ func AuthThrottle(limit int, period time.Duration) http.Middleware {
 	}
 }
 
-// resolveClientIP reads the originating IP address from proxy headers then remote addr.
+// resolveClientIP reads the originating IP address.
+// Forwarding headers (X-Forwarded-For, X-Real-IP) are ONLY trusted when RemoteAddr matches TRUSTED_PROXIES (SEC-10).
 func resolveClientIP(r *netHTTP.Request) string {
-	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
-		if comma := strings.Index(ip, ","); comma != -1 {
-			return strings.TrimSpace(ip[:comma])
-		}
-		return strings.TrimSpace(ip)
-	}
-	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		return strings.TrimSpace(ip)
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
 	}
+
+	trustedProxies := os.Getenv("TRUSTED_PROXIES")
+	if trustedProxies != "" {
+		for _, p := range strings.Split(trustedProxies, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" && p == host {
+				if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
+					if comma := strings.Index(ip, ","); comma != -1 {
+						return strings.TrimSpace(ip[:comma])
+					}
+					return strings.TrimSpace(ip)
+				}
+				if ip := r.Header.Get("X-Real-IP"); ip != "" {
+					return strings.TrimSpace(ip)
+				}
+			}
+		}
+	}
+
 	return host
 }

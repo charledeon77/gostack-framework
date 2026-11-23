@@ -74,26 +74,36 @@ func (m *EmailVerificationManager) VerifyVerificationURL(rawURL string, user Mus
 // EmailVerificationMiddleware enforces that authenticated users have verified their email.
 func EmailVerificationMiddleware(redirectURL string) gostackHTTP.Middleware {
 	return func(ctx *gostackHTTP.Context, next gostackHTTP.NextHandler) error {
-		if cacheVal := ctx.Request.Context().Value(contract.UserContextKey); cacheVal != nil {
-			if cache, ok := cacheVal.(*contract.AuthCache); ok && cache.Loaded && cache.User != nil {
-				if vUser, isV := cache.User.(MustVerifyEmail); isV && !vUser.HasVerifiedEmail() {
-					accept := ctx.Request.Header.Get("Accept")
-					if strings.Contains(accept, "application/json") {
-						return ctx.JSON(http.StatusForbidden, map[string]string{
-							"error": "Your email address is not verified.",
-						})
-					}
-					if redirectURL != "" {
-						ctx.Writer.Header().Set("Location", redirectURL)
-						ctx.Writer.WriteHeader(http.StatusFound)
-						return nil
-					}
-					return ctx.JSON(http.StatusForbidden, map[string]string{
-						"error": "Your email address is not verified.",
-					})
-				}
-			}
+		cacheVal := ctx.Request.Context().Value(contract.UserContextKey)
+		if cacheVal == nil {
+			return ctx.JSON(http.StatusUnauthorized, map[string]string{
+				"error": "Authentication required.",
+			})
 		}
+		cache, ok := cacheVal.(*contract.AuthCache)
+		if !ok || !cache.Loaded || cache.User == nil {
+			return ctx.JSON(http.StatusUnauthorized, map[string]string{
+				"error": "Authentication required.",
+			})
+		}
+
+		if vUser, isV := cache.User.(MustVerifyEmail); isV && !vUser.HasVerifiedEmail() {
+			accept := ctx.Request.Header.Get("Accept")
+			if strings.Contains(accept, "application/json") {
+				return ctx.JSON(http.StatusForbidden, map[string]string{
+					"error": "Your email address is not verified.",
+				})
+			}
+			if redirectURL != "" {
+				ctx.Writer.Header().Set("Location", redirectURL)
+				ctx.Writer.WriteHeader(http.StatusFound)
+				return nil
+			}
+			return ctx.JSON(http.StatusForbidden, map[string]string{
+				"error": "Your email address is not verified.",
+			})
+		}
+
 		return next(ctx)
 	}
 }

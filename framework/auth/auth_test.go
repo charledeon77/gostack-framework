@@ -2,13 +2,17 @@ package auth
 
 import (
 	"context"
-	"github.com/charledeon77/gostack-framework/framework/contract"
-	"github.com/charledeon77/gostack-framework/framework/http"
+	"fmt"
 	netHTTP "net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/charledeon77/gostack-framework/framework/contract"
+	"github.com/charledeon77/gostack-framework/framework/http"
 )
 
 // ─── MOCKS ───────────────────────────────────────────────────────────────────
@@ -122,7 +126,8 @@ func TestSessionGuard(t *testing.T) {
 	user := &mockUser{id: int64(1), email: "test@example.com", password: "hash"}
 	provider.users[int64(1)] = user
 
-	guard := NewSessionGuard("web", provider)
+	memStore := http.NewInMemoryStore()
+	guard := NewSessionGuard("web", provider, memStore, "gostack_session")
 
 	// 1. Uninitialized session context should fail safely
 	req := httptest.NewRequest("GET", "/", nil)
@@ -131,8 +136,9 @@ func TestSessionGuard(t *testing.T) {
 	}
 
 	// 2. Initialized empty session should fail check
-	sess := newMockSession("sess-1")
+	sess, _ := memStore.Load("sess-1")
 	ctx := context.WithValue(req.Context(), contract.SessionContextKey, sess)
+	ctx = context.WithValue(ctx, contract.SessionStoreContextKey, memStore)
 	req = req.WithContext(ctx)
 
 	if guard.Check(req) {
@@ -149,8 +155,12 @@ func TestSessionGuard(t *testing.T) {
 		t.Fatalf("Login failed: %v", err)
 	}
 
-	if sess.Get(guard.sessionKey) != int64(1) {
-		t.Errorf("Expected session key %s to be 1, got %v", guard.sessionKey, sess.Get(guard.sessionKey))
+	rotatedSess, err := guard.getSession(req)
+	if err != nil {
+		t.Fatalf("getSession failed after login: %v", err)
+	}
+	if rotatedSess.Get(guard.sessionKey) != int64(1) {
+		t.Errorf("Expected session key %s to be 1, got %v", guard.sessionKey, rotatedSess.Get(guard.sessionKey))
 	}
 
 	// 4. Retrieve user and verify cache works
@@ -484,3 +494,52 @@ func TestRouteMiddleware(t *testing.T) {
 		t.Error("Expected unauthenticated guest request to pass Guest middleware")
 	}
 }
+
+func TestLogin_NoStore_ReturnsError(t *testing.T) {
+	guard := NewSessionGuard("web", nil, nil)
+	w := httptest.NewRecorder()
+	mockSess := &mockSession{id: "raw-session-123", data: make(map[string]any)}
+	req := httptest.NewRequest("POST", "/login", nil)
+	req = req.WithContext(context.WithValue(req.Context(), contract.SessionContextKey, mockSess))
+
+	user := &mockUser{id: int64(42), email: "test@example.com"}
+	err := guard.Login(w, req, user)
+	if err == nil {
+		t.Fatal("Expected Login with nil store to return error to prevent session fixation, got nil")
+	}
+}
+
+func TestAuthThrottle_SpoofedXFFDoesNotResetBucket(t *testing.T) {
+	os.Unsetenv("TRUSTED_PROXIES")
+	defer os.Unsetenv("TRUSTED_PROXIES")
+
+	throttleMw := AuthThrottle(5, 1*time.Minute)
+	calls := 0
+
+	for i := 0; i < 10; i++ {
+		req := httptest.NewRequest("POST", "/login", strings.NewReader("email=user@example.com"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		// Attacker sends rotating X-Forwarded-For header on every request
+		req.Header.Set("X-Forwarded-For", fmt.Sprintf("198.51.100.%d", i+1))
+		req.RemoteAddr = "203.0.113.195:12345"
+
+		w := httptest.NewRecorder()
+		ctx := &http.Context{
+			Request: req,
+			Writer:  w,
+		}
+
+		err := throttleMw(ctx, func(c *http.Context) error {
+			calls++
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+
+	if calls != 5 {
+		t.Fatalf("expected exactly 5 allowed requests before throttling, got %d (spoofed X-Forwarded-For bypassed throttle)", calls)
+	}
+}
+

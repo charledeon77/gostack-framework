@@ -55,6 +55,9 @@ func (g *Gate) Denies(user contract.Authenticatable, ability string, args ...any
 }
 
 func getResourceName(resource any) string {
+	if resource == nil {
+		return ""
+	}
 	t := reflect.TypeOf(resource)
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()

@@ -30,6 +30,9 @@ Implementation:
 package auth
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strconv"
@@ -153,46 +156,45 @@ func (g *SessionGuard) Login(w http.ResponseWriter, r *http.Request, user contra
 	}
 
 	store := g.getStore(r)
+	if store == nil {
+		return errors.New("auth: session store is not configured or unreachable; cannot rotate session")
+	}
 	cookieName := g.getCookieName(r)
 
-	targetSess := sess
-	if store != nil {
-		newSess, rotateErr := store.Rotate(sess.ID())
-		if rotateErr != nil {
-			return rotateErr
-		}
-		targetSess = newSess
-
-		// Re-emit session cookie with newly rotated session ID
-		isSecure := true
-		appEnv := strings.ToLower(os.Getenv("APP_ENV"))
-		if appEnv == "local" || appEnv == "development" {
-			isSecure = r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
-		}
-		maxAge := 7200
-		if lifetimeStr := os.Getenv("SESSION_LIFETIME"); lifetimeStr != "" {
-			if mins, parseErr := strconv.Atoi(lifetimeStr); parseErr == nil && mins > 0 {
-				maxAge = mins * 60
-			}
-		}
-
-		http.SetCookie(w, &http.Cookie{
-			Name:     cookieName,
-			Value:    targetSess.ID(),
-			Path:     "/",
-			HttpOnly: true,
-			Secure:   isSecure,
-			SameSite: http.SameSiteLaxMode,
-			MaxAge:   maxAge,
-		})
+	newSess, rotateErr := store.Rotate(sess.ID())
+	if rotateErr != nil {
+		return rotateErr
 	}
+	targetSess := newSess
+
+	// Re-emit session cookie with newly rotated session ID
+	isSecure := true
+	appEnv := strings.ToLower(os.Getenv("APP_ENV"))
+	if appEnv == "local" || appEnv == "development" {
+		isSecure = r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	}
+	maxAge := 7200
+	if lifetimeStr := os.Getenv("SESSION_LIFETIME"); lifetimeStr != "" {
+		if mins, parseErr := strconv.Atoi(lifetimeStr); parseErr == nil && mins > 0 {
+			maxAge = mins * 60
+		}
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     cookieName,
+		Value:    targetSess.ID(),
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   isSecure,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   maxAge,
+	})
 
 	targetSess.Set(g.sessionKey, user.GetID())
-	if store != nil {
-		if saveErr := store.Save(targetSess); saveErr != nil {
-			return saveErr
-		}
+	if saveErr := store.Save(targetSess); saveErr != nil {
+		return saveErr
 	}
+	*r = *r.WithContext(context.WithValue(r.Context(), contract.SessionContextKey, targetSess))
 	cacheUser(r, user)
 	return nil
 }
@@ -219,21 +221,33 @@ func (g *SessionGuard) Logout(w http.ResponseWriter, r *http.Request) error {
 	store := g.getStore(r)
 	cookieName := g.getCookieName(r)
 
+	var destroyErr error
 	if store != nil {
-		_ = store.Destroy(sess.ID())
+		destroyErr = store.Destroy(sess.ID())
 	}
 	sess.Clear()
 
-	// Clear client-side cookie
+	// Clear client-side cookie with matching security flags
+	isSecure := true
+	appEnv := strings.ToLower(os.Getenv("APP_ENV"))
+	if appEnv == "local" || appEnv == "development" {
+		isSecure = r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	}
+
 	http.SetCookie(w, &http.Cookie{
 		Name:     cookieName,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   isSecure,
+		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
 
 	cacheUser(r, nil)
+	if destroyErr != nil {
+		return fmt.Errorf("auth: failed to destroy session server-side: %w", destroyErr)
+	}
 	return nil
 }
 

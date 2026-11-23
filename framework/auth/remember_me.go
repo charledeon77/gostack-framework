@@ -2,10 +2,12 @@ package auth
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -71,6 +73,12 @@ func (m *RememberMeManager) CreateRememberCookie(w http.ResponseWriter, userID s
 	}
 	m.userSeries[userID] = append(m.userSeries[userID], series)
 
+	isSecure := true
+	appEnv := strings.ToLower(os.Getenv("APP_ENV"))
+	if appEnv == "local" || appEnv == "development" {
+		isSecure = false
+	}
+
 	cookieVal := fmt.Sprintf("%s|%s", series, rawToken)
 	http.SetCookie(w, &http.Cookie{
 		Name:     m.cookieName,
@@ -78,7 +86,7 @@ func (m *RememberMeManager) CreateRememberCookie(w http.ResponseWriter, userID s
 		Path:     "/",
 		Expires:  expiresAt,
 		HttpOnly: true,
-		Secure:   false,
+		Secure:   isSecure,
 		SameSite: http.SameSiteLaxMode,
 	})
 
@@ -106,7 +114,7 @@ func (m *RememberMeManager) ValidateAndRotate(w http.ResponseWriter, cookieVal s
 		return "", errors.New("remember token expired")
 	}
 
-	if HashToken(rawToken) != stored.TokenHash {
+	if subtle.ConstantTimeCompare([]byte(HashToken(rawToken)), []byte(stored.TokenHash)) != 1 {
 		// Possible token theft or replay attack: invalidate all series for this user
 		m.revokeAllUnsafe(stored.UserID)
 		return "", errors.New("remember token mismatch (possible replay detected)")
@@ -122,6 +130,12 @@ func (m *RememberMeManager) ValidateAndRotate(w http.ResponseWriter, cookieVal s
 	stored.ExpiresAt = time.Now().Add(m.ttl)
 	m.tokens[series] = stored
 
+	isSecure := true
+	appEnv := strings.ToLower(os.Getenv("APP_ENV"))
+	if appEnv == "local" || appEnv == "development" {
+		isSecure = false
+	}
+
 	newCookieVal := fmt.Sprintf("%s|%s", series, newRawToken)
 	http.SetCookie(w, &http.Cookie{
 		Name:     m.cookieName,
@@ -129,6 +143,7 @@ func (m *RememberMeManager) ValidateAndRotate(w http.ResponseWriter, cookieVal s
 		Path:     "/",
 		Expires:  stored.ExpiresAt,
 		HttpOnly: true,
+		Secure:   isSecure,
 		SameSite: http.SameSiteLaxMode,
 	})
 
@@ -169,4 +184,3 @@ func (m *RememberMeManager) revokeAllUnsafe(userID string) {
 	}
 	delete(m.userSeries, userID)
 }
-
