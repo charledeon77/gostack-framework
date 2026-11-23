@@ -35,14 +35,26 @@ This ledger details the step-by-step history, architectural justifications, and 
 | **Nexus** | Neo4j Graph Database Integration | `framework/database` (Moved to `gostack-extensions` in v1.0.12) |
 | **Aether** | Cassandra Wide-Column Database Integration | `framework/database` (Moved to `gostack-extensions` in v1.0.12) |
 
-## [v1.0.26] - Strict Component Contract, Scoped Shell Architecture & Anti-Smuggling Armor
+## [v1.0.26] - Applied Layout Truth Tracking (`didExtend`) & Directive Comment Armor
+*Released on 22 November, 2026*
+
+### UI Compiler & Tempose Engine (Tempose Subsystem)
+*   **Applied Layout Execution Truth (`didExtend`)**: Altered `preprocessLayouts` to return an explicit boolean confirming whether a layout was genuinely applied after comment stripping. Replaced naive raw string substring matching (`strings.Contains(rawHTML, "@extends")`), ensuring commented-out directives cannot set false trust flags.
+*   **Directive Comment Armor**: Sealed the compiler vulnerability where `<!-- @extends(...) -->` comments acted as a counterfeit bypass key, allowing unauthorized `<!DOCTYPE>`, `<html>`, `<head>`, or `<body>` tags to pass validation without a layout.
+*   **Fail-Fast Compile-Time Enforcement**: Standalone templates authoring root document tags with disabled layout directives fail immediately during compilation with actionable diagnostics, preventing broken, unstyled, and unbadged HTML from reaching production.
+
+## [v1.0.25] - Inlined Include Inspection & Post-Resolution Anti-Smuggling Armor
+*Released on 22 November, 2026*
+
+### UI Compiler & Tempose Engine (Tempose Subsystem)
+*   **Inlined Include Inspection (Anti-Smuggling Armor)**: Moved root document tag constraints evaluation to post-`@include` resolution on standalone templates, eliminating the side-door vulnerability where a partial file could smuggle unauthorized `<body>` or `<head>` tags into a component fragment.
+*   **Tag-Boundary Precision & Comment Transparency**: Utilized `rootDocTagsRe` with word-boundary matching to prevent false positives on custom elements (`<body-component>`) or attributes (`data-body`), while stripping HTML comments prior to inspection.
+
+## [v1.0.24] - Strict Component Contract, Scoped Shell Architecture & Anti-Smuggling Armor
 *Released on 22 November, 2026*
 
 ### UI Compiler & Tempose Engine (Tempose Subsystem)
 *   **Compile-Time Root Document Tag Guard**: Enforced strict architectural law in `compiler.go`: components are pieces, not documents. Any standalone component authoring root document tags (`<!DOCTYPE>`, `<html>`, `<head>`, `<body>`) without `@extends` fails compilation immediately with actionable diagnostic errors.
-*   **Inlined Include Inspection (Anti-Smuggling Armor)**: Evaluates root document tag constraints post-`@include` resolution on standalone templates, eliminating the side-door vulnerability where a partial file could smuggle unauthorized `<body>` or `<head>` tags into a component fragment.
-*   **Applied Layout Truth (`didExtend`)**: `preprocessLayouts` returns an explicit boolean confirming whether a layout was genuinely applied after comment stripping, ensuring commented-out `<!-- @extends(...) -->` directives cannot set false trust flags and allow root document tags to leak.
-*   **Tag-Boundary Precision & Comment Transparency**: Utilized `rootDocTagsRe` with word-boundary matching to prevent false positives on custom elements (`<body-component>`) or attributes (`data-body`), while stripping HTML comments prior to inspection.
 *   **Elimination of Body-Stamping Symptom Patch**: Completely removed regex mutation of `<body>` tags in standalone documents. Full pages are authored via `@extends("layouts/app")`, where content slots are cleanly encapsulated in `<div gs-component="...">` inside `@yield('content')`.
 *   **Pristine Document Isolation**: Guaranteed that `<html>` and `<body>` remain completely neutral and untouched, preventing cross-page CSS pollution while ensuring all component-scoped CSS rules match reliably.
 
