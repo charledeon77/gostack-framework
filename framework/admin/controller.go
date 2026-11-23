@@ -74,19 +74,27 @@ func sqlPlaceholder(isPg bool, idx int) string {
 // In production/staging, mounting without an explicit admin.AuthGuard is strictly forbidden
 // and returns an error to prevent accidental public exposure of the CRUD interface behind proxies.
 // In local/development environments, LocalOnlyGuard is permitted as a convenience.
+func isSensitiveColumn(colName string) bool {
+	lower := strings.ToLower(colName)
+	return strings.Contains(lower, "password") ||
+		strings.Contains(lower, "secret") ||
+		strings.Contains(lower, "token") ||
+		strings.Contains(lower, "api_key") ||
+		strings.Contains(lower, "private_key") ||
+		strings.Contains(lower, "totp")
+}
+
 func Mount(mux *http.ServeMux, db *sql.DB, prefix string) error {
 	if prefix == "" {
 		prefix = "/admin"
 	}
 
-	env := strings.ToLower(os.Getenv("APP_ENV"))
-	if env == "" {
-		env = "local"
-	}
+	rawEnv := strings.TrimSpace(os.Getenv("APP_ENV"))
+	env := strings.ToLower(rawEnv)
 
 	if AuthGuard == nil {
-		if env != "local" && env != "development" && env != "testing" {
-			return fmt.Errorf("[GoStack Security Blocker: SEC-01] admin.Mount rejected: In %q environment, GoDash admin panel cannot be mounted without an explicit admin.AuthGuard configured", env)
+		if rawEnv == "" || (env != "local" && env != "development" && env != "testing") {
+			return fmt.Errorf("[GoStack Security Blocker: SEC-01] admin.Mount rejected: When APP_ENV is unset or set to %q, GoDash admin panel cannot be mounted without an explicit admin.AuthGuard configured", rawEnv)
 		}
 	}
 
@@ -160,7 +168,12 @@ func handleList(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, c
 	}
 	defer rows.Close()
 
-	cols, _ := rows.Columns()
+	cols, err := rows.Columns()
+	if err != nil {
+		log.Printf("[GoStack Admin] Columns error: %v", err)
+		http.Error(w, "500 Internal Server Error: Failed to inspect columns", http.StatusInternalServerError)
+		return
+	}
 	var tableRows string
 	escCSRF := html.EscapeString(csrfToken)
 	for rows.Next() {
@@ -179,11 +192,18 @@ func handleList(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, c
 			if cols[i] == "id" {
 				id = v
 			}
-			tableRows += fmt.Sprintf("<td>%s</td>", html.EscapeString(fmt.Sprintf("%v", v)))
+			displayVal := fmt.Sprintf("%v", v)
+			if isSensitiveColumn(cols[i]) {
+				displayVal = "[REDACTED]"
+			}
+			tableRows += fmt.Sprintf("<td>%s</td>", html.EscapeString(displayVal))
 		}
 		escModel := html.EscapeString(modelName)
 		escID := html.EscapeString(fmt.Sprintf("%v", id))
 		tableRows += fmt.Sprintf(`<td><a href="/admin/%s/%s">Edit</a> | <form method="POST" action="/admin/%s/%s/delete" style="display:inline"><input type="hidden" name="_csrf" value="%s"><button type="submit" onclick="return confirm('Delete?')" style="background:none;border:none;color:#ef4444;cursor:pointer;padding:0;font:inherit;text-decoration:underline">Delete</button></form></td></tr>`, escModel, escID, escModel, escID, escCSRF)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[GoStack Admin] Row iteration error: %v", err)
 	}
 
 	var headers string
@@ -275,17 +295,22 @@ func handleEdit(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, i
 
 	// Fetch current record
 	isPg := isPostgresDB(db)
-	row := db.QueryRow(fmt.Sprintf("SELECT * FROM %s WHERE id = %s", entry.TableName, sqlPlaceholder(isPg, 1)), id)
-	cols := make([]string, len(entry.Columns))
-	for i, c := range entry.Columns {
-		cols[i] = c.Name
+	cols := make([]string, 0, len(entry.Columns))
+	for _, c := range entry.Columns {
+		cols = append(cols, c.Name)
 	}
+	colList := strings.Join(cols, ", ")
+	row := db.QueryRow(fmt.Sprintf("SELECT %s FROM %s WHERE id = %s", colList, entry.TableName, sqlPlaceholder(isPg, 1)), id)
 	vals := make([]any, len(cols))
 	ptrs := make([]any, len(cols))
 	for i := range vals {
 		ptrs[i] = &vals[i]
 	}
-	_ = row.Scan(ptrs...)
+	if err := row.Scan(ptrs...); err != nil {
+		log.Printf("[GoStack Admin] Scan error for %s ID %s: %v", entry.TableName, id, err)
+		http.Error(w, "500 Internal Server Error: Failed to load record for editing", http.StatusInternalServerError)
+		return
+	}
 
 	colMap := map[string]any{}
 	for i, c := range cols {
@@ -297,7 +322,11 @@ func handleEdit(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, i
 		if col.Name == "id" {
 			continue
 		}
-		fields += fmt.Sprintf(`<div class="field"><label>%s</label><input name="%s" type="text" value="%s"></div>`, html.EscapeString(col.Name), html.EscapeString(col.Name), html.EscapeString(fmt.Sprintf("%v", colMap[col.Name])))
+		valStr := fmt.Sprintf("%v", colMap[col.Name])
+		if isSensitiveColumn(col.Name) {
+			valStr = ""
+		}
+		fields += fmt.Sprintf(`<div class="field"><label>%s</label><input name="%s" type="text" value="%s"></div>`, html.EscapeString(col.Name), html.EscapeString(col.Name), html.EscapeString(valStr))
 	}
 
 	w.Header().Set("Content-Type", "text/html")

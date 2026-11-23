@@ -59,6 +59,12 @@ var AuthGuard func(next http.Handler) http.Handler
 // any spoofable X-Forwarded-For headers from untrusted clients).
 func LocalOnlyGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Reject proxied requests — LocalOnlyGuard is strictly for direct localhost connections
+		if r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("X-Real-IP") != "" {
+			http.Error(w, "403 Forbidden — GoDash admin panel local guard rejects proxied requests. Set admin.AuthGuard to enable access through a reverse proxy.", http.StatusForbidden)
+			return
+		}
+
 		host := r.RemoteAddr
 		// Strip port suffix if present
 		if idx := strings.LastIndex(host, ":"); idx != -1 {

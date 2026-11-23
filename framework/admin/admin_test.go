@@ -22,6 +22,21 @@ func TestAdminMount_ProductionWithoutGuardFails(t *testing.T) {
 	}
 }
 
+func TestAdmin_UnsetAppEnvRequiresGuard(t *testing.T) {
+	os.Unsetenv("APP_ENV")
+	defer os.Unsetenv("APP_ENV")
+
+	oldGuard := AuthGuard
+	AuthGuard = nil
+	defer func() { AuthGuard = oldGuard }()
+
+	mux := http.NewServeMux()
+	err := Mount(mux, nil, "/admin")
+	if err == nil {
+		t.Fatal("expected Mount with unset APP_ENV and nil AuthGuard to fail closed, got nil")
+	}
+}
+
 func TestAdminMount_LocalWithoutGuardSucceeds(t *testing.T) {
 	os.Setenv("APP_ENV", "local")
 	defer os.Unsetenv("APP_ENV")
