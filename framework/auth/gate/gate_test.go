@@ -49,5 +49,13 @@ func TestGate_AllowsAndDenies(t *testing.T) {
 	if err := g.Authorize("update-post", author, p); err != nil {
 		t.Errorf("expected nil error for authorized user, got: %v", err)
 	}
+
+	// T-025: Test fail-closed for undefined abilities
+	if g.Allows("undefined-ability", admin, p) {
+		t.Error("gate should fail closed (return false) for undefined abilities")
+	}
+	if !g.Denies("undefined-ability", admin, p) {
+		t.Error("gate.Denies should return true for undefined abilities")
+	}
 }
 

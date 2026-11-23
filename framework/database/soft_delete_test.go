@@ -11,7 +11,7 @@ type SoftDeleteUser struct {
 	DeletedAt *time.Time `db:"deleted_at"`
 }
 
-func (s SoftDeleteUser) TableName() string {
+func (s *SoftDeleteUser) TableName() string {
 	return "soft_delete_users"
 }
 

@@ -128,22 +128,30 @@ func (c *Container) Resolve(key string) (any, error) {
 
 	// --- STEP 2: WRITE-LOCK BOUNDARY (State Mutation Processing) ---
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	// Double-check cache state to eliminate race-conditions caused during lock execution handovers
 	if instance, exists := c.cache[key]; exists {
+		c.mu.Unlock()
 		return instance, nil
 	}
 
-	// Materialize Singleton if a factory recipe is present
-	if factory, exists := c.singletonFactories[key]; exists {
-		instance := factory(c)
-		c.cache[key] = instance
-		delete(c.singletonFactories, key) // Optimize memory by removing the single-use factory pointer
-		return instance, nil
+	// Materialize Singleton if a factory recipe is present.
+	// F-001: Extract the factory and unlock before invocation to allow nested Resolve() calls.
+	factory, exists := c.singletonFactories[key]
+	if !exists {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("foundation.Container: service signature [%s] cannot be resolved (missing binding recipe)", key)
 	}
+	delete(c.singletonFactories, key)
+	c.mu.Unlock()
 
-	return nil, fmt.Errorf("foundation.Container: service signature [%s] cannot be resolved (missing binding recipe)", key)
+	instance := factory(c)
+
+	c.mu.Lock()
+	c.cache[key] = instance
+	c.mu.Unlock()
+
+	return instance, nil
 }
 
 // Has executes a non-blocking, concurrent inspection to verify if a service key is bound.

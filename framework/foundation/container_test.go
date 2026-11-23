@@ -119,8 +119,8 @@ func TestContainerNestedDependencyChaining(t *testing.T) {
 		return &mockLogger{Prefix: "CHAIN_LOG"}
 	})
 
-	// Register the consumer service which chains the dependency resolution pass internally
-	container.BindTransient("controller", func(c *Container) any {
+	// Register the consumer service which chains the dependency resolution pass internally as Singleton (T-001)
+	container.BindSingleton("controller", func(c *Container) any {
 		rawLogger, _ := c.Resolve("logger")
 		return &mockController{Logger: rawLogger.(*mockLogger)}
 	})

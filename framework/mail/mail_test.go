@@ -177,3 +177,34 @@ func TestMailer_BuildRaw(t *testing.T) {
 		t.Errorf("expected body separated by CRLF, got: %s", raw)
 	}
 }
+
+// T-026: Test that Mailer.Validate rejects CRLF header injection attempts.
+func TestMailer_ValidateRejectsHeaderInjection(t *testing.T) {
+	mailer := NewMailer(Config{
+		Host:        "localhost",
+		Port:        25,
+		FromAddress: "noreply@example.com",
+	})
+
+	// Header injection via Subject
+	injectedMsg := Message{
+		To:      []string{"user@example.com"},
+		Subject: "Test\r\nBcc: victim@example.com",
+		Body:    "Test Body",
+	}
+
+	if err := mailer.Validate(injectedMsg); err == nil {
+		t.Fatal("expected Validate to reject CRLF in Subject, got nil")
+	}
+
+	// Header injection via To address
+	injectedTo := Message{
+		To:      []string{"user@example.com\r\nBcc: evil@example.com"},
+		Subject: "Clean Subject",
+		Body:    "Test Body",
+	}
+
+	if err := mailer.Validate(injectedTo); err == nil {
+		t.Fatal("expected Validate to reject CRLF in To recipient, got nil")
+	}
+}
