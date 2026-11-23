@@ -378,6 +378,9 @@ const GlideJS = `
                 if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
                     key = key.slice(1, -1);
                 }
+                if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+                    continue;
+                }
                 const valStr = entry.slice(colonIdx + 1).trim();
                 res[key] = evaluate(valStr, scope, extra);
             }
@@ -410,15 +413,25 @@ const GlideJS = `
     // ── Nested Property Helper ────────────────────────────────────────────────
 
     function setPath(obj, path, value) {
+        if (!obj || typeof obj !== 'object') return;
         const parts = path.split('.');
         let current = obj;
         for (let i = 0; i < parts.length - 1; i++) {
-            if (current[parts[i]] === undefined) {
-                current[parts[i]] = {};
+            const part = parts[i];
+            if (part === '__proto__' || part === 'constructor' || part === 'prototype') {
+                return;
             }
-            current = current[parts[i]];
+            if (current[part] === undefined) {
+                current[part] = {};
+            }
+            current = current[part];
+            if (!current || typeof current !== 'object') return;
         }
-        current[parts[parts.length - 1]] = value;
+        const last = parts[parts.length - 1];
+        if (last === '__proto__' || last === 'constructor' || last === 'prototype') {
+            return;
+        }
+        current[last] = value;
     }
 
     // ── Reactivity via Proxy & Array Trapping ─────────────────────────────────

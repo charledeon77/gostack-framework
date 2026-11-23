@@ -95,8 +95,8 @@ const GoStackCoreCSS = `
     display: none !important;
 }
 
-/* gs-component: layout-transparent wrapper for component isolation */
+/* gs-component: component isolation wrapper */
 [gs-component] {
-    display: contents;
+    display: block;
 }
 `

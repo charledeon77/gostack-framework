@@ -15,11 +15,12 @@ expiry timestamp. A background garbage-collection ticker periodically purges
 expired rows, preventing unbounded table growth.
 
 Required migration:
-  CREATE TABLE sessions (
-      id           VARCHAR(128)  NOT NULL PRIMARY KEY,
-      payload      TEXT          NOT NULL,
-      last_activity INTEGER      NOT NULL
-  );
+
+	CREATE TABLE sessions (
+	    id           VARCHAR(128)  NOT NULL PRIMARY KEY,
+	    payload      TEXT          NOT NULL,
+	    last_activity INTEGER      NOT NULL
+	);
 
 Implementation:
 - DBSession:      in-memory session, serialised to DB on Save.
@@ -159,11 +160,11 @@ func NewDBSessionStore(db *sql.DB, table string, ttl time.Duration, signingKey s
 		drv = fmt.Sprintf("%T", db.Driver())
 	}
 	store := &DBSessionStore{
-		db:         db,
-		driver:     drv,
-		table:      table,
-		ttl:        ttl,
-		stopGC:     make(chan struct{}),
+		db:     db,
+		driver: drv,
+		table:  table,
+		ttl:    ttl,
+		stopGC: make(chan struct{}),
 	}
 	if signingKey != "" {
 		store.signingKey = []byte(signingKey)

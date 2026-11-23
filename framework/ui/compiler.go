@@ -45,6 +45,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -136,7 +137,10 @@ func (c *AssetCompiler) Run() error {
 			if err != nil {
 				return err
 			}
-			prefixed := c.scopeCSS(name, string(rawCSS))
+			prefixed, err := c.scopeCSS(name, string(rawCSS))
+			if err != nil {
+				return fmt.Errorf("component %q CSS invalid: %w", name, err)
+			}
 			cssBundle.WriteString(fmt.Sprintf("/* Component: %s */\n%s\n\n", name, prefixed))
 			safeCSS := strings.ReplaceAll(prefixed, "`", "` + \"`\" + `")
 			registrations.WriteString(fmt.Sprintf("\tui.RegisterComponentStyle(\"%s\", `%s`)\n\n", name, safeCSS))
@@ -246,11 +250,9 @@ func RegisterComponents(t *http.Tempose) {
 %s}`, strings.Join(imports, "\n\t"), registrations.String())
 
 	// Pass generated source through gofmt so the output file is always clean.
-	// If formatting fails (should never happen with well-formed generated code),
-	// fall back to unformatted source rather than silently losing the output.
 	formatted, fmtErr := format.Source([]byte(goSource))
 	if fmtErr != nil {
-		formatted = []byte(goSource)
+		return fmt.Errorf("failed to format generated Go source: %w\nGenerated code:\n%s", fmtErr, goSource)
 	}
 	if err := os.MkdirAll(c.OutputPath, 0755); err != nil {
 		return fmt.Errorf("cannot create output directory %q: %w", c.OutputPath, err)
@@ -754,7 +756,10 @@ func (c *AssetCompiler) compileFilterChain(expr string) (string, error) {
 					if !argSingleQuote && !argDoubleQuote && argParenDepth == 0 {
 						cleaned := strings.TrimSpace(argBuilder.String())
 						cleaned = strings.Trim(cleaned, `"'`)
-						goArgs = append(goArgs, fmt.Sprintf(`"%s"`, cleaned))
+						if strings.Contains(cleaned, `\`) || strings.Contains(cleaned, `"`) || strings.Contains(cleaned, `'`) {
+							return "", fmt.Errorf("filter argument contains invalid characters (quotes/backslashes not allowed): %s", cleaned)
+						}
+						goArgs = append(goArgs, strconv.Quote(cleaned))
 						argBuilder.Reset()
 					} else {
 						argBuilder.WriteByte(ch)
@@ -766,7 +771,10 @@ func (c *AssetCompiler) compileFilterChain(expr string) (string, error) {
 			if argBuilder.Len() > 0 {
 				cleaned := strings.TrimSpace(argBuilder.String())
 				cleaned = strings.Trim(cleaned, `"'`)
-				goArgs = append(goArgs, fmt.Sprintf(`"%s"`, cleaned))
+				if strings.Contains(cleaned, `\`) || strings.Contains(cleaned, `"`) || strings.Contains(cleaned, `'`) {
+					return "", fmt.Errorf("filter argument contains invalid characters (quotes/backslashes not allowed): %s", cleaned)
+				}
+				goArgs = append(goArgs, strconv.Quote(cleaned))
 			}
 
 			if len(goArgs) > 0 {
@@ -976,7 +984,12 @@ func (c *AssetCompiler) preprocessLayouts(componentName, rawHTML string) (string
 	return merged, true, nil
 }
 
-var cssCommentRegex = regexp.MustCompile(`(?s)/\*.*?\*/`)
+var (
+	cssCommentRegex           = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	atImportRegex             = regexp.MustCompile(`(?i)@import\b`)
+	atNamespaceRegex          = regexp.MustCompile(`(?i)@namespace\b`)
+	forbiddenCSSSelectorRegex = regexp.MustCompile(`(?i)^(:root|:host|html|body)(\s|$|\[|:|,|\.)`)
+)
 
 // scopeCSS transforms raw CSS into component-scoped CSS by prepending a unique
 // selector prefix to every rule block, preventing styles from leaking globally.
@@ -987,8 +1000,17 @@ var cssCommentRegex = regexp.MustCompile(`(?s)/\*.*?\*/`)
 //  3. At-rules like "@keyframes" are handled specially: keyframe steps (from, to, 0%, 100%)
 //     remain unscoped so CSS animations function properly.
 //  4. Nested rules inside "@media" or "@supports" have their selectors scoped correctly.
-func (c *AssetCompiler) scopeCSS(componentName, rawCSS string) string {
+//  5. Root/document selectors (:root, :host, html, body) and unscoped @import/@namespace directives
+//     are strictly rejected at compile time.
+func (c *AssetCompiler) scopeCSS(componentName, rawCSS string) (string, error) {
 	cleaned := cssCommentRegex.ReplaceAllString(rawCSS, "")
+	if atImportRegex.MatchString(cleaned) {
+		return "", fmt.Errorf("component %q CSS contains forbidden @import directive: external stylesheet imports are not permitted in component styles", componentName)
+	}
+	if atNamespaceRegex.MatchString(cleaned) {
+		return "", fmt.Errorf("component %q CSS contains forbidden @namespace directive: namespaces are not permitted in component styles", componentName)
+	}
+
 	prefix := fmt.Sprintf("[gs-component=\"%s\"]", componentName)
 
 	var sb strings.Builder
@@ -1022,7 +1044,10 @@ func (c *AssetCompiler) scopeCSS(componentName, rawCSS string) string {
 				sb.WriteString(" {\n")
 			} else {
 				// Regular selector: may contain multiple comma-separated targets
-				scopedHeader := scopeSelectorList(prefix, header)
+				scopedHeader, err := scopeSelectorList(componentName, prefix, header)
+				if err != nil {
+					return "", err
+				}
 				sb.WriteString(scopedHeader)
 				sb.WriteString(" {\n")
 			}
@@ -1064,11 +1089,11 @@ func (c *AssetCompiler) scopeCSS(componentName, rawCSS string) string {
 		sb.WriteString("\n")
 	}
 
-	return strings.TrimSpace(sb.String())
+	return strings.TrimSpace(sb.String()), nil
 }
 
 // scopeSelectorList splits comma-separated selectors and prefixes each one individually.
-func scopeSelectorList(prefix, header string) string {
+func scopeSelectorList(componentName, prefix, header string) (string, error) {
 	parts := strings.Split(header, ",")
 	var scopedParts []string
 	for _, part := range parts {
@@ -1076,13 +1101,12 @@ func scopeSelectorList(prefix, header string) string {
 		if trimmed == "" {
 			continue
 		}
-		if strings.HasPrefix(trimmed, ":root") || strings.HasPrefix(trimmed, ":host") {
-			scopedParts = append(scopedParts, trimmed)
-		} else {
-			scopedParts = append(scopedParts, prefix+" "+trimmed)
+		if forbiddenCSSSelectorRegex.MatchString(trimmed) {
+			return "", fmt.Errorf("component %q CSS contains forbidden root document selector %q: component styles must not target :root, :host, html, or body", componentName, trimmed)
 		}
+		scopedParts = append(scopedParts, prefix+" "+trimmed)
 	}
-	return strings.Join(scopedParts, ", ")
+	return strings.Join(scopedParts, ", "), nil
 }
 
 // ── Dev Hot-Reload Watcher ───────────────────────────────────────────────────

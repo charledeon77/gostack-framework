@@ -90,7 +90,10 @@ func TestAssetCompiler_ScopeCSS(t *testing.T) {
 	// 1. Basic rules
 	rawCSS := `.btn { color: red; }
 #title { font-size: 20px; }`
-	scoped := c.scopeCSS("test", rawCSS)
+	scoped, err := c.scopeCSS("test", rawCSS)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !strings.Contains(scoped, `[gs-component="test"] .btn {`) {
 		t.Errorf("Expected scoped .btn, got:\n%s", scoped)
 	}
@@ -105,7 +108,10 @@ func TestAssetCompiler_ScopeCSS(t *testing.T) {
   color: blue;
 }
 /* inline comment */ .subtext { font-size: 12px; }`
-	scopedComments := c.scopeCSS("auth", commentCSS)
+	scopedComments, err := c.scopeCSS("auth", commentCSS)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if strings.Contains(scopedComments, "/*") || strings.Contains(scopedComments, "*/") {
 		t.Errorf("Expected all comments to be stripped, got:\n%s", scopedComments)
 	}
@@ -120,7 +126,10 @@ func TestAssetCompiler_ScopeCSS(t *testing.T) {
 	commaCSS := `h1, h2, .custom-heading {
   margin: 0;
 }`
-	scopedComma := c.scopeCSS("headings", commaCSS)
+	scopedComma, err := c.scopeCSS("headings", commaCSS)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	expectedComma := `[gs-component="headings"] h1, [gs-component="headings"] h2, [gs-component="headings"] .custom-heading {`
 	if !strings.Contains(scopedComma, expectedComma) {
 		t.Errorf("Expected comma-separated selectors to all be scoped, got:\n%s", scopedComma)
@@ -135,7 +144,10 @@ func TestAssetCompiler_ScopeCSS(t *testing.T) {
     opacity: 1;
   }
 }`
-	scopedKeyframe := c.scopeCSS("anim", keyframeCSS)
+	scopedKeyframe, err := c.scopeCSS("anim", keyframeCSS)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if strings.Contains(scopedKeyframe, `[gs-component="anim"] from`) || strings.Contains(scopedKeyframe, `[gs-component="anim"] to`) {
 		t.Errorf("Keyframe steps must NOT be prefixed with component selector, got:\n%s", scopedKeyframe)
 	}
@@ -149,12 +161,66 @@ func TestAssetCompiler_ScopeCSS(t *testing.T) {
     width: 50%;
   }
 }`
-	scopedMedia := c.scopeCSS("layout", mediaCSS)
+	scopedMedia, err := c.scopeCSS("layout", mediaCSS)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if strings.HasPrefix(strings.TrimSpace(scopedMedia), `[gs-component="layout"] @media`) {
 		t.Errorf("@media must not be prefixed itself, got:\n%s", scopedMedia)
 	}
 	if !strings.Contains(scopedMedia, `[gs-component="layout"] .responsive-box {`) {
 		t.Errorf("Inner selector within @media must be scoped, got:\n%s", scopedMedia)
+	}
+}
+
+func TestComponentCSS_RejectsRootSelector(t *testing.T) {
+	c := NewAssetCompiler("", "")
+	badSelectors := []string{
+		":root { --primary: red; }",
+		":host { display: block; }",
+		"html { background: black; }",
+		"body { margin: 0; }",
+		"body.theme-dark { color: white; }",
+		"h1, :root { display: none; }",
+	}
+
+	for _, css := range badSelectors {
+		_, err := c.scopeCSS("card", css)
+		if err == nil {
+			t.Errorf("Expected compile error for root selector in CSS: %s", css)
+		} else if !strings.Contains(err.Error(), "forbidden root document selector") {
+			t.Errorf("Expected forbidden root document selector error, got: %v", err)
+		}
+	}
+}
+
+func TestComponentCSS_RejectsImport(t *testing.T) {
+	c := NewAssetCompiler("", "")
+	badDirectives := []string{
+		`@import url("https://evil.example/x.css");`,
+		`@import "global.css";`,
+		`@namespace url(http://www.w3.org/1999/xhtml);`,
+	}
+
+	for _, css := range badDirectives {
+		_, err := c.scopeCSS("badge", css)
+		if err == nil {
+			t.Errorf("Expected compile error for at-directive in CSS: %s", css)
+		} else if !strings.Contains(err.Error(), "forbidden") {
+			t.Errorf("Expected forbidden at-directive error, got: %v", err)
+		}
+	}
+}
+
+func TestFilterArg_CannotInjectGoSource(t *testing.T) {
+	c := NewAssetCompiler("", "")
+	hostileTemplate := `{{ .Name | truncate("a\"); os.RemoveAll(\"C:/\") ; //") }}`
+	_, _, err := c.compileHTML("hostile-filter", hostileTemplate)
+	if err == nil {
+		t.Fatal("Expected compile error for filter argument with quotes and backslashes, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid characters") {
+		t.Errorf("Expected invalid characters error, got: %v", err)
 	}
 }
 
