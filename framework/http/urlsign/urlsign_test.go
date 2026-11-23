@@ -7,7 +7,10 @@ import (
 )
 
 func TestURLSigner_SignAndVerify(t *testing.T) {
-	signer := NewURLSigner("super-secret-app-key-123456789012")
+	signer, err := NewURLSigner("super-secret-app-key-123456789012")
+	if err != nil {
+		t.Fatalf("NewURLSigner failed: %v", err)
+	}
 
 	rawURL := "https://example.com/verify-email?id=10"
 	signedURL, err := signer.Sign(rawURL)
@@ -34,7 +37,10 @@ func TestURLSigner_SignAndVerify(t *testing.T) {
 }
 
 func TestURLSigner_TemporarySign_Expiration(t *testing.T) {
-	signer := NewURLSigner("secret-key")
+	signer, err := NewURLSigner("secret-key-that-is-at-least-32-bytes-long!")
+	if err != nil {
+		t.Fatalf("NewURLSigner failed: %v", err)
+	}
 
 	rawURL := "https://example.com/download/report.pdf"
 	// Sign with 1 second TTL
@@ -56,5 +62,18 @@ func TestURLSigner_TemporarySign_Expiration(t *testing.T) {
 
 	if err := signer.Verify(pastURL); !errors.Is(err, ErrURLExpired) {
 		t.Fatalf("expected ErrURLExpired, got: %v", err)
+	}
+}
+
+// F-113: Test that NewURLSigner rejects empty or short signing keys.
+func TestURLSigner_RejectsShortKey(t *testing.T) {
+	_, err := NewURLSigner("")
+	if err == nil {
+		t.Fatal("expected error on empty key, got nil")
+	}
+
+	_, err = NewURLSigner("short-key-12345")
+	if err == nil {
+		t.Fatal("expected error on key < 32 bytes, got nil")
 	}
 }

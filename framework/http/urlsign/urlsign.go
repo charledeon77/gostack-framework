@@ -33,8 +33,12 @@ type URLSigner struct {
 }
 
 // NewURLSigner creates a URLSigner with an application secret key.
-func NewURLSigner(key string) *URLSigner {
-	return &URLSigner{key: []byte(key)}
+// F-113: Rejects keys shorter than 32 bytes to ensure cryptographic security.
+func NewURLSigner(key string) (*URLSigner, error) {
+	if len(key) < 32 {
+		return nil, errors.New("urlsign: signing key must be at least 32 bytes")
+	}
+	return &URLSigner{key: []byte(key)}, nil
 }
 
 // Sign appends an HMAC signature parameter to the target URL.
@@ -88,6 +92,12 @@ func (s *URLSigner) Verify(rawURL string) error {
 		return ErrMissingSignature
 	}
 
+	// F-114: Re-compute expected signature and verify FIRST before checking expiration
+	expectedSig := s.computeSignature(u)
+	if !hmac.Equal([]byte(sig), []byte(expectedSig)) {
+		return ErrInvalidSignature
+	}
+
 	// Check expiration if present
 	if expStr := q.Get("expires"); expStr != "" {
 		expUnix, err := strconv.ParseInt(expStr, 10, 64)
@@ -97,12 +107,6 @@ func (s *URLSigner) Verify(rawURL string) error {
 		if time.Now().Unix() > expUnix {
 			return ErrURLExpired
 		}
-	}
-
-	// Re-compute expected signature without the "signature" parameter
-	expectedSig := s.computeSignature(u)
-	if !hmac.Equal([]byte(sig), []byte(expectedSig)) {
-		return ErrInvalidSignature
 	}
 
 	return nil

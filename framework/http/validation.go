@@ -164,7 +164,7 @@ func Rules(src any, set RuleSet) map[string]string {
 
 	for fieldName, rules := range set {
 		fieldVal := v.FieldByName(fieldName)
-		if !fieldVal.IsValid() {
+		if !fieldVal.IsValid() || !fieldVal.CanInterface() {
 			errors[fieldName] = fieldName + " is an unrecognised field"
 			continue
 		}
@@ -270,17 +270,17 @@ func Matches(pattern string) Rule {
 // Security: table and column names are validated against a strict alphanumeric+underscore allowlist
 // before being interpolated into the SQL query, preventing SQL injection attacks.
 // SEC-29: Uses driver-aware placeholder syntax ($1 for PostgreSQL, ? for MySQL/SQLite).
+// F-090: Fails closed on any error (never permits duplicate on scan failure), hides raw driver error.
 func IsUnique(db contract.Database, table, column string) Rule {
 	return func(field, value string) (bool, string) {
-		// Guard against SQL injection: only allow safe identifier characters.
-		if !isSafeIdentifier(table) {
-			return false, fmt.Sprintf("%s uniqueness check failed: invalid table name", field)
+		if db == nil {
+			return false, fmt.Sprintf("%s uniqueness check unavailable", field)
 		}
-		if !isSafeIdentifier(column) {
-			return false, fmt.Sprintf("%s uniqueness check failed: invalid column name", field)
+		// Guard against SQL injection: only allow safe identifier characters.
+		if !isSafeIdentifier(table) || !isSafeIdentifier(column) {
+			return false, fmt.Sprintf("%s uniqueness check unavailable", field)
 		}
 
-		// SEC-29: Use driver-aware placeholder to support PostgreSQL and MySQL/SQLite.
 		placeholder := "?"
 		if drv := db.Driver(); drv == "postgres" || drv == "cockroach" || drv == "cockroachdb" {
 			placeholder = "$1"
@@ -288,21 +288,26 @@ func IsUnique(db contract.Database, table, column string) Rule {
 		query := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s = %s", table, column, placeholder)
 		result, err := db.Query(query, value)
 		if err != nil {
-			return false, fmt.Sprintf("%s uniqueness check failed: %v", field, err)
+			return false, fmt.Sprintf("%s uniqueness check unavailable", field)
 		}
 
 		rows, ok := result.(*sql.Rows)
 		if !ok {
-			// Driver returned a non-standard result — treat as "cannot confirm uniqueness".
-			return false, fmt.Sprintf("%s uniqueness check failed: unsupported driver result type", field)
+			return false, fmt.Sprintf("%s uniqueness check unavailable", field)
 		}
 		defer rows.Close()
 
 		var count int
 		if rows.Next() {
-			if err := rows.Scan(&count); err == nil && count > 0 {
+			if err := rows.Scan(&count); err != nil {
+				return false, fmt.Sprintf("%s uniqueness check unavailable", field)
+			}
+			if count > 0 {
 				return false, fmt.Sprintf("%s has already been taken", field)
 			}
+		}
+		if err := rows.Err(); err != nil {
+			return false, fmt.Sprintf("%s uniqueness check unavailable", field)
 		}
 		return true, ""
 	}

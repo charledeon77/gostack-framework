@@ -187,6 +187,9 @@ func (store *DBSessionStore) Load(id string) (contract.Session, error) {
 	}
 
 	sess := newDBSession(id)
+	if store.db == nil {
+		return sess, nil
+	}
 
 	query := fmt.Sprintf("SELECT payload FROM %s WHERE id = ? AND last_activity > ?", store.table)
 	if isPostgresDriver(store.driver) {
@@ -216,6 +219,9 @@ func (store *DBSessionStore) Load(id string) (contract.Session, error) {
 
 // Save serialises and upserts the session into the database with driver awareness (SEC-13).
 func (store *DBSessionStore) Save(s contract.Session) error {
+	if store == nil || store.db == nil {
+		return nil
+	}
 	dbSess, ok := s.(*DBSession)
 	if !ok {
 		return fmt.Errorf("[DBSessionStore] Save: expected *DBSession, got %T", s)
@@ -264,6 +270,9 @@ func (store *DBSessionStore) Exists(id string) bool {
 
 // Destroy deletes a session from the database.
 func (store *DBSessionStore) Destroy(id string) error {
+	if store.db == nil {
+		return nil
+	}
 	placeholder := "?"
 	if strings.Contains(strings.ToLower(store.driver), "postgres") || strings.Contains(strings.ToLower(store.driver), "cockroach") || strings.Contains(strings.ToLower(store.driver), "pq") {
 		placeholder = "$1"
@@ -286,7 +295,9 @@ func (store *DBSessionStore) Rotate(oldID string) (contract.Session, error) {
 		newSess.data[k] = v
 	}
 
-	_ = store.Destroy(oldID)
+	if err := store.Destroy(oldID); err != nil {
+		return nil, fmt.Errorf("failed to destroy old session during rotation: %w", err)
+	}
 	if err := store.Save(newSess); err != nil {
 		return nil, err
 	}
@@ -359,7 +370,7 @@ func DBSessionMiddleware(store *DBSessionStore, cookieName string) Middleware {
 		var sessionID string
 
 		cookie, err := ctx.Request.Cookie(cookieName)
-		if err == nil && cookie != nil && cookie.Value != "" {
+		if err == nil && cookie != nil && IsValidSessionID(cookie.Value) {
 			sessionID = cookie.Value
 		} else {
 			sessionID = store.SignedSessionID()
@@ -368,6 +379,11 @@ func DBSessionMiddleware(store *DBSessionStore, cookieName string) Middleware {
 		sess, err := store.Load(sessionID)
 		if err != nil {
 			return err
+		}
+
+		// F-074: Ensure cookie value matches actual loaded/rotated session ID.
+		if sess != nil && sess.ID() != "" {
+			sessionID = sess.ID()
 		}
 
 		ctx.Set("session", sess)

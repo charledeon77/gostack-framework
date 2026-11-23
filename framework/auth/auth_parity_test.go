@@ -79,7 +79,10 @@ func TestPAR03_PasswordReset(t *testing.T) {
 }
 
 func TestPAR04_EmailVerification(t *testing.T) {
-	signer := urlsign.NewURLSigner("super-secret-key-for-url-signing")
+	signer, err := urlsign.NewURLSigner("super-secret-key-for-url-signing")
+	if err != nil {
+		t.Fatalf("NewURLSigner failed: %v", err)
+	}
 	mgr := NewEmailVerificationManager(signer, 1*time.Hour)
 
 	user := &mockVerifiableUser{

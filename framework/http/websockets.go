@@ -93,7 +93,7 @@ func (c *Connection) Write() {
 				return
 			}
 			// SEC-17: Enforce per-write deadline.
-			_ = c.ws.SetDeadline(time.Now().Add(wsWriteDeadline))
+			_ = c.ws.SetWriteDeadline(time.Now().Add(wsWriteDeadline))
 			if err := websocket.Message.Send(c.ws, msg); err != nil {
 				return
 			}
@@ -102,7 +102,7 @@ func (c *Connection) Write() {
 			// SEC-17: Send a ping. The read loop resets the read deadline on each
 			// incoming message; if the client is silent past wsReadDeadline the Read
 			// call will error and the connection will be unregistered.
-			_ = c.ws.SetDeadline(time.Now().Add(wsWriteDeadline))
+			_ = c.ws.SetWriteDeadline(time.Now().Add(wsWriteDeadline))
 			if err := websocket.Message.Send(c.ws, []byte("ping")); err != nil {
 				return
 			}
@@ -117,9 +117,12 @@ func (c *Connection) Read() {
 		c.hub.unregister <- c
 		c.ws.Close()
 	}()
+	// F-069: Bound maximum frame read limit at the websocket layer before buffering.
+	c.ws.MaxPayloadBytes = wsMaxMessageSize
+
 	for {
 		// SEC-17: Extend read deadline on every message received (ping resets the clock).
-		_ = c.ws.SetDeadline(time.Now().Add(wsReadDeadline))
+		_ = c.ws.SetReadDeadline(time.Now().Add(wsReadDeadline))
 
 		var msg []byte
 		if err := websocket.Message.Receive(c.ws, &msg); err != nil {
@@ -209,17 +212,24 @@ func (h *Hub) Run(ctx context.Context) {
 			h.mu.Unlock()
 
 		case message := <-h.broadcast:
+			// F-068: Collect stalled clients without holding the lock or blocking on unregister.
+			var toDrop []*Connection
 			h.mu.RLock()
 			for c := range h.connections {
 				select {
 				case c.send <- message:
 				default:
-					h.mu.RUnlock()
-					h.unregister <- c
-					h.mu.RLock()
+					toDrop = append(toDrop, c)
 				}
 			}
 			h.mu.RUnlock()
+
+			for _, c := range toDrop {
+				select {
+				case h.unregister <- c:
+				default:
+				}
+			}
 		}
 	}
 }
