@@ -8,20 +8,31 @@ import (
 )
 
 // JobChain executes a series of jobs sequentially. If one fails, the chain stops.
+// F-179: Exported Jobs field so json.Marshal serializes the chain.
 type JobChain struct {
-	jobs []contract.Job
+	Jobs []contract.Job `json:"jobs"`
 }
 
 // NewChain constructs a new JobChain.
 func NewChain(jobs ...contract.Job) *JobChain {
-	return &JobChain{jobs: jobs}
+	return &JobChain{Jobs: jobs}
 }
 
 // Handle executes the chain of jobs.
+// F-180: Protects each step with panic recovery so one panic doesn't kill worker.
 func (c *JobChain) Handle() error {
-	for _, job := range c.jobs {
-		if err := job.Handle(); err != nil {
-			return err
+	for _, job := range c.Jobs {
+		var stepErr error
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					stepErr = fmt.Errorf("job %s panicked: %v", job.Name(), r)
+				}
+			}()
+			stepErr = job.Handle()
+		}()
+		if stepErr != nil {
+			return stepErr
 		}
 	}
 	return nil
@@ -33,15 +44,16 @@ func (c *JobChain) Name() string {
 }
 
 // JobBatch represents a collection of jobs to run concurrently.
+// F-179: Exported Jobs field so json.Marshal serializes the batch.
 type JobBatch struct {
-	jobs      []contract.Job
-	onFail    func(err error)
-	onSuccess func()
+	Jobs      []contract.Job  `json:"jobs"`
+	onFail    func(err error) `json:"-"`
+	onSuccess func()          `json:"-"`
 }
 
 // NewBatch constructs a JobBatch.
 func NewBatch(jobs ...contract.Job) *JobBatch {
-	return &JobBatch{jobs: jobs}
+	return &JobBatch{Jobs: jobs}
 }
 
 // OnSuccess sets the callback to execute when all jobs complete successfully.
@@ -62,7 +74,7 @@ func (b *JobBatch) Handle() error {
 	var once sync.Once
 	var firstErr error
 
-	for _, job := range b.jobs {
+	for _, job := range b.Jobs {
 		wg.Add(1)
 		go func(j contract.Job) {
 			defer wg.Done()

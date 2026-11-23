@@ -48,6 +48,7 @@ type jobPayload struct {
 type RedisQueue struct {
 	client        *redis.Client
 	ctx           context.Context
+	cancel        context.CancelFunc
 	registry      map[string]func() contract.Job
 	BackoffFactor time.Duration // Custom backoff multiplier (defaults to time.Second)
 }
@@ -61,9 +62,11 @@ func NewRedisQueue(addr, password string, db int, registry map[string]func() con
 		Password: password,
 		DB:       db,
 	})
+	ctx, cancel := context.WithCancel(context.Background())
 	return &RedisQueue{
 		client:   rdb,
-		ctx:      context.Background(),
+		ctx:      ctx,
+		cancel:   cancel,
 		registry: registry,
 	}
 }
@@ -122,10 +125,17 @@ func (q *RedisQueue) StartWorkers(workers int) {
 
 func (q *RedisQueue) runWorker() {
 	for {
+		if q.ctx.Err() != nil {
+			return
+		}
 		// BRPOP blocks for up to 5 seconds waiting for a job, then retries.
 		result, err := q.client.BRPop(q.ctx, 5*time.Second, redisQueueKey).Result()
 		if err != nil {
-			// On timeout or transient error, retry.
+			if q.ctx.Err() != nil {
+				return
+			}
+			// Transient error or timeout — slight sleep to prevent CPU spinning (F-154)
+			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 		if len(result) < 2 {
@@ -195,21 +205,36 @@ func (q *RedisQueue) runDelayedScheduler() {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	for {
-		<-ticker.C
-		now := float64(time.Now().UnixMilli())
-		// Fetch all delayed jobs scored up to now.
-		jobs, err := q.client.ZRangeByScore(q.ctx, redisDelayedKey, &redis.ZRangeBy{
-			Min: "-inf",
-			Max: fmt.Sprintf("%f", now),
-		}).Result()
-		if err != nil || len(jobs) == 0 {
-			continue
-		}
-		for _, job := range jobs {
-			q.client.LPush(q.ctx, redisQueueKey, job)
-			q.client.ZRem(q.ctx, redisDelayedKey, job)
+		select {
+		case <-q.ctx.Done():
+			return
+		case <-ticker.C:
+			now := float64(time.Now().UnixMilli())
+			// Fetch all delayed jobs scored up to now.
+			jobs, err := q.client.ZRangeByScore(q.ctx, redisDelayedKey, &redis.ZRangeBy{
+				Min: "-inf",
+				Max: fmt.Sprintf("%f", now),
+			}).Result()
+			if err != nil || len(jobs) == 0 {
+				continue
+			}
+			for _, job := range jobs {
+				q.client.LPush(q.ctx, redisQueueKey, job)
+				q.client.ZRem(q.ctx, redisDelayedKey, job)
+			}
 		}
 	}
+}
+
+// Close gracefully terminates the RedisQueue workers and releases resources.
+func (q *RedisQueue) Close() error {
+	if q.cancel != nil {
+		q.cancel()
+	}
+	if q.client != nil {
+		return q.client.Close()
+	}
+	return nil
 }
 
 // GetStats retrieves overview counters of the queue state.

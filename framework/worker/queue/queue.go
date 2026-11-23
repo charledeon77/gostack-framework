@@ -36,6 +36,7 @@ import (
 
 var (
 	ErrQueueClosed = errors.New("queue is closed")
+	ErrQueueFull   = errors.New("queue is full")
 )
 
 // memoryJobEnvelope wraps a job and its attempt count for in-memory processing.
@@ -71,6 +72,7 @@ func NewMemoryQueue(capacity int) *MemoryQueue {
 }
 
 // pushEnvelope pushes a job envelope to the internal channel.
+// F-173: Uses non-blocking select so holding RLock never deadlocks with Close().
 func (q *MemoryQueue) pushEnvelope(env *memoryJobEnvelope) error {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
@@ -79,8 +81,12 @@ func (q *MemoryQueue) pushEnvelope(env *memoryJobEnvelope) error {
 		return ErrQueueClosed
 	}
 
-	q.jobs <- env
-	return nil
+	select {
+	case q.jobs <- env:
+		return nil
+	default:
+		return ErrQueueFull
+	}
 }
 
 // Push adds a job to the back of the queue immediately.
@@ -134,10 +140,17 @@ func (q *MemoryQueue) worker(id int) {
 
 	for env := range q.jobs {
 		func(e *memoryJobEnvelope) {
+			if e == nil || e.job == nil {
+				return
+			}
+			jobName := e.job.Name()
 			defer func() {
 				if r := recover(); r != nil {
-					fmt.Printf("[Sequence Worker %d Critical Panic] Job %s crashed: %v\n", id, e.job.Name(), r)
+					fmt.Printf("[Sequence Worker %d Critical Panic] Job %s crashed: %v\n", id, jobName, r)
 					q.mu.Lock()
+					if len(q.failedJobs) >= 1000 {
+						q.failedJobs = q.failedJobs[1:]
+					}
 					q.failedJobs = append(q.failedJobs, memoryFailedJob{
 						id:       fmt.Sprintf("panic-%d", time.Now().UnixNano()),
 						job:      e.job,
@@ -159,15 +172,18 @@ func (q *MemoryQueue) worker(id int) {
 					}
 					backoff := factor * time.Duration(1<<e.attempts)
 					fmt.Printf("[Sequence Worker %d] Job %s execution failed: %v. Retrying in %v (attempt %d/%d)...\n",
-						id, e.job.Name(), err, backoff, e.attempts, retryable.MaxAttempts())
+						id, jobName, err, backoff, e.attempts, retryable.MaxAttempts())
 
 					go func(envRef *memoryJobEnvelope, d time.Duration) {
 						time.Sleep(d)
 						_ = q.pushEnvelope(envRef)
 					}(e, backoff)
 				} else {
-					fmt.Printf("[Sequence Worker %d] Job %s execution failed: %v\n", id, e.job.Name(), err)
+					fmt.Printf("[Sequence Worker %d] Job %s execution failed: %v\n", id, jobName, err)
 					q.mu.Lock()
+					if len(q.failedJobs) >= 1000 {
+						q.failedJobs = q.failedJobs[1:]
+					}
 					q.failedJobs = append(q.failedJobs, memoryFailedJob{
 						id:       fmt.Sprintf("mem-%d", time.Now().UnixNano()),
 						job:      e.job,

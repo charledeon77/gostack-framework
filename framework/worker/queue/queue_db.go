@@ -280,11 +280,16 @@ func (q *DatabaseQueue) processNext(workerID int) error {
 
 	now := time.Now().Unix()
 
+	forUpdate := " FOR UPDATE"
+	if q.driver == "sqlite" || q.driver == "sqlite3" {
+		forUpdate = ""
+	}
+
 	// Attempt to reserve one unreserved, available job.
 	row := tx.QueryRow(
 		fmt.Sprintf(`SELECT id, payload, attempts FROM %s
 		             WHERE queue = %s AND available_at <= %s AND reserved_at IS NULL
-		             ORDER BY id ASC LIMIT 1 FOR UPDATE`, q.table, q.ph(1), q.ph(2)),
+		             ORDER BY id ASC LIMIT 1`+forUpdate, q.table, q.ph(1), q.ph(2)),
 		q.queue, now,
 	)
 
@@ -378,12 +383,16 @@ func (q *DatabaseQueue) processNext(workerID int) error {
 		fmt.Printf("[DatabaseQueue Worker %d] Job %s permanently failed: %v\n", workerID, env.Name, runErr)
 	}
 
-	q.deleteJob(jobID)
-	return nil
+	return q.deleteJob(jobID)
 }
 
-func (q *DatabaseQueue) deleteJob(id int64) {
-	_, _ = q.db.Exec(fmt.Sprintf("DELETE FROM %s WHERE id = %s", q.table, q.ph(1)), id)
+func (q *DatabaseQueue) deleteJob(id int64) error {
+	_, err := q.db.Exec(fmt.Sprintf("DELETE FROM %s WHERE id = %s", q.table, q.ph(1)), id)
+	if err != nil {
+		fmt.Printf("[DatabaseQueue] Critical: failed to delete processed job %d: %v\n", id, err)
+		return fmt.Errorf("failed to delete processed job %d: %w", id, err)
+	}
+	return nil
 }
 
 // GetStats returns overview counters for this queue.
@@ -392,11 +401,15 @@ func (q *DatabaseQueue) GetStats() (contract.QueueStats, error) {
 
 	row := q.db.QueryRow(
 		fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE queue = %s AND reserved_at IS NULL`, q.table, q.ph(1)), q.queue)
-	_ = row.Scan(&pending)
+	if err := row.Scan(&pending); err != nil && err != sql.ErrNoRows {
+		return contract.QueueStats{}, fmt.Errorf("failed to count pending jobs: %w", err)
+	}
 
 	row = q.db.QueryRow(
 		fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE queue = %s`, q.failedTable, q.ph(1)), q.queue)
-	_ = row.Scan(&failed)
+	if err := row.Scan(&failed); err != nil && err != sql.ErrNoRows {
+		return contract.QueueStats{}, fmt.Errorf("failed to count failed jobs: %w", err)
+	}
 
 	return contract.QueueStats{
 		Driver:  "database",
@@ -446,10 +459,13 @@ func (q *DatabaseQueue) GetFailedJobs() ([]contract.FailedJob, error) {
 // RetryJob re-queues a failed job by its numeric ID.
 func (q *DatabaseQueue) RetryJob(id string) error {
 	row := q.db.QueryRow(
-		fmt.Sprintf(`SELECT payload FROM %s WHERE id = %s`, q.failedTable, q.ph(1)), id)
+		fmt.Sprintf(`SELECT payload FROM %s WHERE id = %s AND queue = %s`, q.failedTable, q.ph(1), q.ph(2)), id, q.queue)
 	var payload string
 	if err := row.Scan(&payload); err != nil {
-		return fmt.Errorf("failed job not found: %s", id)
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("failed job not found: %s", id)
+		}
+		return fmt.Errorf("failed to query failed job %s: %w", id, err)
 	}
 
 	now := time.Now().Unix()
@@ -462,13 +478,16 @@ func (q *DatabaseQueue) RetryJob(id string) error {
 		return err
 	}
 
-	_, _ = q.db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE id = %s`, q.failedTable, q.ph(1)), id)
+	_, err = q.db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE id = %s AND queue = %s`, q.failedTable, q.ph(1), q.ph(2)), id, q.queue)
+	if err != nil {
+		return fmt.Errorf("failed to delete retried job from failed table: %w", err)
+	}
 	return nil
 }
 
 // DeleteFailedJob permanently removes a failed job by ID.
 func (q *DatabaseQueue) DeleteFailedJob(id string) error {
-	res, err := q.db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE id = %s`, q.failedTable, q.ph(1)), id)
+	res, err := q.db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE id = %s AND queue = %s`, q.failedTable, q.ph(1), q.ph(2)), id, q.queue)
 	if err != nil {
 		return err
 	}
