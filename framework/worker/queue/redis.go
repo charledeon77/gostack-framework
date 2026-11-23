@@ -190,9 +190,13 @@ func (q *RedisQueue) runWorker() {
 				fmt.Printf("[Sequence Worker] Job %s failed: %v. Storing in dead-letter list.\n", payload.Name, err)
 				failedEncoded, marshalErr := json.Marshal(payload)
 				if marshalErr == nil {
-					_ = q.client.LPush(q.ctx, redisFailedKey, failedEncoded).Err()
+					if dlErr := q.client.LPush(q.ctx, redisFailedKey, failedEncoded).Err(); dlErr != nil {
+						fmt.Printf("[Sequence Worker] Failed to write dead letter: %v\n", dlErr)
+					}
 				} else {
-					_ = q.client.LPush(q.ctx, redisFailedKey, raw).Err()
+					if dlErr := q.client.LPush(q.ctx, redisFailedKey, raw).Err(); dlErr != nil {
+						fmt.Printf("[Sequence Worker] Failed to write raw dead letter: %v\n", dlErr)
+					}
 				}
 			}
 		}

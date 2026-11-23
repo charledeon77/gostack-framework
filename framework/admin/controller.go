@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/charledeon77/gostack-framework/framework/contract"
 )
@@ -23,7 +24,9 @@ func getOrSetAdminCSRF(w http.ResponseWriter, r *http.Request) string {
 		return cookie.Value
 	}
 	b := make([]byte, 32)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		return hex.EncodeToString([]byte(fmt.Sprintf("%d-%d", time.Now().UnixNano(), os.Getpid())))
+	}
 	token := hex.EncodeToString(b)
 	http.SetCookie(w, &http.Cookie{
 		Name:     adminCSRFCookieName,

@@ -949,7 +949,9 @@ func (c *AuthController) APILogin(ctx *http.Context) error {
 
 	// 6. Scaffold internal/routes/auth_routes.go with CSRF and session wiring
 	routesDir := filepath.Join("internal", "routes")
-	_ = os.MkdirAll(routesDir, 0755)
+	if err := os.MkdirAll(routesDir, 0755); err != nil {
+		return fmt.Errorf("failed to create routes directory: %w", err)
+	}
 	authRoutesContent := fmt.Sprintf(`package routes
 
 import (

@@ -322,7 +322,11 @@ func (store *DBSessionStore) runGC() {
 			if isPostgresDriver(store.driver) {
 				delQuery = fmt.Sprintf("DELETE FROM %s WHERE last_activity < $1", store.table)
 			}
-			_, _ = store.db.Exec(delQuery, cutoff)
+			if store.db != nil {
+				if _, err := store.db.Exec(delQuery, cutoff); err != nil {
+					fmt.Printf("[DBSessionStore] Session GC cleanup error: %v\n", err)
+				}
+			}
 		case <-store.stopGC:
 			return
 		}

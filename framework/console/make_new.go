@@ -658,7 +658,9 @@ func (c *NewCommand) Execute(args []string) error {
 			tidyAuthCmd.Dir = projectDir
 			tidyAuthCmd.Stdout = os.Stdout
 			tidyAuthCmd.Stderr = os.Stderr
-			_ = tidyAuthCmd.Run()
+			if err := tidyAuthCmd.Run(); err != nil {
+				fmt.Printf("\033[1;33m⚠ Warning: go mod tidy after auth setup reported: %v\033[0m\n", err)
+			}
 		}
 	}
 	fmt.Println("\033[1;32m✔ Dependencies resolved!\033[0m")
@@ -667,11 +669,15 @@ func (c *NewCommand) Execute(args []string) error {
 	fmt.Println("\033[1;32m🌳 Making initial commit...\033[0m")
 	gitAdd := exec.Command("git", "add", ".")
 	gitAdd.Dir = projectDir
-	_ = gitAdd.Run()
+	if err := gitAdd.Run(); err != nil {
+		fmt.Printf("\033[1;33m⚠ Warning: git add reported: %v\033[0m\n", err)
+	}
 
 	gitCommit := exec.Command("git", "commit", "-m", "Initial commit from GoStack scaffolding")
 	gitCommit.Dir = projectDir
-	_ = gitCommit.Run()
+	if err := gitCommit.Run(); err != nil {
+		fmt.Printf("\033[1;33m⚠ Warning: initial git commit reported: %v\033[0m\n", err)
+	}
 	fmt.Println("\033[1;32m✔ Initial commit created!\033[0m")
 
 	// Beautiful styled output

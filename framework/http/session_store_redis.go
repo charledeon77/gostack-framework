@@ -182,7 +182,9 @@ func (store *RedisSessionStore) Rotate(oldID string) (contract.Session, error) {
 		newSess.data[k] = v
 	}
 
-	_ = store.Destroy(oldID)
+	if err := store.Destroy(oldID); err != nil {
+		return nil, fmt.Errorf("failed to destroy old session during rotation: %w", err)
+	}
 	if err := store.Save(newSess); err != nil {
 		return nil, err
 	}

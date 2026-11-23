@@ -205,11 +205,13 @@ func (q *DatabaseQueue) StartWorkers(workers int) {
 // SEC-31: Called automatically on StartWorkers so orphaned jobs are never permanently lost.
 func (q *DatabaseQueue) ReclaimReserved(timeout time.Duration) {
 	cutoff := time.Now().Add(-timeout).Unix()
-	_, _ = q.db.Exec(
+	if _, err := q.db.Exec(
 		fmt.Sprintf(`UPDATE %s SET reserved_at = NULL, available_at = %s WHERE queue = %s AND reserved_at IS NOT NULL AND reserved_at < %s`,
 			q.table, q.ph(1), q.ph(2), q.ph(3)),
 		time.Now().Unix(), q.queue, cutoff,
-	)
+	); err != nil {
+		fmt.Printf("[DatabaseQueue] ReclaimReserved failed: %v\n", err)
+	}
 }
 
 // retryBackoff computes exponential backoff delay with full jitter for failed jobs.

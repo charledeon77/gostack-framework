@@ -203,8 +203,12 @@ func (c *AssetCompiler) Run() error {
 	publicAssets := c.resolvePublicAssetsPath()
 	cssDir := filepath.Join(publicAssets, "css")
 	jsDir := filepath.Join(publicAssets, "js")
-	_ = os.MkdirAll(cssDir, 0755)
-	_ = os.MkdirAll(jsDir, 0755)
+	if err := os.MkdirAll(cssDir, 0755); err != nil {
+		return fmt.Errorf("failed to create css asset directory: %w", err)
+	}
+	if err := os.MkdirAll(jsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create js asset directory: %w", err)
+	}
 
 	cssBytes := []byte(cssBundle.String())
 	cssHash := hashBytes(cssBytes)
@@ -219,7 +223,9 @@ func (c *AssetCompiler) Run() error {
 	}
 
 	// Always write dev hot-reload client script to assets/js
-	_ = os.WriteFile(filepath.Join(jsDir, "gostack-hot-reload.js"), []byte(HotReloadClientJS), 0644)
+	if err := os.WriteFile(filepath.Join(jsDir, "gostack-hot-reload.js"), []byte(HotReloadClientJS), 0644); err != nil {
+		log.Printf("[GoStack Compiler Warning] Failed to write %s: %v", filepath.Join(jsDir, "gostack-hot-reload.js"), err)
+	}
 
 	// Register versioned URLs in the generated code
 	registrations.WriteString(fmt.Sprintf("\tui.RegisterAssetURLs(\"/assets/css/gostack.css?v=%s\", \"/assets/js/gostack.js?v=%s\")\n\n", cssHash, jsHash))
