@@ -36,6 +36,22 @@ import (
 // SEC-38: Generator name validation preventing directory traversal, null bytes, and malicious filenames
 var validNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 
+func detectProjectModule() string {
+	content, err := os.ReadFile("go.mod")
+	if err == nil {
+		for _, line := range strings.Split(string(content), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "module ") {
+				mod := strings.TrimSpace(strings.TrimPrefix(line, "module "))
+				if mod != "" {
+					return mod
+				}
+			}
+		}
+	}
+	return "github.com/charledeon77/gostack-framework"
+}
+
 func validateGeneratorName(name string) error {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
@@ -275,6 +291,13 @@ func (c *MakeAuthCommand) Description() string {
 }
 
 func (c *MakeAuthCommand) Execute(args []string) error {
+	force := false
+	for _, arg := range args {
+		if arg == "--force" || arg == "-f" {
+			force = true
+		}
+	}
+	projectMod := detectProjectModule()
 	now := time.Now()
 	versionStr := now.Format("20060102150405")
 	var versionUsers int64
@@ -354,7 +377,7 @@ func init() {
 		if err != nil {
 			return fmt.Errorf("failed to format %s: %w", fileName, err)
 		}
-		if err := os.WriteFile(filePath, formatted, 0644); err != nil {
+		if err := writeGeneratedFile(filePath, formatted, force); err != nil {
 			return err
 		}
 		fmt.Printf("[GoStack CLI] Scaffolding migration: %s\n", filePath)
@@ -480,7 +503,7 @@ func (p *UserProvider) ValidateCredentials(user contract.Authenticatable, creden
 		if err != nil {
 			return fmt.Errorf("failed to format %s: %w", fileName, err)
 		}
-		if err := os.WriteFile(filePath, formatted, 0644); err != nil {
+		if err := writeGeneratedFile(filePath, formatted, force); err != nil {
 			return err
 		}
 		fmt.Printf("[GoStack CLI] Scaffolding model: %s\n", filePath)
@@ -488,19 +511,20 @@ func (p *UserProvider) ValidateCredentials(user contract.Authenticatable, creden
 
 
 	// 3. Generate AuthController
-	controllerContent := `package controller
+	controllerContent := fmt.Sprintf(`package controller
 
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"github.com/charledeon77/gostack-framework"
 	"github.com/charledeon77/gostack-framework/framework/auth"
 	"github.com/charledeon77/gostack-framework/framework/contract"
 	"github.com/charledeon77/gostack-framework/framework/http"
-	"github.com/charledeon77/gostack-framework/internal/model"
+	"%s/internal/model"
 	netHTTP "net/http"
 	"time"
-)
+)`, projectMod) + `
 
 // AuthController coordinates user logins, registration, and logouts.
 //
@@ -662,7 +686,9 @@ func (c *AuthController) APILogin(ctx *http.Context) error {
 
 	// Seed secure random API token
 	b := make([]byte, 32)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		return ctx.JSON(netHTTP.StatusInternalServerError, map[string]string{"error": "Failed to generate token"})
+	}
 	token := hex.EncodeToString(b)
 	expiresAt := time.Now().Add(24 * time.Hour) // Token valid for 24h
 
@@ -688,7 +714,7 @@ func (c *AuthController) APILogin(ctx *http.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to format auth_controller.go: %w", err)
 	}
-	if err := os.WriteFile(controllerPath, formattedController, 0644); err != nil {
+	if err := writeGeneratedFile(controllerPath, formattedController, force); err != nil {
 		return err
 	}
 	fmt.Printf("[GoStack CLI] Scaffolding controller: %s\n", controllerPath)
@@ -908,7 +934,7 @@ func (c *AuthController) APILogin(ctx *http.Context) error {
 		}
 		for name, content := range files {
 			filePath := filepath.Join(componentDir, name)
-			if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+			if err := writeGeneratedFile(filePath, []byte(content), force); err != nil {
 				return err
 			}
 			fmt.Printf("[GoStack CLI] Scaffolding view: %s\n", filePath)
@@ -924,15 +950,15 @@ func (c *AuthController) APILogin(ctx *http.Context) error {
 	// 6. Scaffold internal/routes/auth_routes.go with CSRF and session wiring
 	routesDir := filepath.Join("internal", "routes")
 	_ = os.MkdirAll(routesDir, 0755)
-	authRoutesContent := `package routes
+	authRoutesContent := fmt.Sprintf(`package routes
 
 import (
 	"github.com/charledeon77/gostack-framework/framework/auth"
 	"github.com/charledeon77/gostack-framework/framework/contract"
 	"github.com/charledeon77/gostack-framework/framework/http"
-	"github.com/charledeon77/gostack-framework/internal/controller"
+	"%s/internal/controller"
 )
-
+`, projectMod) + `
 // RegisterAuthRoutes mounts fully CSRF-protected session authentication routes.
 func RegisterAuthRoutes(router *http.Router, db contract.Database, hasher contract.Hasher, sessionMiddleware http.Middleware) {
 	authCtrl := controller.NewAuthController(db, hasher)
@@ -945,10 +971,14 @@ func RegisterAuthRoutes(router *http.Router, db contract.Database, hasher contra
 }
 `
 	routesPath := filepath.Join(routesDir, "auth_routes.go")
-	if formattedRoutes, err := format.Source([]byte(authRoutesContent)); err == nil {
-		_ = os.WriteFile(routesPath, formattedRoutes, 0644)
-		fmt.Printf("[GoStack CLI] Scaffolding route registrar: %s\n", routesPath)
+	formattedRoutes, err := format.Source([]byte(authRoutesContent))
+	if err != nil {
+		return fmt.Errorf("failed to format auth_routes.go: %w", err)
 	}
+	if err := writeGeneratedFile(routesPath, formattedRoutes, force); err != nil {
+		return err
+	}
+	fmt.Printf("[GoStack CLI] Scaffolding route registrar: %s\n", routesPath)
 
 	fmt.Println("[GoStack CLI] Scaffolding authentication subsystem completed successfully!")
 	fmt.Println("[GoStack CLI] Next steps:")
@@ -1445,11 +1475,26 @@ func (c *AddComponentCommand) Execute(args []string) error {
 		return fmt.Errorf("add failed: component name argument is missing. Example: gost add button")
 	}
 
-	targetComp := strings.ToLower(args[0])
+	force := false
+	var targetComp string
+	for _, arg := range args {
+		if arg == "--force" || arg == "-f" {
+			force = true
+		} else if !strings.HasPrefix(arg, "-") && targetComp == "" {
+			targetComp = strings.ToLower(arg)
+		}
+	}
+	if targetComp == "" {
+		return fmt.Errorf("please specify a component name to install")
+	}
+	if err := validateGeneratorName(targetComp); err != nil {
+		return err
+	}
 
+	httpClient := &http.Client{Timeout: 30 * time.Second}
 	fmt.Printf("[GoStack CLI] Fetching remote registry.json...\n")
 	registryURL := "https://raw.githubusercontent.com/Charledeon77/gostack-components/main/registry.json"
-	resp, err := http.Get(registryURL)
+	resp, err := httpClient.Get(registryURL)
 	if err != nil {
 		return fmt.Errorf("failed to fetch component registry: %w", err)
 	}
@@ -1459,7 +1504,7 @@ func (c *AddComponentCommand) Execute(args []string) error {
 		return fmt.Errorf("failed to fetch registry: HTTP %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return fmt.Errorf("failed to read registry response: %w", err)
 	}
@@ -1472,12 +1517,21 @@ func (c *AddComponentCommand) Execute(args []string) error {
 	// Resolve dependencies
 	var queue []string
 	visited := make(map[string]bool)
+	inProgress := make(map[string]bool)
 
 	var resolveDeps func(name string) error
 	resolveDeps = func(name string) error {
+		if err := validateGeneratorName(name); err != nil {
+			return fmt.Errorf("invalid component name %q: %w", name, err)
+		}
 		if visited[name] {
 			return nil
 		}
+		if inProgress[name] {
+			return fmt.Errorf("circular dependency detected in component %q", name)
+		}
+		inProgress[name] = true
+
 		comp, exists := reg.Components[name]
 		if !exists {
 			return fmt.Errorf("component '%s' not found in remote registry", name)
@@ -1487,6 +1541,7 @@ func (c *AddComponentCommand) Execute(args []string) error {
 				return err
 			}
 		}
+		inProgress[name] = false
 		visited[name] = true
 		queue = append(queue, name)
 		return nil
@@ -1506,28 +1561,43 @@ func (c *AddComponentCommand) Execute(args []string) error {
 		}
 
 		for _, file := range comp.Files {
+			cleanBase := filepath.Base(file)
+			if cleanBase == "." || cleanBase == ".." || strings.ContainsAny(cleanBase, `/\`) {
+				return fmt.Errorf("invalid file path %q in component %s", file, name)
+			}
 			fileURL := "https://raw.githubusercontent.com/Charledeon77/gostack-components/main/" + file
-			targetPath := filepath.Join(compDir, filepath.Base(file))
+			targetPath := filepath.Join(compDir, cleanBase)
+
+			if !force {
+				if _, err := os.Stat(targetPath); err == nil {
+					return fmt.Errorf("file %q already exists (use --force to overwrite)", targetPath)
+				}
+			}
 
 			fmt.Printf("[GoStack CLI] Downloading %s -> %s...\n", fileURL, targetPath)
-			fResp, err := http.Get(fileURL)
-			if err != nil {
-				return fmt.Errorf("failed to download file %s: %w", file, err)
-			}
-			defer fResp.Body.Close()
+			if err := func() error {
+				fResp, err := httpClient.Get(fileURL)
+				if err != nil {
+					return fmt.Errorf("failed to download file %s: %w", file, err)
+				}
+				defer fResp.Body.Close()
 
-			if fResp.StatusCode != http.StatusOK {
-				return fmt.Errorf("failed to download %s: HTTP %d", file, fResp.StatusCode)
-			}
+				if fResp.StatusCode != http.StatusOK {
+					return fmt.Errorf("failed to download %s: HTTP %d", file, fResp.StatusCode)
+				}
 
-			out, err := os.Create(targetPath)
-			if err != nil {
-				return fmt.Errorf("failed to create local file %s: %w", targetPath, err)
-			}
-			defer out.Close()
+				out, err := os.Create(targetPath)
+				if err != nil {
+					return fmt.Errorf("failed to create local file %s: %w", targetPath, err)
+				}
+				defer out.Close()
 
-			if _, err := io.Copy(out, fResp.Body); err != nil {
-				return fmt.Errorf("failed to write local file %s: %w", targetPath, err)
+				if _, err := io.Copy(out, io.LimitReader(fResp.Body, 50<<20)); err != nil {
+					return fmt.Errorf("failed to write local file %s: %w", targetPath, err)
+				}
+				return nil
+			}(); err != nil {
+				return err
 			}
 		}
 	}

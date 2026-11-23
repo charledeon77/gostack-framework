@@ -227,3 +227,64 @@ func TestMakeSeederGenerator(t *testing.T) {
 	}
 }
 
+func TestMakeNew_RejectsDotDot(t *testing.T) {
+	cmd := &NewCommand{}
+
+	badNames := []string{"..", ".", "../escape", "foo/bar", "foo\\bar", "", "123bad", "-foo"}
+	for _, bad := range badNames {
+		err := cmd.Execute([]string{bad})
+		if err == nil {
+			t.Errorf("Expected gost new %q to fail validation, but it succeeded", bad)
+		}
+	}
+}
+
+func TestMakeAuth_GeneratedCodeCompiles(t *testing.T) {
+	_ = os.RemoveAll("internal")
+	_ = os.RemoveAll("database")
+	_ = os.RemoveAll("templates")
+	defer func() {
+		_ = os.RemoveAll("internal")
+		_ = os.RemoveAll("database")
+		_ = os.RemoveAll("templates")
+	}()
+
+	cmd := &MakeAuthCommand{}
+	if err := cmd.Execute([]string{"--force"}); err != nil {
+		t.Fatalf("make:auth failed: %v", err)
+	}
+
+	controllerFile := filepath.Join("internal", "controller", "auth_controller.go")
+	content, err := os.ReadFile(controllerFile)
+	if err != nil {
+		t.Fatalf("Failed to read generated controller: %v", err)
+	}
+	src := string(content)
+
+	if !strings.Contains(src, `"fmt"`) {
+		t.Errorf("auth_controller.go missing \"fmt\" import (F-240)")
+	}
+
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, controllerFile, nil, parser.AllErrors); err != nil {
+		t.Errorf("Generated auth_controller.go has syntax errors: %v", err)
+	}
+
+	routesFile := filepath.Join("internal", "routes", "auth_routes.go")
+	if _, err := parser.ParseFile(fset, routesFile, nil, parser.AllErrors); err != nil {
+		t.Errorf("Generated auth_routes.go has syntax errors: %v", err)
+	}
+}
+
+func TestAddComponent_RejectsTraversal(t *testing.T) {
+	cmd := &AddComponentCommand{}
+
+	badComponents := []string{"../../escaped", "sub/comp", "comp;evil", ".."}
+	for _, comp := range badComponents {
+		err := cmd.Execute([]string{comp})
+		if err == nil {
+			t.Errorf("Expected gost add %q to be rejected, got nil", comp)
+		}
+	}
+}
+

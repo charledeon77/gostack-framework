@@ -12,12 +12,43 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/charledeon77/gostack-framework/framework/foundation"
 )
+
+var validProjectNameRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
+
+// validateProjectName ensures project names do not contain directory traversal, path separators, or invalid characters (F-234)
+func validateProjectName(name string) error {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return fmt.Errorf("please specify a project name. Example: gost new myapp")
+	}
+	if trimmed == "." || trimmed == ".." || strings.ContainsAny(trimmed, `/\`) {
+		return fmt.Errorf("invalid project name %q: path traversal or path separators are not allowed", name)
+	}
+	if !validProjectNameRegex.MatchString(trimmed) {
+		return fmt.Errorf("invalid project name %q: must start with a letter and contain only alphanumeric characters, underscores, or dashes", name)
+	}
+	return nil
+}
+
+func redactDSNPassword(dsn string) string {
+	atIdx := strings.Index(dsn, "@")
+	if atIdx == -1 {
+		return dsn
+	}
+	colonIdx := strings.Index(dsn[:atIdx], ":")
+	if colonIdx == -1 {
+		return dsn
+	}
+	return dsn[:colonIdx+1] + "*****" + dsn[atIdx:]
+}
 
 // NewCommand scaffolds a new GoStack project from the base GitHub repository.
 type NewCommand struct{}
@@ -92,8 +123,8 @@ func (c *NewCommand) Execute(args []string) error {
 		}
 	}
 
-	if projectName == "" {
-		return fmt.Errorf("please specify a project name. Example: gost new myapp")
+	if err := validateProjectName(projectName); err != nil {
+		return err
 	}
 
 	reader := bufio.NewReader(os.Stdin)
@@ -353,7 +384,7 @@ func (c *NewCommand) Execute(args []string) error {
 	}
 	envStr := strings.Join(newLines, "\n")
 
-	if err := os.WriteFile(envPath, []byte(envStr), 0644); err != nil {
+	if err := os.WriteFile(envPath, []byte(envStr), 0600); err != nil {
 		return fmt.Errorf("failed to write .env file: %w", err)
 	}
 	fmt.Println("\033[1;32m✔ Configuration (.env) ready!\033[0m")
@@ -426,11 +457,13 @@ func (c *NewCommand) Execute(args []string) error {
 		var dbSetupCode string
 		switch dbType {
 		case "sql":
+			escapedDriver := strconv.Quote(dbDriver)
+			escapedDSN := strconv.Quote(dbDSN)
 			dbSetupCode = fmt.Sprintf(`	// 2. Initialize the Infrastructure Storage Layer (Database Adapter).
-	dbDriver := foundation.Get("DB_DRIVER", "%s")
+	dbDriver := foundation.Get("DB_DRIVER", %s)
 	dbDSN := foundation.Get("DB_DSN", "")
 	if dbDSN == "" {
-		dbDSN = "%s"
+		dbDSN = %s
 	}
 	db, err := database.NewSQLAdapter(dbDriver, dbDSN)
 	if err != nil {
@@ -443,7 +476,7 @@ func (c *NewCommand) Execute(args []string) error {
 		container.BindSingleton("db", func(c *foundation.Container) any {
 			return db
 		})
-	}`, dbDriver, dbDSN)
+	}`, escapedDriver, escapedDSN)
 		case "mongodb":
 			dbSetupCode = `	// 2. Initialize the Infrastructure Storage Layer (GoMon MongoDB Client).
 	mongoURI := foundation.Get("MONGO_URI", "mongodb://127.0.0.1:27017")
@@ -653,7 +686,7 @@ func (c *NewCommand) Execute(args []string) error {
 	switch dbType {
 	case "sql":
 		fmt.Printf("  • Database Engine: \033[1;36mRelational SQL (%s)\033[0m\n", dbDriver)
-		fmt.Printf("  • Connection DSN:  \033[36m%s\033[0m\n", dbDSN)
+		fmt.Printf("  • Connection DSN:  \033[36m%s\033[0m\n", redactDSNPassword(dbDSN))
 	case "mongodb":
 		fmt.Printf("  • Database Engine: \033[1;36mMongoDB (GoMon)\033[0m\n")
 		fmt.Printf("  • Connection URI:  \033[36m%s\033[0m\n", mongoURI)
@@ -789,6 +822,10 @@ func verifyArchiveChecksumWithURL(client *http.Client, checksumURL, tag, got str
 // SEC-20: Rejects non-regular entries (symlinks/devices) with a named error.
 // SEC-21: Declared total uncompressed size pre-scan & per-file limits.
 func extractArchive(reader *zip.Reader, destDir string) error {
+	trimmed := strings.TrimSpace(destDir)
+	if trimmed == "" || trimmed == "." || trimmed == ".." {
+		return fmt.Errorf("invalid extraction destination directory %q", destDir)
+	}
 	absProjectDir, err := filepath.Abs(destDir)
 	if err != nil {
 		return fmt.Errorf("failed to resolve project directory path: %w", err)
