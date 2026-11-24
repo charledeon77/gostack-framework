@@ -86,9 +86,16 @@ func (c *Context) Render(viewName string, data any) error {
 // Returns:
 //   - An error if the json encoder encounters unsupported types or writing blocks.
 func (c *Context) JSON(code int, data any) error {
+	// F-099: Buffer JSON first so that a marshal error does not leave a half-committed
+	// response with an already-sent 200 header and a broken body.
+	buf, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
 	c.Writer.Header().Set("Content-Type", "application/json")
 	c.Writer.WriteHeader(code)
-	return json.NewEncoder(c.Writer).Encode(data)
+	_, _ = c.Writer.Write(buf)
+	return nil
 }
 
 // Query abstracts URL query string parameter resolution into a clean, predictable API.

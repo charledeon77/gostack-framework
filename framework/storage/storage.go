@@ -195,15 +195,22 @@ func (s *LocalStorage) resolvePath(path string) (string, error) {
 		return "", fmt.Errorf("storage: security violation: path traversal attempt detected on '%s'", path)
 	}
 
-	// Symlink check: if target exists, ensure resolved symlink target remains within root (SEC-07)
-	if evalPath, err := filepath.EvalSymlinks(absPath); err == nil {
-		evalRoot, errRoot := filepath.EvalSymlinks(absRoot)
-		if errRoot == nil {
+	// Symlink check: verify every existing directory component along the path to ensure
+	// no symlink points outside root, even if the leaf target file does not exist yet (F-022).
+	curr := absPath
+	for curr != "" && curr != filepath.Dir(curr) {
+		if evalPath, err := filepath.EvalSymlinks(curr); err == nil {
+			evalRoot, errRoot := filepath.EvalSymlinks(absRoot)
+			if errRoot != nil {
+				evalRoot = absRoot
+			}
 			relEval, err := filepath.Rel(evalRoot, evalPath)
 			if err != nil || relEval == ".." || strings.HasPrefix(relEval, ".."+string(filepath.Separator)) {
 				return "", fmt.Errorf("storage: security violation: symlink points outside root on '%s'", path)
 			}
+			break
 		}
+		curr = filepath.Dir(curr)
 	}
 
 	return absPath, nil

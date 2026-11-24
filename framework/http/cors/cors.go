@@ -47,7 +47,9 @@ func Middleware(cfg Config) func(http.Handler) http.Handler {
 			allowedOrigin := isOriginAllowed(origin, cfg.AllowedOrigins)
 			if allowedOrigin != "" {
 				w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
-				if cfg.AllowCredentials {
+				// F-115: Credentials must NOT be allowed when origin is a wildcard.
+				// A wildcard origin with credentials is rejected by browsers and is a security vulnerability.
+				if cfg.AllowCredentials && allowedOrigin != "*" {
 					w.Header().Set("Access-Control-Allow-Credentials", "true")
 				}
 				if len(cfg.ExposedHeaders) > 0 {

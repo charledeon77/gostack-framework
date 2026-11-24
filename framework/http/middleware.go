@@ -102,10 +102,15 @@ func (p *Pipeline) Run(ctx *Context, destination NextHandler) error {
 // while transparently forwarding streaming capabilities (SEC-15).
 type statusCapture struct {
 	netHTTP.ResponseWriter
-	code int
+	code    int
+	written bool // F-098: guard against double WriteHeader calls
 }
 
 func (sc *statusCapture) WriteHeader(code int) {
+	if sc.written {
+		return
+	}
+	sc.written = true
 	sc.code = code
 	sc.ResponseWriter.WriteHeader(code)
 }
@@ -193,7 +198,25 @@ func RequireAuth(ctx *Context, next NextHandler) error {
 		Get(key string) any
 	}
 	sess, ok := sessVal.(sessionInterface)
-	if !ok || sess.Get("authenticated") != true {
+	if !ok {
+		ctx.Writer.WriteHeader(netHTTP.StatusUnauthorized)
+		_, _ = ctx.Writer.Write([]byte("Unauthorized"))
+		return nil
+	}
+
+	// Check either direct "authenticated" boolean or user ID set by auth session guard (F-094)
+	isAuthed := sess.Get("authenticated") == true
+	if !isAuthed {
+		// Check common auth guard session keys
+		for _, key := range []string{"auth_web_user_id", "auth_user_id", "user_id"} {
+			if val := sess.Get(key); val != nil {
+				isAuthed = true
+				break
+			}
+		}
+	}
+
+	if !isAuthed {
 		ctx.Writer.WriteHeader(netHTTP.StatusUnauthorized)
 		_, _ = ctx.Writer.Write([]byte("Unauthorized"))
 		return nil
@@ -213,7 +236,14 @@ func TrailingSlashRedirectMiddleware() Middleware {
 	return func(ctx *Context, next NextHandler) error {
 		path := ctx.Request.URL.Path
 		if path != "/" && len(path) > 1 && path[len(path)-1] == '/' {
-			target := path[:len(path)-1]
+			target := strings.TrimRight(path, "/")
+			if target == "" {
+				target = "/"
+			}
+			// F-095: prevent protocol-relative (//evil.com) open redirects
+			if strings.HasPrefix(target, "//") {
+				target = "/" + strings.TrimLeft(target, "/")
+			}
 			if ctx.Request.URL.RawQuery != "" {
 				target += "?" + ctx.Request.URL.RawQuery
 			}

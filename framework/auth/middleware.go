@@ -135,17 +135,32 @@ func AuthThrottle(limit int, period time.Duration) http.Middleware {
 			}
 		}
 
+		// F-052: prune stale entries to prevent memory leak
+		if len(clients) > 10000 {
+			for k, v := range clients {
+				var stillActive []time.Time
+				for _, t := range v.timestamps {
+					if t.After(cutoff) {
+						stillActive = append(stillActive, t)
+					}
+				}
+				if len(stillActive) == 0 {
+					delete(clients, k)
+				} else {
+					v.timestamps = stillActive
+				}
+			}
+		}
+
 		if len(active) >= limit {
 			mu.Unlock()
 			ctx.Writer.Header().Set("Retry-After", fmt.Sprintf("%d", int(period.Seconds())))
 			ctx.Writer.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", limit))
 			ctx.Writer.Header().Set("X-RateLimit-Remaining", "0")
-			ctx.Writer.WriteHeader(netHTTP.StatusTooManyRequests)
-			_ = ctx.JSON(netHTTP.StatusTooManyRequests, map[string]string{
+			return ctx.JSON(netHTTP.StatusTooManyRequests, map[string]string{
 				"error":   "Too Many Requests",
 				"message": "Login attempt limit exceeded. Please wait before trying again.",
 			})
-			return nil
 		}
 
 		entry.timestamps = append(active, now)

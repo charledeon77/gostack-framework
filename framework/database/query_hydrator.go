@@ -199,7 +199,8 @@ func mapRowToStruct(columns []string, values []sql.RawBytes, structVal reflect.V
 					targetField.FieldByName("Valid").SetBool(true)
 				}
 			} else if typeName == "sql.NullBool" {
-				b := string(rawValue) == "1" || string(rawValue) == "true"
+				raw := strings.ToLower(strings.TrimSpace(string(rawValue)))
+				b := raw == "1" || raw == "true" || raw == "t" || raw == "yes"
 				targetField.FieldByName("Bool").SetBool(b)
 				targetField.FieldByName("Valid").SetBool(true)
 			} else if typeName == "sql.NullTime" {

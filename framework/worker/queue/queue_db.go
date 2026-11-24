@@ -153,6 +153,7 @@ func (q *DatabaseQueue) Register(name string, constructor func() contract.Job) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.registry[name] = constructor
+	RegisterJob(name, constructor)
 }
 
 // Push inserts a job into the database queue immediately.

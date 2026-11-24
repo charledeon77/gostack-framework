@@ -21,9 +21,12 @@ Implementation:
 package auth
 
 import (
-	"github.com/charledeon77/gostack-framework/framework/contract"
+	"errors"
+	"log"
 	"net/http"
 	"strings"
+
+	"github.com/charledeon77/gostack-framework/framework/contract"
 )
 
 // TokenGuard handles stateless authentication using API bearer tokens.
@@ -68,7 +71,13 @@ func (g *TokenGuard) User(r *http.Request) (contract.Authenticatable, bool) {
 
 	// 3. Resolve user using the Credentials hook
 	user, err := g.provider.RetrieveByCredentials(map[string]any{"token": token})
-	if err != nil || user == nil {
+	if err != nil {
+		// F-064: log provider outage server-side instead of masking it
+		log.Printf("[GoStack] auth: TokenGuard provider error: %v", err)
+		cacheUser(r, nil)
+		return nil, false
+	}
+	if user == nil {
 		cacheUser(r, nil)
 		return nil, false
 	}
@@ -77,10 +86,9 @@ func (g *TokenGuard) User(r *http.Request) (contract.Authenticatable, bool) {
 	return user, true
 }
 
-// Login is a stateless no-op for TokenGuard.
+// Login is not supported for stateless TokenGuard (F-063).
 func (g *TokenGuard) Login(w http.ResponseWriter, r *http.Request, user contract.Authenticatable) error {
-	cacheUser(r, user)
-	return nil
+	return errors.New("auth: TokenGuard does not support session-based login")
 }
 
 // Logout is a stateless no-op for TokenGuard.

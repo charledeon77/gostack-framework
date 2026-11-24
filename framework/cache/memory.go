@@ -33,18 +33,45 @@ type item struct {
 
 // MemoryStore is the in-memory implementation of CacheStore.
 type MemoryStore struct {
-	mu    sync.RWMutex
-	items map[string]item
+	mu         sync.RWMutex
+	items      map[string]item
+	maxEntries int
+	stopChan   chan struct{}
 }
 
-// NewMemoryStore creates a new MemoryStore and starts an optional cleanup routine.
+const DefaultMaxMemoryEntries = 10000
+
+// NewMemoryStore creates a new MemoryStore with default capacity and starts an automatic cleanup routine.
 func NewMemoryStore() contract.CacheStore {
-	store := &MemoryStore{
-		items: make(map[string]item),
+	return NewMemoryStoreWithCapacity(DefaultMaxMemoryEntries)
+}
+
+// NewMemoryStoreWithCapacity creates a new MemoryStore with custom max capacity (F-029).
+func NewMemoryStoreWithCapacity(maxEntries int) *MemoryStore {
+	if maxEntries <= 0 {
+		maxEntries = DefaultMaxMemoryEntries
 	}
-	// Start a background goroutine to purge expired keys periodically
+	store := &MemoryStore{
+		items:      make(map[string]item),
+		maxEntries: maxEntries,
+		stopChan:   make(chan struct{}),
+	}
+	// Start a background goroutine to purge expired keys periodically (F-028: supports clean shutdown)
 	go store.startCleanup(5 * time.Minute)
 	return store
+}
+
+// Close gracefully terminates the background sweeper goroutine (F-028).
+func (m *MemoryStore) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	select {
+	case <-m.stopChan:
+		// already closed
+	default:
+		close(m.stopChan)
+	}
+	return nil
 }
 
 // Get retrieves a value from the cache.
@@ -66,7 +93,7 @@ func (m *MemoryStore) Get(key string) (any, error) {
 	return it.value, nil
 }
 
-// Put stores a value in the cache.
+// Put stores a value in the cache. Enforces max entries capacity to prevent OOM (F-029).
 func (m *MemoryStore) Put(key string, val any, ttl time.Duration) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -74,6 +101,23 @@ func (m *MemoryStore) Put(key string, val any, ttl time.Duration) error {
 	var exp int64
 	if ttl > 0 {
 		exp = time.Now().Add(ttl).UnixNano()
+	}
+
+	// If at capacity and key is new, clean expired entries first
+	if _, exists := m.items[key]; !exists && len(m.items) >= m.maxEntries {
+		now := time.Now().UnixNano()
+		for k, v := range m.items {
+			if v.expiration > 0 && now > v.expiration {
+				delete(m.items, k)
+			}
+		}
+		// If still at capacity, evict an arbitrary entry
+		if len(m.items) >= m.maxEntries {
+			for k := range m.items {
+				delete(m.items, k)
+				break
+			}
+		}
 	}
 
 	m.items[key] = item{
@@ -99,11 +143,17 @@ func (m *MemoryStore) Flush() error {
 	return nil
 }
 
-// startCleanup periodically removes expired items to prevent memory leaks.
+// startCleanup periodically removes expired items to prevent memory leaks (F-028).
 func (m *MemoryStore) startCleanup(interval time.Duration) {
 	ticker := time.NewTicker(interval)
-	for range ticker.C {
-		m.cleanup()
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			m.cleanup()
+		case <-m.stopChan:
+			return
+		}
 	}
 }
 

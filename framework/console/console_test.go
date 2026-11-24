@@ -25,9 +25,11 @@ Implementation:
 package console
 
 import (
+	"fmt"
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -289,6 +291,143 @@ func TestAddComponent_RejectsTraversal(t *testing.T) {
 		if err == nil {
 			t.Errorf("Expected gost add %q to be rejected, got nil", comp)
 		}
+	}
+}
+
+// TestAppSkeleton_CompilesEndToEnd verifies that every project created from the app skeleton
+// compiles cleanly with `go build ./...` (catches F-298, F-311, F-240, F-241).
+func TestAppSkeleton_CompilesEndToEnd(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Locate framework root
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current working directory: %v", err)
+	}
+	frameworkRoot := filepath.Clean(filepath.Join(cwd, "..", ".."))
+
+	// Create test project directory
+	projectDir := filepath.Join(tempDir, "testapp")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("failed to create temp project dir: %v", err)
+	}
+
+	// Copy app-skeleton files into temp project
+	skeletonDir := filepath.Join(frameworkRoot, "templates", "app-skeleton")
+	err = filepath.Walk(skeletonDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(skeletonDir, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(projectDir, rel)
+		target = strings.TrimSuffix(target, ".tmpl")
+
+		if info.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+
+		// Interpolate variables
+		str := string(content)
+		str = strings.ReplaceAll(str, "{{PROJECT_NAME}}", "testapp")
+		str = strings.ReplaceAll(str, "{{APP_KEY}}", "base64:YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=")
+		str = strings.ReplaceAll(str, "{{DB_DRIVER}}", "sqlite")
+		str = strings.ReplaceAll(str, "{{DB_DSN}}", "database/database.sqlite")
+
+		if strings.HasSuffix(path, "go.mod.tmpl") {
+			str = "module testapp\n\ngo 1.22\n\nrequire github.com/charledeon77/gostack-framework v1.0.27\n"
+		}
+
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+		return os.WriteFile(target, []byte(str), info.Mode())
+	})
+	if err != nil {
+		t.Fatalf("failed to copy skeleton files: %v", err)
+	}
+
+	// Inject replace directive so it builds against the local framework
+	// Quote the local path in case it contains spaces (e.g. Windows paths)
+	goModPath := filepath.Join(projectDir, "go.mod")
+	replaceDirective := fmt.Sprintf("\nreplace github.com/charledeon77/gostack-framework => %q\n", filepath.ToSlash(frameworkRoot))
+	f, err := os.OpenFile(goModPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("failed to open go.mod for replace: %v", err)
+	}
+	if _, err := f.WriteString(replaceDirective); err != nil {
+		f.Close()
+		t.Fatalf("failed to write replace directive: %v", err)
+	}
+	f.Close()
+
+	// Execute `go build ./...` inside the scaffolded project
+	// Run with -mod=mod so go can resolve dependencies against local replace without network
+	buildCmd := exec.Command("go", "build", "-mod=mod", "./...")
+	buildCmd.Dir = projectDir
+	out, err := buildCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Scaffolded project failed to compile (F-311 / F-298 regression detected):\nOutput: %s\nError: %v", string(out), err)
+	}
+}
+
+func TestMakeJobAndProviderGenerators_ValidInterfaces(t *testing.T) {
+	_ = os.RemoveAll("internal")
+	defer os.RemoveAll("internal")
+
+	// 1. make:job
+	jobCmd := &MakeJobCommand{}
+	if err := jobCmd.Execute([]string{"SendEmail"}); err != nil {
+		t.Fatalf("make:job failed: %v", err)
+	}
+	jobFile := filepath.Join("internal", "jobs", "SendEmailJob.go")
+	content, err := os.ReadFile(jobFile)
+	if err != nil {
+		t.Fatalf("failed to read generated job file: %v", err)
+	}
+	src := string(content)
+	if !strings.Contains(src, "func (j *SendEmailJob) Name() string") {
+		t.Errorf("job stub missing Name() string method: %s", src)
+	}
+	if !strings.Contains(src, "func (j *SendEmailJob) MaxAttempts() int") {
+		t.Errorf("job stub missing MaxAttempts() int method: %s", src)
+	}
+	if strings.Contains(src, "MaxRetries") {
+		t.Errorf("job stub still has obsolete MaxRetries method: %s", src)
+	}
+
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, jobFile, nil, parser.AllErrors); err != nil {
+		t.Errorf("Generated job has syntax errors: %v", err)
+	}
+
+	// 2. make:provider
+	providerCmd := &MakeProviderCommand{}
+	if err := providerCmd.Execute([]string{"Payment"}); err != nil {
+		t.Fatalf("make:provider failed: %v", err)
+	}
+	providerFile := filepath.Join("internal", "providers", "PaymentServiceProvider.go")
+	pContent, err := os.ReadFile(providerFile)
+	if err != nil {
+		t.Fatalf("failed to read generated provider file: %v", err)
+	}
+	pSrc := string(pContent)
+	if !strings.Contains(pSrc, "func (p *PaymentServiceProvider) Register(c *foundation.Container)") {
+		t.Errorf("provider stub missing c *foundation.Container in Register: %s", pSrc)
+	}
+	if !strings.Contains(pSrc, "func (p *PaymentServiceProvider) Boot(c *foundation.Container)") {
+		t.Errorf("provider stub missing c *foundation.Container in Boot: %s", pSrc)
+	}
+
+	if _, err := parser.ParseFile(fset, providerFile, nil, parser.AllErrors); err != nil {
+		t.Errorf("Generated provider has syntax errors: %v", err)
 	}
 }
 

@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"sync"
@@ -42,11 +43,30 @@ func NewPasswordResetBroker(ttl, cooldown time.Duration) *PasswordResetBroker {
 	if cooldown <= 0 {
 		cooldown = 60 * time.Second
 	}
-	return &PasswordResetBroker{
+	b := &PasswordResetBroker{
 		records:  make(map[string]PasswordResetRecord),
 		throttle: make(map[string]time.Time),
 		ttl:      ttl,
 		cooldown: cooldown,
+	}
+	// F-059: start a background sweeper to prevent expired entries from accumulating indefinitely.
+	go b.sweepLoop()
+	return b
+}
+
+// sweepLoop periodically removes expired reset records and throttle entries.
+func (b *PasswordResetBroker) sweepLoop() {
+	ticker := time.NewTicker(5 * time.Minute)
+	for range ticker.C {
+		b.mu.Lock()
+		now := time.Now()
+		for id, rec := range b.records {
+			if now.After(rec.ExpiresAt) {
+				delete(b.records, id)
+				delete(b.throttle, id)
+			}
+		}
+		b.mu.Unlock()
 	}
 }
 
@@ -89,6 +109,7 @@ func (b *PasswordResetBroker) CreateToken(identifier string) (string, error) {
 }
 
 // VerifyToken checks whether a raw token matches the stored hash and is not expired.
+// Note: VerifyToken does not consume the token. For state-changing reset flows, use ConsumeToken (F-058).
 func (b *PasswordResetBroker) VerifyToken(identifier, rawToken string) (bool, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -102,7 +123,8 @@ func (b *PasswordResetBroker) VerifyToken(identifier, rawToken string) (bool, er
 		return false, ErrResetTokenExpired
 	}
 
-	if HashToken(rawToken) != rec.TokenHash {
+	// F-057: use constant-time comparison to prevent timing-based token oracle attacks.
+	if subtle.ConstantTimeCompare([]byte(HashToken(rawToken)), []byte(rec.TokenHash)) != 1 {
 		return false, ErrResetTokenInvalid
 	}
 
@@ -124,7 +146,8 @@ func (b *PasswordResetBroker) ConsumeToken(identifier, rawToken string) (bool, e
 		return false, ErrResetTokenExpired
 	}
 
-	if HashToken(rawToken) != rec.TokenHash {
+	// F-057: use constant-time comparison to prevent timing-based token oracle attacks.
+	if subtle.ConstantTimeCompare([]byte(HashToken(rawToken)), []byte(rec.TokenHash)) != 1 {
 		return false, ErrResetTokenInvalid
 	}
 

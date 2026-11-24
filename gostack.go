@@ -74,15 +74,15 @@ func InitAuth(defaultGuard string, userProvider contract.UserProvider) {
 
 // InitMail provisions the global Mail facade from the given SMTP configuration.
 //
-// Call this once at application boot, typically after InitConfig:
+// Call this once at application boot, typically after loading configuration:
 //
 //	gostack.InitMail(mail.Config{
-//	    Host:        gostack.Config.Get("MAIL_HOST"),
+//	    Host:        os.Getenv("MAIL_HOST"),
 //	    Port:        587,
-//	    Username:    gostack.Config.Get("MAIL_USERNAME"),
-//	    Password:    gostack.Config.Get("MAIL_PASSWORD"),
-//	    FromAddress: gostack.Config.Get("MAIL_FROM_ADDRESS"),
-//	    FromName:    gostack.Config.Get("MAIL_FROM_NAME"),
+//	    Username:    os.Getenv("MAIL_USERNAME"),
+//	    Password:    os.Getenv("MAIL_PASSWORD"),
+//	    FromAddress: os.Getenv("MAIL_FROM_ADDRESS"),
+//	    FromName:    os.Getenv("MAIL_FROM_NAME"),
 //	})
 func InitMail(cfg mail.Config) {
 	Mail = mail.NewMailer(cfg)

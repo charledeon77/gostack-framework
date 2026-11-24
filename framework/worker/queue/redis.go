@@ -63,6 +63,9 @@ func NewRedisQueue(addr, password string, db int, registry map[string]func() con
 		DB:       db,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
+	for name, constructor := range registry {
+		RegisterJob(name, constructor)
+	}
 	return &RedisQueue{
 		client:   rdb,
 		ctx:      ctx,
@@ -268,7 +271,8 @@ func (q *RedisQueue) GetStats() (contract.QueueStats, error) {
 
 // GetFailedJobs lists failed jobs in the Redis queue.
 func (q *RedisQueue) GetFailedJobs() ([]contract.FailedJob, error) {
-	rawJobs, err := q.client.LRange(q.ctx, redisFailedKey, 0, -1).Result()
+	// F-160: cap LRANGE to 1000 to prevent unbounded memory consumption.
+	rawJobs, err := q.client.LRange(q.ctx, redisFailedKey, 0, 999).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -292,7 +296,8 @@ func (q *RedisQueue) GetFailedJobs() ([]contract.FailedJob, error) {
 
 // RetryJob re-queues a failed job by its ID.
 func (q *RedisQueue) RetryJob(id string) error {
-	rawJobs, err := q.client.LRange(q.ctx, redisFailedKey, 0, -1).Result()
+	// F-160: cap LRANGE to 1000 to prevent unbounded memory consumption.
+	rawJobs, err := q.client.LRange(q.ctx, redisFailedKey, 0, 999).Result()
 	if err != nil {
 		return err
 	}
@@ -321,7 +326,8 @@ func (q *RedisQueue) RetryJob(id string) error {
 
 // DeleteFailedJob permanently removes a failed job by its ID.
 func (q *RedisQueue) DeleteFailedJob(id string) error {
-	rawJobs, err := q.client.LRange(q.ctx, redisFailedKey, 0, -1).Result()
+	// F-160: cap LRANGE to 1000 to prevent unbounded memory consumption.
+	rawJobs, err := q.client.LRange(q.ctx, redisFailedKey, 0, 999).Result()
 	if err != nil {
 		return err
 	}

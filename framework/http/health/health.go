@@ -6,6 +6,7 @@ It registers /healthz and /ready HTTP handlers that check the overall process an
 package health
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -40,8 +41,26 @@ func ReadinessHandler(db contract.Database, cache contract.CacheStore) http.Hand
 		allHealthy := true
 
 		if db != nil {
-			if err := db.Connect(); err != nil {
-				checks["database"] = "down: " + err.Error()
+			// F-108: Use a lightweight bounded ping or query instead of full Connect() per probe.
+			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+			type pinger interface {
+				Ping() error
+			}
+			type ctxPinger interface {
+				PingContext(ctx context.Context) error
+			}
+			var dbErr error
+			if cp, ok := db.(ctxPinger); ok {
+				dbErr = cp.PingContext(ctx)
+			} else if p, ok := db.(pinger); ok {
+				dbErr = p.Ping()
+			} else {
+				_, dbErr = db.QueryContext(ctx, "SELECT 1")
+			}
+			cancel()
+			if dbErr != nil {
+				// F-109: Do not leak internal database error details to unauthenticated health probes
+				checks["database"] = "down"
 				allHealthy = false
 			} else {
 				checks["database"] = "up"
@@ -54,7 +73,8 @@ func ReadinessHandler(db contract.Database, cache contract.CacheStore) http.Hand
 			_ = cache.Put(testKey, "pong", 5*time.Second)
 			_, err := cache.Get(testKey)
 			if err != nil && err != contract.ErrCacheMiss {
-				checks["cache"] = "down: " + err.Error()
+				// F-109: Do not leak internal cache error details
+				checks["cache"] = "down"
 				allHealthy = false
 			} else {
 				checks["cache"] = "up"

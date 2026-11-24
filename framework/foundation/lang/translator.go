@@ -49,10 +49,10 @@ func NewTranslator(customDir string) *FileTranslator {
 }
 
 // loadCore parses the core embedded translation dictionaries.
-func (t *FileTranslator) loadCore() {
+func (t *FileTranslator) loadCore() error {
 	files, err := coreFs.ReadDir("core_translations")
 	if err != nil {
-		return
+		return err
 	}
 	for _, f := range files {
 		if f.IsDir() || !strings.HasSuffix(f.Name(), ".json") {
@@ -61,21 +61,22 @@ func (t *FileTranslator) loadCore() {
 		locale := strings.TrimSuffix(f.Name(), ".json")
 		data, err := coreFs.ReadFile("core_translations/" + f.Name())
 		if err != nil {
-			continue
+			return err
 		}
 		var m map[string]string
 		if err := json.Unmarshal(data, &m); err != nil {
-			continue
+			return fmt.Errorf("transios: failed parsing core translation for %s: %w", locale, err)
 		}
 		t.dict[locale] = m
 	}
+	return nil
 }
 
 // loadCustom reads and merges custom local JSON translations overriding the core translations.
-func (t *FileTranslator) loadCustom() {
+func (t *FileTranslator) loadCustom() error {
 	files, err := os.ReadDir(t.customDir)
 	if err != nil {
-		return // Ignore missing or unreadable custom directories
+		return nil // Ignore missing or unreadable custom directories
 	}
 	for _, f := range files {
 		if f.IsDir() || !strings.HasSuffix(f.Name(), ".json") {
@@ -84,11 +85,11 @@ func (t *FileTranslator) loadCustom() {
 		locale := strings.TrimSuffix(f.Name(), ".json")
 		data, err := os.ReadFile(filepath.Join(t.customDir, f.Name()))
 		if err != nil {
-			continue
+			return fmt.Errorf("transios: failed reading custom translation %s: %w", f.Name(), err)
 		}
 		var m map[string]string
 		if err := json.Unmarshal(data, &m); err != nil {
-			continue
+			return fmt.Errorf("transios: failed parsing custom translation %s: %w", f.Name(), err)
 		}
 		t.mu.Lock()
 		if _, exists := t.dict[locale]; !exists {
@@ -99,6 +100,7 @@ func (t *FileTranslator) loadCustom() {
 		}
 		t.mu.Unlock()
 	}
+	return nil
 }
 
 // Trans resolves a localized string key in a given target locale, interpolating placeholders.

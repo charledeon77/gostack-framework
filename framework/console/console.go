@@ -89,7 +89,7 @@ func (k *Kernel) Run(args []string) error {
 	}
 
 	if subcommand == "--version" || subcommand == "-v" || subcommand == "version" {
-		fmt.Printf("GoStack Framework %s\n", foundation.Version)
+		fmt.Printf("GoStack Framework %s\n", foundation.GetVersion())
 		return nil
 	}
 

@@ -599,7 +599,14 @@ func (c *AuthController) Login(ctx *http.Context) error {
 			"error":      "Auth guard misconfiguration",
 		})
 	}
-	guard := rawGuard.(*auth.SessionGuard)
+	// F-243: use the two-value type assertion to avoid a panic on guard misconfiguration.
+	guard, ok := rawGuard.(*auth.SessionGuard)
+	if !ok {
+		return ctx.Render("login", map[string]any{
+			"csrf_token": getCSRFToken(ctx),
+			"error":      "Auth guard misconfiguration",
+		})
+	}
 	credentials := map[string]any{"email": email, "password": password}
 
 	if err := guard.Attempt(ctx.Writer, ctx.Request, credentials); err != nil {
@@ -661,7 +668,15 @@ func (c *AuthController) Register(ctx *http.Context) error {
 			"error":      "Auth guard misconfiguration",
 		})
 	}
-	guard := rawGuard2.(*auth.SessionGuard)
+	// F-243: check type assertion
+	guard, ok := rawGuard2.(*auth.SessionGuard)
+	if !ok {
+		csrfToken := getCSRFToken(ctx)
+		return ctx.Render("login", map[string]any{
+			"csrf_token": csrfToken,
+			"error":      "Auth guard misconfiguration",
+		})
+	}
 	credentials := map[string]any{"email": email, "password": password}
 	if err := guard.Attempt(ctx.Writer, ctx.Request, credentials); err != nil {
 		csrfToken := getCSRFToken(ctx)

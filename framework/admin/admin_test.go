@@ -1,10 +1,15 @@
 package admin
 
 import (
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"strings"
 	"testing"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestAdminMount_ProductionWithoutGuardFails(t *testing.T) {
@@ -114,6 +119,81 @@ func TestAdmin_SequenceRequiresPOST(t *testing.T) {
 
 	if wDelete.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected GET on sequence delete to return 405, got %d", wDelete.Code)
+	}
+}
+
+type AdminTestUser struct {
+	ID           int    `db:"id"`
+	Email        string `db:"email"`
+	PasswordHash string `db:"password_hash"`
+}
+
+func (u *AdminTestUser) TableName() string {
+	return "admin_test_users"
+}
+
+func TestAdmin_EditForm_PreservesBlankSensitiveColumns(t *testing.T) {
+	os.Setenv("APP_ENV", "local")
+	defer os.Unsetenv("APP_ENV")
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("failed to open sqlite in-memory db: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.Exec(`CREATE TABLE admin_test_users (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		email TEXT NOT NULL,
+		password_hash TEXT NOT NULL
+	);`)
+	if err != nil {
+		t.Fatalf("failed to create table: %v", err)
+	}
+
+	_, err = db.Exec(`INSERT INTO admin_test_users (id, email, password_hash) VALUES (1, 'initial@example.com', '$2a$12$originalhash');`)
+	if err != nil {
+		t.Fatalf("failed to insert initial record: %v", err)
+	}
+
+	Register(&AdminTestUser{})
+
+	mux := http.NewServeMux()
+	if err := Mount(mux, db, "/admin"); err != nil {
+		t.Fatalf("Mount failed: %v", err)
+	}
+
+	// Submit POST to edit endpoint with updated email and empty password_hash
+	csrfToken := "valid-test-csrf-token"
+	formData := url.Values{}
+	formData.Set("_csrf", csrfToken)
+	formData.Set("email", "updated@example.com")
+	formData.Set("password_hash", "") // Sensitive column left empty in UI
+
+	req := httptest.NewRequest("POST", "/admin/admintestuser/1", strings.NewReader(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: adminCSRFCookieName, Value: csrfToken})
+	req.RemoteAddr = "127.0.0.1:1234"
+	w := httptest.NewRecorder()
+
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("expected redirect (302) on successful edit, got %d. Body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify database record: email was updated, but password_hash remains intact!
+	var email, passwordHash string
+	err = db.QueryRow("SELECT email, password_hash FROM admin_test_users WHERE id = 1").Scan(&email, &passwordHash)
+	if err != nil {
+		t.Fatalf("failed to query updated record: %v", err)
+	}
+
+	if email != "updated@example.com" {
+		t.Errorf("expected email to be 'updated@example.com', got %q", email)
+	}
+	if passwordHash != "$2a$12$originalhash" {
+		t.Errorf("F-321 regression: expected password_hash to be preserved as '$2a$12$originalhash', but got %q", passwordHash)
 	}
 }
 

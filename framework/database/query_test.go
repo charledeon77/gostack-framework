@@ -444,9 +444,19 @@ func (m *mockTx) Exec(q string, args ...any) error {
 	return m.db.Exec(q, args...)
 }
 
+func (m *mockTx) ExecContext(ctx context.Context, q string, args ...any) error {
+	relTrackQuery("[TX] " + q)
+	return m.db.ExecContext(ctx, q, args...)
+}
+
 func (m *mockTx) Query(q string, args ...any) (any, error) {
 	relTrackQuery("[TX] " + q)
 	return m.db.Query(q, args...)
+}
+
+func (m *mockTx) QueryContext(ctx context.Context, q string, args ...any) (any, error) {
+	relTrackQuery("[TX] " + q)
+	return m.db.QueryContext(ctx, q, args...)
 }
 
 func (m *mockTx) Commit() error {

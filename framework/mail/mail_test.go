@@ -30,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func startMockSMTPServer(t *testing.T) (string, int, func()) {
@@ -206,5 +207,57 @@ func TestMailer_ValidateRejectsHeaderInjection(t *testing.T) {
 
 	if err := mailer.Validate(injectedTo); err == nil {
 		t.Fatal("expected Validate to reject CRLF in To recipient, got nil")
+	}
+}
+
+func TestMailer_Send_EnforcesTimeout(t *testing.T) {
+	// Spin up a hanging TCP listener that accepts connections but never responds
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start listener: %v", err)
+	}
+	defer l.Close()
+
+	host, portStr, _ := net.SplitHostPort(l.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+
+	mailer := NewMailer(Config{
+		Host:        host,
+		Port:        port,
+		FromAddress: "sender@gostack.dev",
+		Timeout:     50 * time.Millisecond,
+	})
+
+	err = mailer.Send(Message{
+		To:      []string{"recipient@example.com"},
+		Subject: "Timeout Test",
+		Body:    "Should time out",
+	})
+
+	if err == nil {
+		t.Fatal("expected send to fail with timeout error, got nil")
+	}
+}
+
+func TestMailer_Send_RequiresSTARTTLSWhenConfigured(t *testing.T) {
+	host, port, cleanup := startMockSMTPServer(t)
+	defer cleanup()
+
+	// Mock server does not advertise STARTTLS; configuring Encryption: "tls" should fail gracefully
+	mailer := NewMailer(Config{
+		Host:        host,
+		Port:        port,
+		FromAddress: "sender@gostack.dev",
+		Encryption:  "tls",
+	})
+
+	err := mailer.Send(Message{
+		To:      []string{"recipient@example.com"},
+		Subject: "TLS Test",
+		Body:    "Test",
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "STARTTLS required") {
+		t.Fatalf("expected STARTTLS required error, got: %v", err)
 	}
 }

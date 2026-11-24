@@ -12,6 +12,6 @@ func RegisterWebRoutes(router *http.Router) {
 	// Apply global security headers and logging
 	router.Use(http.SecurityHeaders())
 
-	router.Get("/", home.Index, http.Logger)
+	router.Handle("GET", "/", home.Index, http.Logger)
 }
 

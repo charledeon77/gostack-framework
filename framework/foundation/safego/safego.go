@@ -1,7 +1,6 @@
 package safego
 
 import (
-	"fmt"
 	"log"
 	"runtime/debug"
 )
@@ -14,7 +13,6 @@ func Go(name string, fn func()) {
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("[GoStack] PANIC recovered in goroutine %q: %v\n%s", name, r, debug.Stack())
-				fmt.Printf("[GoStack] PANIC recovered in goroutine %q: %v\n", name, r)
 			}
 		}()
 		fn()

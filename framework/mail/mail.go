@@ -36,6 +36,7 @@ Implementation:
 package mail
 
 import (
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"mime"
@@ -55,6 +56,8 @@ type Config struct {
 	Password    string
 	FromAddress string
 	FromName    string
+	Encryption  string        // Transport security: "ssl" (port 465), "tls" / "starttls" (port 587/25), or "none"
+	Timeout     time.Duration // Network dial and I/O deadline (defaults to 15s if 0)
 }
 
 // Attachment represents a file to embed in the email as a MIME attachment.
@@ -71,8 +74,8 @@ type Message struct {
 	BCC         []string
 	ReplyTo     string
 	Subject     string
-	Body        string     // Plain-text body
-	HTMLBody    string     // HTML body (when non-empty, a multipart/alternative message is built)
+	Body        string // Plain-text body
+	HTMLBody    string // HTML body (when non-empty, a multipart/alternative message is built)
 	Attachments []Attachment
 }
 
@@ -182,7 +185,83 @@ func (m *Mailer) Send(msg any) error {
 	}
 
 	raw := m.BuildRaw(mailMsg)
-	return smtp.SendMail(addr, auth, m.cfg.FromAddress, cleaned, raw)
+
+	timeout := m.cfg.Timeout
+	if timeout <= 0 {
+		timeout = 15 * time.Second
+	}
+
+	tlsConfig := &tls.Config{
+		ServerName: m.cfg.Host,
+	}
+
+	enc := strings.ToLower(strings.TrimSpace(m.cfg.Encryption))
+	isSSL := enc == "ssl" || (enc == "" && m.cfg.Port == 465)
+
+	var conn net.Conn
+	var err error
+	if isSSL {
+		dialer := &net.Dialer{Timeout: timeout}
+		conn, err = tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
+	} else {
+		conn, err = net.DialTimeout("tcp", addr, timeout)
+	}
+	if err != nil {
+		return fmt.Errorf("mail: connection to %s failed: %w", addr, err)
+	}
+	defer conn.Close()
+
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+
+	client, err := smtp.NewClient(conn, m.cfg.Host)
+	if err != nil {
+		return fmt.Errorf("mail: smtp handshake failed: %w", err)
+	}
+	defer client.Close()
+
+	// Handle STARTTLS if not already under SSL and not explicitly disabled
+	if !isSSL && enc != "none" {
+		if ok, _ := client.Extension("STARTTLS"); ok {
+			if err := client.StartTLS(tlsConfig); err != nil {
+				return fmt.Errorf("mail: STARTTLS failed: %w", err)
+			}
+		} else if enc == "tls" || enc == "starttls" {
+			return fmt.Errorf("mail: STARTTLS required by configuration but not supported by server %s", m.cfg.Host)
+		}
+	}
+
+	if auth != nil {
+		if ok, _ := client.Extension("AUTH"); ok {
+			if err := client.Auth(auth); err != nil {
+				return fmt.Errorf("mail: authentication failed: %w", err)
+			}
+		}
+	}
+
+	if err := client.Mail(m.cfg.FromAddress); err != nil {
+		return fmt.Errorf("mail: MAIL FROM failed: %w", err)
+	}
+
+	for _, rcpt := range cleaned {
+		if err := client.Rcpt(rcpt); err != nil {
+			return fmt.Errorf("mail: RCPT TO <%s> failed: %w", rcpt, err)
+		}
+	}
+
+	w, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("mail: DATA command failed: %w", err)
+	}
+
+	if _, err := w.Write(raw); err != nil {
+		return fmt.Errorf("mail: writing payload failed: %w", err)
+	}
+
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("mail: finalizing DATA payload failed: %w", err)
+	}
+
+	return client.Quit()
 }
 
 // BuildRaw formats the Message into a raw SMTP bytes payload with correct MIME headers.
@@ -357,4 +436,3 @@ func (b *MessageBuilder) Attach(filename string, content []byte, mimeType ...str
 func (b *MessageBuilder) Build() Message {
 	return b.msg
 }
-

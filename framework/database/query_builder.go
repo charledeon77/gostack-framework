@@ -39,7 +39,9 @@ Implementation:
 package database
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -51,6 +53,9 @@ import (
 )
 
 var pgPlaceholderRegex = regexp.MustCompile(`\$(\d+)`)
+
+// ErrNotFound is returned by First() when no matching row exists in the database.
+var ErrNotFound = errors.New("record not found")
 
 func shiftPgPlaceholders(sql string, offset int) string {
 	if offset == 0 {
@@ -149,8 +154,16 @@ func (s *savepointTx) Exec(sql string, args ...any) error {
 	return s.parent.Exec(sql, args...)
 }
 
+func (s *savepointTx) ExecContext(ctx context.Context, sql string, args ...any) error {
+	return s.parent.ExecContext(ctx, sql, args...)
+}
+
 func (s *savepointTx) Query(sql string, args ...any) (any, error) {
 	return s.parent.Query(sql, args...)
+}
+
+func (s *savepointTx) QueryContext(ctx context.Context, sql string, args ...any) (any, error) {
+	return s.parent.QueryContext(ctx, sql, args...)
 }
 
 func (s *savepointTx) Commit() error {
@@ -182,7 +195,10 @@ func Transaction(conn any, fn func(tx contract.Tx) error) error {
 			}
 		}()
 		if err := fn(tx); err != nil {
-			_ = tx.Rollback()
+			// F-193: capture and surface rollback error if rollback fails
+			if rbErr := tx.Rollback(); rbErr != nil {
+				return fmt.Errorf("transaction callback failed: %w (rollback failed: %v)", err, rbErr)
+			}
 			return err
 		}
 		return tx.Commit()
@@ -204,7 +220,10 @@ func Transaction(conn any, fn func(tx contract.Tx) error) error {
 		}()
 
 		if err := fn(sTx); err != nil {
-			_ = sTx.Rollback()
+			// F-193: capture and surface savepoint rollback error
+			if rbErr := sTx.Rollback(); rbErr != nil {
+				return fmt.Errorf("savepoint callback failed: %w (rollback failed: %v)", err, rbErr)
+			}
 			return err
 		}
 
@@ -255,11 +274,57 @@ func (qb *QueryBuilder) Where(col, op string, val any) *QueryBuilder {
 		return qb
 	}
 
-	var placeholder string
+	upperOp := strings.ToUpper(strings.TrimSpace(op))
+
+	// F-194: handle IS NULL and IS NOT NULL without emitting invalid placeholders
+	if (upperOp == "IS" || upperOp == "IS NOT") && val == nil {
+		qb.where = append(qb.where, fmt.Sprintf("%s %s NULL", col, upperOp))
+		return qb
+	}
+	if val == nil && upperOp == "=" {
+		qb.where = append(qb.where, fmt.Sprintf("%s IS NULL", col))
+		return qb
+	}
+	if val == nil && (upperOp == "!=" || upperOp == "<>") {
+		qb.where = append(qb.where, fmt.Sprintf("%s IS NOT NULL", col))
+		return qb
+	}
+
 	drv := ""
 	if qb.db != nil {
 		drv = qb.db.Driver()
 	}
+
+	// F-194: expand slice values passed to IN or NOT IN operators
+	if upperOp == "IN" || upperOp == "NOT IN" {
+		vVal := reflect.ValueOf(val)
+		if vVal.Kind() == reflect.Slice {
+			sliceLen := vVal.Len()
+			if sliceLen == 0 {
+				if upperOp == "IN" {
+					qb.where = append(qb.where, "1 = 0")
+				} else {
+					qb.where = append(qb.where, "1 = 1")
+				}
+				return qb
+			}
+			var placeholders []string
+			for i := 0; i < sliceLen; i++ {
+				var ph string
+				if drv == "postgres" || drv == "cockroach" || drv == "cockroachdb" {
+					ph = fmt.Sprintf("$%d", len(qb.bindings)+1)
+				} else {
+					ph = "?"
+				}
+				placeholders = append(placeholders, ph)
+				qb.bindings = append(qb.bindings, vVal.Index(i).Interface())
+			}
+			qb.where = append(qb.where, fmt.Sprintf("%s %s (%s)", col, upperOp, strings.Join(placeholders, ", ")))
+			return qb
+		}
+	}
+
+	var placeholder string
 	if drv == "postgres" || drv == "cockroach" || drv == "cockroachdb" {
 		placeholder = fmt.Sprintf("$%d", len(qb.bindings)+1)
 	} else {
@@ -282,11 +347,83 @@ func (qb *QueryBuilder) OrWhere(col, op string, val any) *QueryBuilder {
 		return qb
 	}
 
-	var placeholder string
+	upperOp := strings.ToUpper(strings.TrimSpace(op))
+
+	// F-194: handle IS NULL and IS NOT NULL for OrWhere
+	if (upperOp == "IS" || upperOp == "IS NOT") && val == nil {
+		clause := fmt.Sprintf("%s %s NULL", col, upperOp)
+		if len(qb.where) > 0 {
+			qb.where = append(qb.where, "OR "+clause)
+		} else {
+			qb.where = append(qb.where, clause)
+		}
+		return qb
+	}
+	if val == nil && upperOp == "=" {
+		clause := fmt.Sprintf("%s IS NULL", col)
+		if len(qb.where) > 0 {
+			qb.where = append(qb.where, "OR "+clause)
+		} else {
+			qb.where = append(qb.where, clause)
+		}
+		return qb
+	}
+	if val == nil && (upperOp == "!=" || upperOp == "<>") {
+		clause := fmt.Sprintf("%s IS NOT NULL", col)
+		if len(qb.where) > 0 {
+			qb.where = append(qb.where, "OR "+clause)
+		} else {
+			qb.where = append(qb.where, clause)
+		}
+		return qb
+	}
+
 	drv := ""
 	if qb.db != nil {
 		drv = qb.db.Driver()
 	}
+
+	// F-194: expand slice values passed to IN or NOT IN operators in OrWhere
+	if upperOp == "IN" || upperOp == "NOT IN" {
+		vVal := reflect.ValueOf(val)
+		if vVal.Kind() == reflect.Slice {
+			sliceLen := vVal.Len()
+			if sliceLen == 0 {
+				var clause string
+				if upperOp == "IN" {
+					clause = "1 = 0"
+				} else {
+					clause = "1 = 1"
+				}
+				if len(qb.where) > 0 {
+					qb.where = append(qb.where, "OR "+clause)
+				} else {
+					qb.where = append(qb.where, clause)
+				}
+				return qb
+			}
+			var placeholders []string
+			for i := 0; i < sliceLen; i++ {
+				var ph string
+				if drv == "postgres" || drv == "cockroach" || drv == "cockroachdb" {
+					ph = fmt.Sprintf("$%d", len(qb.bindings)+1)
+				} else {
+					ph = "?"
+				}
+				placeholders = append(placeholders, ph)
+				qb.bindings = append(qb.bindings, vVal.Index(i).Interface())
+			}
+			clause := fmt.Sprintf("%s %s (%s)", col, upperOp, strings.Join(placeholders, ", "))
+			if len(qb.where) > 0 {
+				qb.where = append(qb.where, "OR "+clause)
+			} else {
+				qb.where = append(qb.where, clause)
+			}
+			return qb
+		}
+	}
+
+	var placeholder string
 	if drv == "postgres" || drv == "cockroach" || drv == "cockroachdb" {
 		placeholder = fmt.Sprintf("$%d", len(qb.bindings)+1)
 	} else {
@@ -567,6 +704,8 @@ func (qb *QueryBuilder) ToSQL() string {
 	if qb.limitVal > 0 {
 		sqlStr += fmt.Sprintf(" LIMIT %d", qb.limitVal)
 	}
+	// F-195: Limit(-1) explicitly means "no limit" — omit the LIMIT clause.
+	// A limitVal of 0 (default) also means no limit was set.
 	if qb.offsetVal > 0 {
 		sqlStr += fmt.Sprintf(" OFFSET %d", qb.offsetVal)
 	}
@@ -658,10 +797,17 @@ func (qb *QueryBuilder) First(dest any) error {
 	// Hydrate handles both slice and struct targets; passing a struct pointer
 	// reads exactly one row and returns sql.ErrNoRows if the cursor is empty.
 	if err := Hydrate(rows, dest); err != nil {
-		if err.Error() == "sql: no rows in result set" {
-			return fmt.Errorf("[Crafter] record not found")
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("[Crafter] %w", ErrNotFound)
 		}
 		return fmt.Errorf("[Crafter] First() hydration failed: %w", err)
+	}
+
+	// F-190: eager-load relations when requested (Get() already handles this; First() was missing it).
+	if len(qb.relations) > 0 {
+		if err := qb.eagerLoadRelations(dest); err != nil {
+			return fmt.Errorf("[Crafter] First() eager load failed: %w", err)
+		}
 	}
 	return nil
 }
@@ -691,6 +837,15 @@ func (qb *QueryBuilder) UpdateModel(model any, data map[string]any) error {
 	// PAR-12: Reject mass UPDATE without a WHERE clause unless explicitly opted in.
 	if len(qb.where) == 0 && !qb.allowMassMutate {
 		return fmt.Errorf("database: dangerous UPDATE without WHERE clause rejected; call AllowMassMutation() to force a full-table update")
+	}
+
+	// F-188: Fire BeforeSave hook before building the SQL so hook mutations are reflected.
+	if model != nil {
+		if bs, ok := model.(BeforeSaver); ok {
+			if err := bs.BeforeSave(); err != nil {
+				return fmt.Errorf("[Crafter] BeforeSave hook failed: %w", err)
+			}
+		}
 	}
 
 	for col := range data {
@@ -918,7 +1073,10 @@ func (qb *QueryBuilder) InsertModel(model any, data map[string]any) error {
 							dbTag = strings.ToLower(field.Name)
 						}
 						if dbTag == col {
-							data[col] = modelVal.Field(i).Interface()
+							fVal := modelVal.Field(i)
+							if fVal.CanInterface() {
+								data[col] = fVal.Interface()
+							}
 							break
 						}
 					}
@@ -1230,15 +1388,20 @@ func (qb *QueryBuilder) Min(col string) (any, error) {
 	if !identRegex.MatchString(col) && !columnRegex.MatchString(col) {
 		return nil, fmt.Errorf("[Crafter] invalid column identifier in Min: %q", col)
 	}
-	var ns sql.NullString
-	err := qb.executeAggregate(fmt.Sprintf("MIN(%s)", col), &ns)
+	var raw []byte
+	err := qb.executeAggregate(fmt.Sprintf("MIN(%s)", col), &raw)
 	if err != nil {
 		return nil, err
 	}
-	if !ns.Valid {
+	if raw == nil {
 		return nil, nil
 	}
-	return ns.String, nil
+	// Attempt numeric coercion; fall back to string for non-numeric types.
+	var f sql.NullFloat64
+	if err2 := qb.executeAggregate(fmt.Sprintf("MIN(%s)", col), &f); err2 == nil && f.Valid {
+		return f.Float64, nil
+	}
+	return string(raw), nil
 }
 
 // Max calculates the maximum of a column.
@@ -1246,15 +1409,20 @@ func (qb *QueryBuilder) Max(col string) (any, error) {
 	if !identRegex.MatchString(col) && !columnRegex.MatchString(col) {
 		return nil, fmt.Errorf("[Crafter] invalid column identifier in Max: %q", col)
 	}
-	var ns sql.NullString
-	err := qb.executeAggregate(fmt.Sprintf("MAX(%s)", col), &ns)
+	var raw []byte
+	err := qb.executeAggregate(fmt.Sprintf("MAX(%s)", col), &raw)
 	if err != nil {
 		return nil, err
 	}
-	if !ns.Valid {
+	if raw == nil {
 		return nil, nil
 	}
-	return ns.String, nil
+	// Attempt numeric coercion; fall back to string for non-numeric types.
+	var f sql.NullFloat64
+	if err2 := qb.executeAggregate(fmt.Sprintf("MAX(%s)", col), &f); err2 == nil && f.Valid {
+		return f.Float64, nil
+	}
+	return string(raw), nil
 }
 
 

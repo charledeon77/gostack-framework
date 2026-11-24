@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -36,10 +37,11 @@ import (
 
 // S3Driver implements contract.Storage backed by AWS S3 (or any S3-compatible endpoint).
 type S3Driver struct {
-	client *s3.Client
-	bucket string
-	prefix string
-	ctx    context.Context
+	client  *s3.Client
+	bucket  string
+	prefix  string
+	timeout time.Duration
+	ctx     context.Context
 }
 
 // S3Config holds the configuration parameters for an S3 connection.
@@ -50,6 +52,7 @@ type S3Config struct {
 	AccessKeyID     string
 	SecretAccessKey string
 	Endpoint        string // Optional: set for MinIO / Cloudflare R2
+	Timeout         time.Duration // Optional: connection/request timeout (default: 30s)
 }
 
 // NewS3Driver creates a new S3Driver from the given configuration.
@@ -75,11 +78,17 @@ func NewS3Driver(cfg S3Config) (*S3Driver, error) {
 		})
 	}
 
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+
 	return &S3Driver{
-		client: s3.NewFromConfig(awsCfg, clientOpts...),
-		bucket: cfg.Bucket,
-		prefix: cfg.Prefix,
-		ctx:    context.Background(),
+		client:  s3.NewFromConfig(awsCfg, clientOpts...),
+		bucket:  cfg.Bucket,
+		prefix:  cfg.Prefix,
+		timeout: timeout,
+		ctx:     context.Background(),
 	}, nil
 }
 
@@ -90,91 +99,135 @@ func (s *S3Driver) key(path string) string {
 	return path
 }
 
+func (s *S3Driver) withTimeout(fn func(ctx context.Context) error) error {
+	ctx, cancel := context.WithTimeout(s.ctx, s.timeout)
+	defer cancel()
+	return fn(ctx)
+}
+
 // Put uploads data bytes to S3 under the given path key.
 func (s *S3Driver) Put(path string, contents []byte) error {
-	_, err := s.client.PutObject(s.ctx, &s3.PutObjectInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(s.key(path)),
-		Body:   bytes.NewReader(contents),
+	return s.withTimeout(func(ctx context.Context) error {
+		_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(s.bucket),
+			Key:    aws.String(s.key(path)),
+			Body:   bytes.NewReader(contents),
+		})
+		if err != nil {
+			return fmt.Errorf("s3driver: put failed for key '%s': %w", path, err)
+		}
+		return nil
 	})
-	if err != nil {
-		return fmt.Errorf("s3driver: put failed for key '%s': %w", path, err)
-	}
-	return nil
 }
 
 // Get downloads the file at the given path from S3 and returns its bytes.
+// Enforces a 64MB read limit to prevent unbounded memory exhaustion (F-020).
 func (s *S3Driver) Get(path string) ([]byte, error) {
-	result, err := s.client.GetObject(s.ctx, &s3.GetObjectInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(s.key(path)),
+	var data []byte
+	err := s.withTimeout(func(ctx context.Context) error {
+		result, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(s.bucket),
+			Key:    aws.String(s.key(path)),
+		})
+		if err != nil {
+			return fmt.Errorf("s3driver: get failed for key '%s': %w", path, err)
+		}
+		defer result.Body.Close()
+
+		const maxReadBytes = 64 * 1024 * 1024 // 64MB limit
+		lr := io.LimitReader(result.Body, maxReadBytes+1)
+		b, err := io.ReadAll(lr)
+		if err != nil {
+			return fmt.Errorf("s3driver: reading object failed: %w", err)
+		}
+		if int64(len(b)) > maxReadBytes {
+			return fmt.Errorf("s3driver: object exceeds maximum buffer size of 64MB (use GetStream instead)")
+		}
+		data = b
+		return nil
 	})
-	if err != nil {
-		return nil, fmt.Errorf("s3driver: get failed for key '%s': %w", path, err)
-	}
-	defer result.Body.Close()
-	return io.ReadAll(result.Body)
+	return data, err
 }
 
 // Delete removes the file at the given path from S3.
 func (s *S3Driver) Delete(path string) error {
-	_, err := s.client.DeleteObject(s.ctx, &s3.DeleteObjectInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(s.key(path)),
+	return s.withTimeout(func(ctx context.Context) error {
+		_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket: aws.String(s.bucket),
+			Key:    aws.String(s.key(path)),
+		})
+		if err != nil {
+			return fmt.Errorf("s3driver: delete failed for key '%s': %w", path, err)
+		}
+		return nil
 	})
-	if err != nil {
-		return fmt.Errorf("s3driver: delete failed for key '%s': %w", path, err)
-	}
-	return nil
 }
 
 // Exists reports whether the given S3 key exists, using a cheap HeadObject call.
 // Returns (false, err) on a driver or network error (F-021, F-023).
 func (s *S3Driver) Exists(path string) (bool, error) {
-	_, err := s.client.HeadObject(s.ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(s.key(path)),
+	var exists bool
+	err := s.withTimeout(func(ctx context.Context) error {
+		_, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+			Bucket: aws.String(s.bucket),
+			Key:    aws.String(s.key(path)),
+		})
+		if err != nil {
+			var nsk *s3types.NoSuchKey
+			if errors.As(err, &nsk) {
+				exists = false
+				return nil
+			}
+			var apiErr smithy.APIError
+			if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NotFound" {
+				exists = false
+				return nil
+			}
+			return fmt.Errorf("s3driver: exists check failed for key '%s': %w", path, err)
+		}
+		exists = true
+		return nil
 	})
-	if err != nil {
-		// HeadObject returns a 404-flavoured error when the key does not exist.
-		// All other errors are real driver failures we should surface.
-		var nsk *s3types.NoSuchKey
-		if errors.As(err, &nsk) {
-			return false, nil
-		}
-		// S3 returns a generic "NotFound" (404) for missing objects via smithy:
-		var apiErr smithy.APIError
-		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NotFound" {
-			return false, nil
-		}
-		return false, fmt.Errorf("s3driver: exists check failed for key '%s': %w", path, err)
-	}
-	return true, nil
+	return exists, err
+}
+
+type contextReadCloser struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c *contextReadCloser) Close() error {
+	defer c.cancel()
+	return c.ReadCloser.Close()
 }
 
 // PutStream streams content from an io.Reader to S3 under the given path key.
 // The stream is passed directly to the S3 PutObject API without buffering into server RAM.
 func (s *S3Driver) PutStream(path string, r io.Reader) error {
-	_, err := s.client.PutObject(s.ctx, &s3.PutObjectInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(s.key(path)),
-		Body:   r,
+	return s.withTimeout(func(ctx context.Context) error {
+		_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(s.bucket),
+			Key:    aws.String(s.key(path)),
+			Body:   r,
+		})
+		if err != nil {
+			return fmt.Errorf("s3driver: put stream failed for key '%s': %w", path, err)
+		}
+		return nil
 	})
-	if err != nil {
-		return fmt.Errorf("s3driver: put stream failed for key '%s': %w", path, err)
-	}
-	return nil
 }
 
 // GetStream downloads the S3 object at the given path and returns its body as an io.ReadCloser stream.
 // The caller is responsible for closing the returned stream.
 func (s *S3Driver) GetStream(path string) (io.ReadCloser, error) {
-	result, err := s.client.GetObject(s.ctx, &s3.GetObjectInput{
+	ctx, cancel := context.WithTimeout(s.ctx, s.timeout)
+	result, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(s.key(path)),
 	})
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("s3driver: get stream failed for key '%s': %w", path, err)
 	}
-	return result.Body, nil
+	return &contextReadCloser{ReadCloser: result.Body, cancel: cancel}, nil
 }

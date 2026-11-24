@@ -59,11 +59,12 @@ func CSRF(cookieName string) http.Middleware {
 		// 2. Fetch or seed a unique CSRF token in the session
 		tokenVal := sess.Get("csrf_token")
 		var token string
-		if tokenVal == nil {
+		// F-048: safe type assertion to avoid panics on corrupted or non-string session values
+		if str, ok := tokenVal.(string); ok && str != "" {
+			token = str
+		} else {
 			token = generateCSRFToken()
 			sess.Set("csrf_token", token)
-		} else {
-			token = tokenVal.(string)
 		}
 
 		// Expose token to request context values for view builders / page forms

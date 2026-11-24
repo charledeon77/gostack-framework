@@ -34,15 +34,20 @@ import (
 //    engineered for high-concurrency HTTP architectures, our internal registries are fully shielded by a
 //    sync.RWMutex. We use granular RLock() transitions for lightning-fast concurrent reads, and strict Lock()
 //    barriers for single-instance structural state initialization mutations.
+type singletonEntry struct {
+	factory func(c *Container) any
+	once    sync.Once
+	value   any
+}
+
 type Container struct {
 	mu sync.RWMutex
 
 	// cache stores fully materialized, active Singleton service instances.
 	cache map[string]any
 
-	// singletonFactories stores the dormant, unresolved structural blueprints for Singletons.
-	// Once resolved for the first time, the factory is purged from this map to optimize memory.
-	singletonFactories map[string]func(c *Container) any
+	// singletonEntries stores blueprints and once-guards for Singletons.
+	singletonEntries map[string]*singletonEntry
 
 	// transientFactories stores recipes that run freshly on every single invocation pass.
 	transientFactories map[string]func(c *Container) any
@@ -52,7 +57,7 @@ type Container struct {
 func NewContainer() *Container {
 	return &Container{
 		cache:              make(map[string]any),
-		singletonFactories: make(map[string]func(c *Container) any),
+		singletonEntries:   make(map[string]*singletonEntry),
 		transientFactories: make(map[string]func(c *Container) any),
 	}
 }
@@ -76,7 +81,7 @@ func (c *Container) BindSingleton(key string, factory func(c *Container) any) {
 	delete(c.cache, key)
 	delete(c.transientFactories, key)
 
-	c.singletonFactories[key] = factory
+	c.singletonEntries[key] = &singletonEntry{factory: factory}
 }
 
 // BindTransient registers a volatile dependency blueprint into the container.
@@ -94,23 +99,12 @@ func (c *Container) BindTransient(key string, factory func(c *Container) any) {
 	defer c.mu.Unlock()
 
 	delete(c.cache, key)
-	delete(c.singletonFactories, key)
+	delete(c.singletonEntries, key)
 
 	c.transientFactories[key] = factory
 }
 
 // Resolve fetches, builds, or extracts a registered service out of the container warehouse.
-//
-// RESOLUTION RESOLVING PIPELINE STEP-BY-STEP:
-// 1. High-Performance Cache Lookups: Checks if the target key is already an active, warmed Singleton.
-// 2. On-The-Fly Singleton Materialization: If a blueprint factory exists, we acquire a write lock,
-//    execute the factory to materialize the service, store it inside the cache, and clean up the factory reference.
-// 3. Volatile Transient Processing: If a transient registry matches, we execute the factory directly.
-// 4. Safe Error Routing: If the key cannot be found, we return a structured error instead of panicking.
-//
-// NESTED DEPENDENCY INJECTION (CHAINING):
-// Because the container passes its own instance pointer `c` straight into the executing factories,
-// dependencies can dynamically resolve other dependencies out of the container during their own construction loop.
 func (c *Container) Resolve(key string) (any, error) {
 	// --- STEP 1: READ-LOCK BOUNDARY (Fast-Path Cache Inspection) ---
 	c.mu.RLock()
@@ -119,39 +113,31 @@ func (c *Container) Resolve(key string) (any, error) {
 		return instance, nil
 	}
 
-	// Check if a transient recipe exists under the current high-performance read lock
+	// Check if a transient recipe exists under read lock
 	if factory, exists := c.transientFactories[key]; exists {
 		c.mu.RUnlock()
 		return factory(c), nil
 	}
+
+	entry, hasSingleton := c.singletonEntries[key]
 	c.mu.RUnlock()
 
-	// --- STEP 2: WRITE-LOCK BOUNDARY (State Mutation Processing) ---
-	c.mu.Lock()
-
-	// Double-check cache state to eliminate race-conditions caused during lock execution handovers
-	if instance, exists := c.cache[key]; exists {
-		c.mu.Unlock()
-		return instance, nil
-	}
-
-	// Materialize Singleton if a factory recipe is present.
-	// F-001: Extract the factory and unlock before invocation to allow nested Resolve() calls.
-	factory, exists := c.singletonFactories[key]
-	if !exists {
-		c.mu.Unlock()
+	if !hasSingleton {
 		return nil, fmt.Errorf("foundation.Container: service signature [%s] cannot be resolved (missing binding recipe)", key)
 	}
-	delete(c.singletonFactories, key)
-	c.mu.Unlock()
 
-	instance := factory(c)
+	// Run factory via per-key sync.Once without holding container lock.
+	// This eliminates deadlocks when nested singletons resolve other singletons (F-001)
+	// and guarantees thread-safety without map contention.
+	entry.once.Do(func() {
+		entry.value = entry.factory(c)
 
-	c.mu.Lock()
-	c.cache[key] = instance
-	c.mu.Unlock()
+		c.mu.Lock()
+		c.cache[key] = entry.value
+		c.mu.Unlock()
+	})
 
-	return instance, nil
+	return entry.value, nil
 }
 
 // Has executes a non-blocking, concurrent inspection to verify if a service key is bound.
@@ -160,7 +146,7 @@ func (c *Container) Has(key string) bool {
 	defer c.mu.RUnlock()
 
 	_, inCache := c.cache[key]
-	_, inSingletons := c.singletonFactories[key]
+	_, inSingletons := c.singletonEntries[key]
 	_, inTransients := c.transientFactories[key]
 
 	return inCache || inSingletons || inTransients

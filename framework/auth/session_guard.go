@@ -33,6 +33,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -137,7 +138,14 @@ func (g *SessionGuard) User(r *http.Request) (contract.Authenticatable, bool) {
 
 	// 4. Resolve user via Provider contract
 	user, err := g.provider.RetrieveByID(userID)
-	if err != nil || user == nil {
+	if err != nil {
+		// F-047: a provider error (e.g. DB outage) is NOT the same as "user not found".
+		// Log the operational error server-side so operators can diagnose it.
+		log.Printf("[GoStack] auth: provider.RetrieveByID error for guard %q: %v", g.name, err)
+		cacheUser(r, nil)
+		return nil, false
+	}
+	if user == nil {
 		cacheUser(r, nil)
 		return nil, false
 	}

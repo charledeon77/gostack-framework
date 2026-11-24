@@ -6,9 +6,11 @@ package http
 import (
 	"bytes"
 	"fmt"
-	"github.com/charledeon77/gostack-framework/framework/ui"
 	"io"
 	"strings"
+	"sync"
+
+	"github.com/charledeon77/gostack-framework/framework/ui"
 )
 
 // ViewTranslator defines the translation interface that compiled templates consume.
@@ -33,6 +35,7 @@ type ViewFunc func(w io.Writer, data any, t ViewTranslator) error
 // is initialized at application boot-time, ensuring that the framework 
 // fails fast if a template is missing.
 type Tempose struct {
+	mu sync.RWMutex
 	// views stores the registry of template functions, indexed by their unique path.
 	views map[string]ViewFunc
 }
@@ -51,6 +54,8 @@ func NewTempose() *Tempose {
 // Usage: This is typically invoked by generated code during the 'gostack build' 
 // process to wire up the application's view layer.
 func (t *Tempose) Register(name string, fn ViewFunc) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.views[name] = fn
 }
 
@@ -65,7 +70,9 @@ func (t *Tempose) Register(name string, fn ViewFunc) {
 //
 // Returns an error if the requested view name has not been registered.
 func (t *Tempose) Render(w io.Writer, name string, data any, trans ViewTranslator) error {
+	t.mu.RLock()
 	view, ok := t.views[name]
+	t.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("tempose: view '%s' not registered in the system", name)
 	}
@@ -76,7 +83,8 @@ func (t *Tempose) Render(w io.Writer, name string, data any, trans ViewTranslato
 	}
 	
 	html := buf.String()
-	if idx := strings.Index(strings.ToLower(html), "</head>"); idx != -1 {
+	// F-106: use LastIndex to target the document's actual closing </head> tag rather than a false match in comments
+	if idx := strings.LastIndex(strings.ToLower(html), "</head>"); idx != -1 {
 		// Write everything up to </head>
 		if _, err := io.WriteString(w, html[:idx]); err != nil {
 			return err

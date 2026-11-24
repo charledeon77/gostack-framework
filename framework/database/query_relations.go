@@ -393,10 +393,14 @@ func (qb *QueryBuilder) loadBelongsTo(sliceVal reflect.Value, relationName, fkTa
 			parentVal = parentVal.Elem()
 		}
 		fkVal := parentVal.FieldByName(parentFKField).Interface()
-		if fkVal == nil || fkVal == 0 || fkVal == "" {
+		if fkVal == nil {
 			continue
 		}
+		// F-202: normalize to string instead of comparing against int 0, which panics on uncomparable types (e.g. UUID, structs)
 		normVal := normalizeKey(fkVal)
+		if normVal == "" || normVal == "0" {
+			continue
+		}
 		if !seenValues[normVal] {
 			seenValues[normVal] = true
 			fkValues = append(fkValues, fkVal)
@@ -533,29 +537,6 @@ func (qb *QueryBuilder) loadManyToMany(sliceVal reflect.Value, relationName, fkT
 		return fmt.Errorf("[GoStack Relation Engine] self-referential pivot: fk and related_fk are both %q — every record would map to itself", parentFK)
 	}
 
-	var placeholders []string
-	var bindings []any
-	drv := qb.db.Driver()
-	for _, v := range pkValues {
-		if drv == "postgres" || drv == "cockroach" || drv == "cockroachdb" {
-			placeholders = append(placeholders, fmt.Sprintf("$%d", len(bindings)+1))
-		} else {
-			placeholders = append(placeholders, "?")
-		}
-		bindings = append(bindings, v)
-	}
-	query := fmt.Sprintf("SELECT %s, %s FROM %s WHERE %s IN (%s)", parentFK, relatedFK, pivotTable, parentFK, strings.Join(placeholders, ", "))
-
-	result, err := qb.executor().Query(query, bindings...)
-	if err != nil {
-		return err
-	}
-	rows, ok := result.(*sql.Rows)
-	if !ok {
-		return fmt.Errorf("invalid rows type from pivot query")
-	}
-	defer rows.Close()
-
 	type pivotPair struct {
 		parentKey  string
 		relatedKey string
@@ -564,18 +545,61 @@ func (qb *QueryBuilder) loadManyToMany(sliceVal reflect.Value, relationName, fkT
 	var relatedKeys []any
 	seenRelated := make(map[string]bool)
 
-	for rows.Next() {
-		var pVal, rVal any
-		if err := rows.Scan(&pVal, &rVal); err != nil {
+	// F-199: guard against nil qb.db before calling Driver() on the pivot path.
+	var drv string
+	if qb.db != nil {
+		drv = qb.db.Driver()
+	}
+
+	// F-200: chunk pkValues to prevent exceeding maximum database placeholder limits
+	for start := 0; start < len(pkValues); start += whereInChunkSize {
+		end := start + whereInChunkSize
+		if end > len(pkValues) {
+			end = len(pkValues)
+		}
+		chunk := pkValues[start:end]
+
+		var placeholders []string
+		var bindings []any
+		for _, v := range chunk {
+			if drv == "postgres" || drv == "cockroach" || drv == "cockroachdb" {
+				placeholders = append(placeholders, fmt.Sprintf("$%d", len(bindings)+1))
+			} else {
+				placeholders = append(placeholders, "?")
+			}
+			bindings = append(bindings, v)
+		}
+		query := fmt.Sprintf("SELECT %s, %s FROM %s WHERE %s IN (%s)", parentFK, relatedFK, pivotTable, parentFK, strings.Join(placeholders, ", "))
+
+		result, err := qb.executor().Query(query, bindings...)
+		if err != nil {
 			return err
 		}
-		pStr := normalizeKey(pVal)
-		rStr := normalizeKey(rVal)
-		pairs = append(pairs, pivotPair{parentKey: pStr, relatedKey: rStr})
-		if !seenRelated[rStr] {
-			seenRelated[rStr] = true
-			relatedKeys = append(relatedKeys, rVal)
+		rows, ok := result.(*sql.Rows)
+		if !ok {
+			return fmt.Errorf("invalid rows type from pivot query")
 		}
+
+		for rows.Next() {
+			var pVal, rVal any
+			if err := rows.Scan(&pVal, &rVal); err != nil {
+				rows.Close()
+				return err
+			}
+			pStr := normalizeKey(pVal)
+			rStr := normalizeKey(rVal)
+			pairs = append(pairs, pivotPair{parentKey: pStr, relatedKey: rStr})
+			if !seenRelated[rStr] {
+				seenRelated[rStr] = true
+				relatedKeys = append(relatedKeys, rVal)
+			}
+		}
+		// F-201: propagate any row-iteration error from the pivot cursor.
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return fmt.Errorf("[GoStack Relation Engine] row iteration error in pivot load: %w", err)
+		}
+		rows.Close()
 	}
 
 	if len(relatedKeys) == 0 {
@@ -710,29 +734,6 @@ func (qb *QueryBuilder) loadHasManyThrough(sliceVal reflect.Value, relationName,
 		return fmt.Errorf("[GoStack Relation Engine] through_fk tag %q contains invalid characters", farFK)
 	}
 
-	var placeholders []string
-	var bindings []any
-	drv := qb.db.Driver()
-	for _, v := range pkValues {
-		if drv == "postgres" || drv == "cockroach" || drv == "cockroachdb" {
-			placeholders = append(placeholders, fmt.Sprintf("$%d", len(bindings)+1))
-		} else {
-			placeholders = append(placeholders, "?")
-		}
-		bindings = append(bindings, v)
-	}
-	query := fmt.Sprintf("SELECT id, %s FROM %s WHERE %s IN (%s)", parentFK, throughTable, parentFK, strings.Join(placeholders, ", "))
-
-	result, err := qb.executor().Query(query, bindings...)
-	if err != nil {
-		return err
-	}
-	rows, ok := result.(*sql.Rows)
-	if !ok {
-		return fmt.Errorf("invalid rows type from through query")
-	}
-	defer rows.Close()
-
 	type throughPair struct {
 		throughID string
 		parentKey string
@@ -741,18 +742,61 @@ func (qb *QueryBuilder) loadHasManyThrough(sliceVal reflect.Value, relationName,
 	var throughIDs []any
 	seenThrough := make(map[string]bool)
 
-	for rows.Next() {
-		var tVal, pVal any
-		if err := rows.Scan(&tVal, &pVal); err != nil {
+	// F-199: guard against nil qb.db before calling Driver() on the through path.
+	var drv string
+	if qb.db != nil {
+		drv = qb.db.Driver()
+	}
+
+	// F-200: chunk pkValues in through queries to prevent exceeding database placeholder limits
+	for start := 0; start < len(pkValues); start += whereInChunkSize {
+		end := start + whereInChunkSize
+		if end > len(pkValues) {
+			end = len(pkValues)
+		}
+		chunk := pkValues[start:end]
+
+		var placeholders []string
+		var bindings []any
+		for _, v := range chunk {
+			if drv == "postgres" || drv == "cockroach" || drv == "cockroachdb" {
+				placeholders = append(placeholders, fmt.Sprintf("$%d", len(bindings)+1))
+			} else {
+				placeholders = append(placeholders, "?")
+			}
+			bindings = append(bindings, v)
+		}
+		query := fmt.Sprintf("SELECT id, %s FROM %s WHERE %s IN (%s)", parentFK, throughTable, parentFK, strings.Join(placeholders, ", "))
+
+		result, err := qb.executor().Query(query, bindings...)
+		if err != nil {
 			return err
 		}
-		tStr := normalizeKey(tVal)
-		pStr := normalizeKey(pVal)
-		pairs = append(pairs, throughPair{throughID: tStr, parentKey: pStr})
-		if !seenThrough[tStr] {
-			seenThrough[tStr] = true
-			throughIDs = append(throughIDs, tVal)
+		rows, ok := result.(*sql.Rows)
+		if !ok {
+			return fmt.Errorf("invalid rows type from through query")
 		}
+
+		for rows.Next() {
+			var tVal, pVal any
+			if err := rows.Scan(&tVal, &pVal); err != nil {
+				rows.Close()
+				return err
+			}
+			tStr := normalizeKey(tVal)
+			pStr := normalizeKey(pVal)
+			pairs = append(pairs, throughPair{throughID: tStr, parentKey: pStr})
+			if !seenThrough[tStr] {
+				seenThrough[tStr] = true
+				throughIDs = append(throughIDs, tVal)
+			}
+		}
+		// F-201: propagate any row-iteration error from the through cursor.
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return fmt.Errorf("[GoStack Relation Engine] row iteration error in through load: %w", err)
+		}
+		rows.Close()
 	}
 
 	if len(throughIDs) == 0 {

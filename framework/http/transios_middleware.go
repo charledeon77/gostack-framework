@@ -30,14 +30,15 @@ func TransiosMiddleware(t contract.Translator, defaultLocale string) Middleware 
 		// 3. Keep the request-scoped locale state in context values
 		ctx.Set("locale", activeLocale)
 
-		// 4. Optionally write back a persistent cookie if the query parameter explicitly set the language
+		// 4. Optionally write back a persistent cookie if the query parameter explicitly set the language (F-112)
 		if lang := ctx.Query("lang"); lang != "" {
 			netHTTP.SetCookie(ctx.Writer, &netHTTP.Cookie{
 				Name:     "locale",
 				Value:    lang,
 				Path:     "/",
 				HttpOnly: true,
-				Secure:   false, // local development default
+				Secure:   isRequestSecure(ctx.Request),
+				SameSite: netHTTP.SameSiteLaxMode,
 			})
 		}
 

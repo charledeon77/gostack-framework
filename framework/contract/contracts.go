@@ -99,8 +99,14 @@ type Tx interface {
 	// Exec executes a parameterized SQL statement inside the transaction that returns no rows.
 	Exec(sql string, args ...any) error
 
+	// ExecContext executes a parameterized SQL statement inside the transaction with context deadline/cancellation.
+	ExecContext(ctx context.Context, sql string, args ...any) error
+
 	// Query executes a parameterized SQL query inside the transaction and returns result rows.
 	Query(sql string, args ...any) (interface{}, error)
+
+	// QueryContext executes a parameterized SQL query inside the transaction with context deadline/cancellation.
+	QueryContext(ctx context.Context, sql string, args ...any) (interface{}, error)
 
 	// Commit finalizes the transaction, permanently applying all changes.
 	Commit() error

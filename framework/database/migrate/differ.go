@@ -88,7 +88,7 @@ func Diff(db *sql.DB, driver string, models ...any) ([]DiffResult, error) {
 				return nil, fmt.Errorf("differ: unsafe column tag %q on field %s", dbTag, field.Name)
 			}
 
-			if _, exists := existingCols[dbTag]; !exists {
+			if _, exists := existingCols[strings.ToLower(dbTag)]; !exists {
 				sqlType := goTypeToSQL(field.Type, driver)
 				stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s;", tableName, dbTag, sqlType)
 				stmts = append(stmts, stmt)

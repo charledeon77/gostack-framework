@@ -61,7 +61,11 @@ func NewRouter() *Router {
 
 // Use registers one or more global middleware layers that execute on every route.
 // Global middleware runs before route-specific or group-specific middleware.
+// F-313: Calling Use after routes have already been registered returns a loud error/log or wraps them.
 func (r *Router) Use(middleware ...Middleware) *Router {
+	if len(r.routes) > 0 || len(r.dynamicRoutes) > 0 {
+		log.Printf("[WARNING] router.Use() called after routes were already registered. Global middleware must be registered before routes to guarantee complete coverage.")
+	}
 	r.globalMiddleware = append(r.globalMiddleware, middleware...)
 	return r
 }

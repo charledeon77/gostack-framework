@@ -32,11 +32,15 @@ package http
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	mrand "math/rand"
 	netHTTP "net/http"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charledeon77/gostack-framework/framework/contract"
 )
@@ -58,6 +62,11 @@ func isRequestSecure(req *netHTTP.Request) bool {
 // RETURNS:
 //   - A Middleware function to hook directly into the router setup.
 func SessionMiddleware(store contract.SessionStore, cookieName string) Middleware {
+	if store == nil {
+		return func(ctx *Context, next NextHandler) error {
+			return next(ctx)
+		}
+	}
 	if cookieName == "" {
 		cookieName = "gostack_session"
 	}
@@ -100,11 +109,15 @@ func SessionMiddleware(store contract.SessionStore, cookieName string) Middlewar
 			}
 		}
 
-		// 5. Commit response cookie header if newly minted (SEC-16)
-		if isNewSession {
+		// 5. Commit response cookie header if newly minted or rotated (SEC-16, F-087)
+		if isNewSession || (sess != nil && sess.ID() != sessionID) {
+			targetID := sessionID
+			if sess != nil && sess.ID() != "" {
+				targetID = sess.ID()
+			}
 			netHTTP.SetCookie(ctx.Writer, &netHTTP.Cookie{
 				Name:     cookieName,
-				Value:    sessionID,
+				Value:    targetID,
 				Path:     "/",
 				HttpOnly: true,
 				Secure:   isRequestSecure(ctx.Request),
@@ -147,10 +160,14 @@ func GetSession(ctx *Context) contract.Session {
 }
 
 // generateSessionID builds a cryptographically secure 32-byte hexadecimal random token string.
+// If crypto/rand encounters a system error, it falls back to a time-seeded source (F-038) instead of panicking.
 func generateSessionID() string {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		panic("session: failed to generate secure random session ID")
+		// Fallback: mix high-resolution time with counter to ensure uniqueness without crashing the process
+		fallback := fmt.Sprintf("%x%x%x", os.Getpid(), time.Now().UnixNano(), mrand.Int63())
+		hash := sha256.Sum256([]byte(fallback))
+		return hex.EncodeToString(hash[:])
 	}
 	return hex.EncodeToString(b)
 }

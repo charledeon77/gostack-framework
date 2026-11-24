@@ -18,6 +18,7 @@ Implementation:
 package database
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -89,9 +90,18 @@ func (m *mockSchemaTx) Exec(sql string, args ...any) error {
 	return nil
 }
 
+func (m *mockSchemaTx) ExecContext(ctx context.Context, sql string, args ...any) error {
+	m.queries = append(m.queries, sql)
+	m.args = append(m.args, args)
+	return nil
+}
+
 func (m *mockSchemaTx) Query(sql string, args ...any) (any, error) { return nil, nil }
-func (m *mockSchemaTx) Commit() error                              { return nil }
-func (m *mockSchemaTx) Rollback() error                            { return nil }
+func (m *mockSchemaTx) QueryContext(ctx context.Context, sql string, args ...any) (any, error) {
+	return nil, nil
+}
+func (m *mockSchemaTx) Commit() error   { return nil }
+func (m *mockSchemaTx) Rollback() error { return nil }
 
 func TestBuilderExecAndRaw(t *testing.T) {
 	tx := &mockSchemaTx{}

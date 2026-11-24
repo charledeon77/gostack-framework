@@ -87,14 +87,19 @@ func main() {
 	// Handle upgrade command — works from anywhere, updates the global CLI.
 	if commandName == "upgrade" || commandName == "update" {
 		fmt.Println("\033[1;36m⚙ Checking for GoStack updates...\033[0m")
-		updateCmd := exec.Command("go", "install", "github.com/charledeon77/gostack-framework/cmd/gost@latest")
+		// F-267: Pin to current release or latest stable release tag
+		targetPkg := "github.com/charledeon77/gostack-framework/cmd/gost@v" + getVersion()
+		if getVersion() == "dev" {
+			targetPkg = "github.com/charledeon77/gostack-framework/cmd/gost@latest"
+		}
+		updateCmd := exec.Command("go", "install", targetPkg)
 		updateCmd.Stdout = os.Stdout
 		updateCmd.Stderr = os.Stderr
 		if err := updateCmd.Run(); err != nil {
 			fmt.Printf("\033[1;31m[GoStack Error]\033[0m Failed to upgrade GoStack: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("\033[1;32m✔ GoStack successfully upgraded to the latest version!\033[0m")
+		fmt.Println("\033[1;32m✔ GoStack successfully upgraded!\033[0m")
 		fmt.Println("  Run \033[1;36mgost version\033[0m to inspect your updated environment.")
 		os.Exit(0)
 	}

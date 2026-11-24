@@ -17,7 +17,7 @@ environments without touching source code. We use zero external dependencies —
 
 Architecture:
 A single `Manager` struct holds a parsed key→value map loaded once at boot via `Load()`.
-The global `gostack.Config` facade exposes it to the entire application.
+Callers can instantiate or query it directly, or read environment variables via `os.Getenv`.
 
 Choice:
 We chose a simple line-by-line `.env` parser over external libraries (like godotenv) to

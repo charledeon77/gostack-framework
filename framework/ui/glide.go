@@ -1824,7 +1824,7 @@ const GlideJS = `
 
     // Public API
     global.Glide = {
-        version: '1.0.14',
+        version: '1.0.27',
         init:    scanAndInit,
         eval:    evaluate,
         store:   registerStore,

@@ -107,10 +107,11 @@ func (a *SQLAdapter) QueryContext(ctx context.Context, sqlString string, args ..
 	return rows, nil
 }
 
-// Query executes the provided SQL query using background context.
-// F-219: wraps QueryContext without premature context cancellation (caller owns Rows lifecycle).
+// Query executes the provided SQL query with a default 30-second timeout context.
+// F-219: bounds unbounded queries while preserving rows reading capability.
 func (a *SQLAdapter) Query(sqlString string, args ...any) (any, error) {
-	return a.QueryContext(context.Background(), sqlString, args...)
+	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
+	return a.QueryContext(ctx, sqlString, args...)
 }
 
 // ExecContext executes a SQL statement that returns no rows with a caller-supplied context.
@@ -140,7 +141,9 @@ func (a *SQLAdapter) ExecResult(sqlString string, args ...any) (sql.Result, erro
 	if a == nil || a.db == nil {
 		return nil, fmt.Errorf("database connection is uninitialized")
 	}
-	result, err := a.db.Exec(sqlString, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	result, err := a.db.ExecContext(ctx, sqlString, args...)
 	if err != nil {
 		return nil, fmt.Errorf("exec statement failed: %w", err)
 	}
@@ -181,22 +184,35 @@ type SQLTx struct {
 	tx *sql.Tx
 }
 
-// Exec executes a parameterized SQL statement inside the transaction.
-func (t *SQLTx) Exec(sqlString string, args ...any) error {
-	_, err := t.tx.Exec(sqlString, args...)
+// ExecContext executes a parameterized SQL statement inside the transaction with a context deadline.
+func (t *SQLTx) ExecContext(ctx context.Context, sqlString string, args ...any) error {
+	_, err := t.tx.ExecContext(ctx, sqlString, args...)
 	if err != nil {
 		return fmt.Errorf("transaction exec failed: %w", err)
 	}
 	return nil
 }
 
-// Query executes a parameterized SQL query inside the transaction.
-func (t *SQLTx) Query(sqlString string, args ...any) (any, error) {
-	rows, err := t.tx.Query(sqlString, args...)
+// Exec executes a parameterized SQL statement inside the transaction with a default 30-second timeout.
+func (t *SQLTx) Exec(sqlString string, args ...any) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return t.ExecContext(ctx, sqlString, args...)
+}
+
+// QueryContext executes a parameterized SQL query inside the transaction with a context deadline.
+func (t *SQLTx) QueryContext(ctx context.Context, sqlString string, args ...any) (any, error) {
+	rows, err := t.tx.QueryContext(ctx, sqlString, args...)
 	if err != nil {
 		return nil, fmt.Errorf("transaction query failed: %w", err)
 	}
 	return rows, nil
+}
+
+// Query executes a parameterized SQL query inside the transaction with a default 30-second timeout.
+func (t *SQLTx) Query(sqlString string, args ...any) (any, error) {
+	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
+	return t.QueryContext(ctx, sqlString, args...)
 }
 
 // Commit finalizes the transaction.

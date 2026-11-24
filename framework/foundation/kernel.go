@@ -107,7 +107,7 @@ func (k *Kernel) Run(addr string) error {
 		viewEngine = ghttp.NewTempose()
 	}
 
-	if os.Getenv("APP_ENV") != "production" {
+	if os.Getenv("APP_ENV") == "local" || os.Getenv("APP_ENV") == "development" {
 		compiler := ui.NewAssetCompiler("templates/components", "cmd/app")
 		watcher := ui.NewHotReloadWatcher(compiler, 500*time.Millisecond)
 		SafeGo("hot-reload-watcher", func() { watcher.Start(context.Background()) })

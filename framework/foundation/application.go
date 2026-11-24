@@ -2,6 +2,11 @@
 // GoStack framework, managing low-level application lifecycles and diagnostics.
 package foundation
 
+import (
+	"log"
+	"sync"
+)
+
 // ServiceProvider establishes the unified structural lifecycle contract for all 
 // modular packages, sub-systems, and feature drivers within the GoStack ecosystem.
 //
@@ -37,6 +42,7 @@ type ServiceProvider interface {
 // Application serves as the absolute master core runtime manager for the GoStack framework.
 // It encapsulates the root Service Container and coordinates the execution loop of providers.
 type Application struct {
+	mu        sync.RWMutex // F-007: guard concurrent access to providers slice
 	container *Container
 	providers []ServiceProvider
 	isBooted  bool
@@ -56,37 +62,56 @@ func (a *Application) Container() *Container {
 	return a.container
 }
 
+func safeRunProvider(action string, p ServiceProvider, fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[GoStack Critical] ServiceProvider %T panicked during %s: %v", p, action, r)
+		}
+	}()
+	fn()
+}
+
 // RegisterProvider appends a modular service provider to the framework's internal lifecycle stack.
 // If the application has already entered its runtime phase (isBooted == true), the provider's 
 // structural phases are instantly executed on the fly to support dynamic runtime hot-swaps.
 func (a *Application) RegisterProvider(provider ServiceProvider) {
+	a.mu.Lock()
 	a.providers = append(a.providers, provider)
+	booted := a.isBooted
+	a.mu.Unlock()
 
 	// If the application has already booted up, dynamically register and boot this hot-swapping module
-	if a.isBooted {
-		provider.Register(a.container)
-		provider.Boot(a.container)
+	if booted {
+		safeRunProvider("Register", provider, func() { provider.Register(a.container) })
+		safeRunProvider("Boot", provider, func() { provider.Boot(a.container) })
 	}
 }
 
 // Boot executes the master two-step lifecycle processing loop across all registered providers.
 // Once executed, the framework layer is fully initialized and open to accept incoming traffic.
 func (a *Application) Boot() {
+	a.mu.Lock()
 	if a.isBooted {
+		a.mu.Unlock()
 		return // Guard against accidental double-boot triggers re-initializing runtime state
 	}
+	providers := make([]ServiceProvider, len(a.providers))
+	copy(providers, a.providers)
+	a.mu.Unlock()
 
 	// --- PHASE 1: UNIFIED REGISTRATION PASS ---
 	// Loop over all modules and load their service recipes safely into the central container.
-	for _, provider := range a.providers {
-		provider.Register(a.container)
+	for _, provider := range providers {
+		safeRunProvider("Register", provider, func() { provider.Register(a.container) })
 	}
 
 	// --- PHASE 2: UNIFIED BOOTSTRAPPING PASS ---
 	// Loop over all modules a second time to execute operational configurations safely.
-	for _, provider := range a.providers {
-		provider.Boot(a.container)
+	for _, provider := range providers {
+		safeRunProvider("Boot", provider, func() { provider.Boot(a.container) })
 	}
 
+	a.mu.Lock()
 	a.isBooted = true
+	a.mu.Unlock()
 }

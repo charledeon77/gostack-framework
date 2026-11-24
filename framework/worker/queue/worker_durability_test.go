@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/charledeon77/gostack-framework/framework/contract"
 )
 
 type dummyTestJob struct {
@@ -24,8 +26,11 @@ type panickingTestJob struct{}
 func (p *panickingTestJob) Name() string  { return "PanickingJob" }
 func (p *panickingTestJob) Handle() error { panic("something broke") }
 
-// F-179: Test that JobChain and JobBatch marshal and unmarshal correctly with exported fields.
+// F-179: Test that JobChain and JobBatch marshal and unmarshal correctly with exported fields and interface hydration.
 func TestJobChain_SerialisesAndRuns(t *testing.T) {
+	RegisterJob("Step1", func() contract.Job { return &dummyTestJob{} })
+	RegisterJob("Step2", func() contract.Job { return &dummyTestJob{} })
+
 	job1 := &dummyTestJob{JobName: "Step1"}
 	job2 := &dummyTestJob{JobName: "Step2"}
 
@@ -42,11 +47,57 @@ func TestJobChain_SerialisesAndRuns(t *testing.T) {
 		t.Fatalf("expected jobs in JSON payload, got: %s", string(bytes))
 	}
 
-	if err := chain.Handle(); err != nil {
-		t.Fatalf("expected chain to run successfully, got: %v", err)
+	// Verify unmarshaling works without interface reflection errors
+	var restored JobChain
+	if err := json.Unmarshal(bytes, &restored); err != nil {
+		t.Fatalf("failed to unmarshal JobChain: %v", err)
 	}
-	if !job1.Ran || !job2.Ran {
-		t.Fatalf("expected both jobs to run, got job1=%v, job2=%v", job1.Ran, job2.Ran)
+
+	if len(restored.Jobs) != 2 {
+		t.Fatalf("expected 2 jobs in restored chain, got: %d", len(restored.Jobs))
+	}
+
+	if err := restored.Handle(); err != nil {
+		t.Fatalf("expected restored chain to run successfully, got: %v", err)
+	}
+
+	d1, ok1 := restored.Jobs[0].(*dummyTestJob)
+	d2, ok2 := restored.Jobs[1].(*dummyTestJob)
+	if !ok1 || !ok2 || !d1.Ran || !d2.Ran {
+		t.Fatalf("expected both restored jobs to run, got d1=%v, d2=%v", d1.Ran, d2.Ran)
+	}
+}
+
+func TestJobBatch_SerialisesAndRuns(t *testing.T) {
+	RegisterJob("BatchStep1", func() contract.Job { return &dummyTestJob{} })
+	RegisterJob("BatchStep2", func() contract.Job { return &dummyTestJob{} })
+
+	job1 := &dummyTestJob{JobName: "BatchStep1"}
+	job2 := &dummyTestJob{JobName: "BatchStep2"}
+
+	batch := NewBatch(job1, job2)
+	bytes, err := json.Marshal(batch)
+	if err != nil {
+		t.Fatalf("failed to marshal JobBatch: %v", err)
+	}
+
+	var restored JobBatch
+	if err := json.Unmarshal(bytes, &restored); err != nil {
+		t.Fatalf("failed to unmarshal JobBatch: %v", err)
+	}
+
+	if len(restored.Jobs) != 2 {
+		t.Fatalf("expected 2 jobs in restored batch, got: %d", len(restored.Jobs))
+	}
+
+	if err := restored.Handle(); err != nil {
+		t.Fatalf("expected restored batch to run successfully, got: %v", err)
+	}
+
+	d1, ok1 := restored.Jobs[0].(*dummyTestJob)
+	d2, ok2 := restored.Jobs[1].(*dummyTestJob)
+	if !ok1 || !ok2 || !d1.Ran || !d2.Ran {
+		t.Fatalf("expected both restored batch jobs to run, got d1=%v, d2=%v", d1.Ran, d2.Ran)
 	}
 }
 

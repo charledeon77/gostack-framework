@@ -281,8 +281,17 @@ func handleEdit(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, i
 				continue
 			}
 			val := r.FormValue(col.Name)
+			// F-321: If a sensitive column (e.g. password_hash, token, secret) was left blank in the form,
+			// omit it from the UPDATE statement to preserve the existing stored credential.
+			if isSensitiveColumn(col.Name) && strings.TrimSpace(val) == "" {
+				continue
+			}
 			args = append(args, val)
 			setClauses = append(setClauses, fmt.Sprintf("%s = %s", col.Name, sqlPlaceholder(isPg, len(args))))
+		}
+		if len(setClauses) == 0 {
+			http.Redirect(w, r, "/admin/"+modelName, http.StatusFound)
+			return
 		}
 		args = append(args, id)
 		whereID := sqlPlaceholder(isPg, len(args))
