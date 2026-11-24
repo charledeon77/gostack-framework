@@ -732,13 +732,21 @@ func (qb *QueryBuilder) OrderBy(col, dir string) *QueryBuilder {
 	return qb
 }
 
-// Limit caps the number of rows returned. Pass a negative integer (e.g. -1) to explicitly remove any limit.
+// Limit caps the number of rows returned. Limit(n) requires n >= 0.
+// If n < 0, an error is recorded on the builder to prevent pagination arithmetic errors from full-table scanning (C2).
+// Use NoLimit() to explicitly remove any limit constraint.
 func (qb *QueryBuilder) Limit(n int) *QueryBuilder {
 	if n < 0 {
-		qb.limitVal = -1
-	} else {
-		qb.limitVal = n
+		qb.setErr(fmt.Errorf("database: Limit requires n >= 0, got %d (use NoLimit() to explicitly clear limit)", n))
+		return qb
 	}
+	qb.limitVal = n
+	return qb
+}
+
+// NoLimit explicitly removes any LIMIT constraint from the query.
+func (qb *QueryBuilder) NoLimit() *QueryBuilder {
+	qb.limitVal = -1
 	return qb
 }
 

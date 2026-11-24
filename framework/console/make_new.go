@@ -423,7 +423,10 @@ func (c *NewCommand) Execute(args []string) error {
 			newContent := strings.ReplaceAll(string(content), `"github.com/charledeon77/gostack-framework"`, `"`+projectName+`"`)
 			newContent = strings.ReplaceAll(newContent, `"github.com/charledeon77/gostack-framework/`, `"`+projectName+`/`)
 			if string(content) != newContent {
-				os.WriteFile(path, []byte(newContent), 0644)
+				// D18: surface write errors — a silent failure here produces a half-created project.
+				if wErr := os.WriteFile(path, []byte(newContent), 0644); wErr != nil {
+					return fmt.Errorf("failed to rewrite imports in %s: %w", path, wErr)
+				}
 			}
 		}
 		return nil
@@ -551,7 +554,10 @@ func (c *NewCommand) Execute(args []string) error {
 		if strings.Contains(mainStr, targetBlock) {
 			mainStr = strings.Replace(mainStr, targetBlock, dbSetupCode, 1)
 		}
-		os.WriteFile(mainGoPath, []byte(mainStr), 0644)
+		// D18: surface write errors — a silent failure produces a half-created project.
+		if wErr := os.WriteFile(mainGoPath, []byte(mainStr), 0644); wErr != nil {
+			return fmt.Errorf("failed to write cmd/app/main.go: %w", wErr)
+		}
 	}
 
 	// Customize cmd/gostack/main.go database initialization
@@ -625,7 +631,10 @@ func (c *NewCommand) Execute(args []string) error {
 		if strings.Contains(gostackStr, targetBlock) {
 			gostackStr = strings.Replace(gostackStr, targetBlock, dbSetupCode, 1)
 		}
-		os.WriteFile(gostackGoPath, []byte(gostackStr), 0644)
+		// D18: surface write errors — a silent failure produces a half-created project.
+		if wErr := os.WriteFile(gostackGoPath, []byte(gostackStr), 0644); wErr != nil {
+			return fmt.Errorf("failed to write cmd/gostack/main.go: %w", wErr)
+		}
 	}
 
 	// 7. Prune unused database driver dependencies before resolving
@@ -1038,6 +1047,9 @@ func pruneUnusedDriverDeps(projectDir, dbType, dbDriver string) {
 	for _, pkg := range toRemove {
 		dropCmd := exec.Command("go", "mod", "edit", "-droprequire="+pkg)
 		dropCmd.Dir = projectDir
-		_ = dropCmd.Run() // Failures are non-fatal; go mod tidy will reconcile anyway
+		// D19: surface cleanup failures — a stale require line causes confusing build errors.
+		if err := dropCmd.Run(); err != nil {
+			fmt.Printf("[GoStack CLI Warning] Failed to drop unused dependency %s: %v (run 'go mod tidy' manually)\n", pkg, err)
+		}
 	}
 }

@@ -166,7 +166,8 @@ type SessionStore interface {
 	Rotate(oldID string) (Session, error)
 
 	// Exists reports whether a session with the given ID exists in the store.
-	Exists(id string) bool
+	// C5: Returns an error on store communication/network failure so outages are not treated as guest sessions.
+	Exists(id string) (bool, error)
 }
 
 // SessionContextKeyType is the context key under which the session is bound.
@@ -218,6 +219,10 @@ type Guard interface {
 
 	// User retrieves the authenticated user if logged in, returning false if not authenticated.
 	User(r *http.Request) (Authenticatable, bool)
+
+	// UserErr retrieves the authenticated user with explicit error reporting (C11).
+	// Returns (user, found, err). An error indicates an operational failure (outage), not an unauthenticated request.
+	UserErr(r *http.Request) (Authenticatable, bool, error)
 
 	// Login manually signs in a user and establishes authentication context (e.g. cookie sessions).
 	Login(w http.ResponseWriter, r *http.Request, user Authenticatable) error

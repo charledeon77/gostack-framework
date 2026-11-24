@@ -34,6 +34,7 @@ package database
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/charledeon77/gostack-framework/framework/contract"
 	"sort"
@@ -143,7 +144,9 @@ func (m *Migrator) runOne(mig Migration) error {
 	builder := NewBuilder(tx, m.db.Driver())
 
 	if err := mig.Up(builder); err != nil {
-		_ = tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return errors.Join(err, fmt.Errorf("rollback failed for migration %d: %w", mig.Version, rbErr))
+		}
 		return err
 	}
 
@@ -154,7 +157,9 @@ func (m *Migrator) runOne(mig Migration) error {
 	}
 
 	if err := tx.Exec(query, mig.Version); err != nil {
-		_ = tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return errors.Join(err, fmt.Errorf("rollback failed for migration %d: %w", mig.Version, rbErr))
+		}
 		return err
 	}
 
@@ -170,7 +175,9 @@ func (m *Migrator) rollbackOne(mig Migration) error {
 	builder := NewBuilder(tx, m.db.Driver())
 
 	if err := mig.Down(builder); err != nil {
-		_ = tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return errors.Join(err, fmt.Errorf("rollback failed for migration %d: %w", mig.Version, rbErr))
+		}
 		return err
 	}
 
@@ -181,7 +188,9 @@ func (m *Migrator) rollbackOne(mig Migration) error {
 	}
 
 	if err := tx.Exec(query, mig.Version); err != nil {
-		_ = tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return errors.Join(err, fmt.Errorf("rollback failed for migration %d: %w", mig.Version, rbErr))
+		}
 		return err
 	}
 

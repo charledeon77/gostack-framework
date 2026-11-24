@@ -177,20 +177,20 @@ func (q *RedisQueue) runWorker() {
 			payload.Attempts++
 			payload.Error = handleErr.Error()
 			if retryable, ok := job.(contract.Retryable); ok && payload.Attempts < retryable.MaxAttempts() {
-				// Exponential backoff: factor * 2^attempts
+				// Exponential backoff with clamping (D2)
 				factor := q.BackoffFactor
 				if factor == 0 {
 					factor = time.Second
 				}
-				backoff := factor * time.Duration(1 << payload.Attempts)
+				backoff := backoffFor(payload.Attempts, factor)
 				fmt.Printf("[Sequence Worker] Job %s failed: %v. Retrying in %v (attempt %d/%d)...\n",
-					payload.Name, err, backoff, payload.Attempts, retryable.MaxAttempts())
+					payload.Name, handleErr, backoff, payload.Attempts, retryable.MaxAttempts())
 				
 				if retryErr := q.pushDelayedPayload(payload, backoff); retryErr != nil {
 					fmt.Printf("[Sequence Worker] Failed to queue retry for job %s: %v\n", payload.Name, retryErr)
 				}
 			} else {
-				fmt.Printf("[Sequence Worker] Job %s failed: %v. Storing in dead-letter list.\n", payload.Name, err)
+				fmt.Printf("[Sequence Worker] Job %s failed: %v. Storing in dead-letter list.\n", payload.Name, handleErr)
 				failedEncoded, marshalErr := json.Marshal(payload)
 				if marshalErr == nil {
 					if dlErr := q.client.LPush(q.ctx, redisFailedKey, failedEncoded).Err(); dlErr != nil {
@@ -228,7 +228,10 @@ func (q *RedisQueue) runDelayedScheduler() {
 			for _, job := range jobs {
 				// B6: only remove from delayed sorted set if LPush succeeded
 				if err := q.client.LPush(q.ctx, redisQueueKey, job).Err(); err == nil {
-					q.client.ZRem(q.ctx, redisDelayedKey, job)
+					if remErr := q.client.ZRem(q.ctx, redisDelayedKey, job).Err(); remErr != nil {
+						// D4: log failure to remove from delayed set
+						fmt.Printf("[RedisQueue] Warning: failed to remove delayed job from %s: %v (job may run twice)\n", redisDelayedKey, remErr)
+					}
 				}
 			}
 		}

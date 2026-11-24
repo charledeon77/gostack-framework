@@ -114,45 +114,50 @@ func (g *SessionGuard) Check(r *http.Request) bool {
 	return ok
 }
 
-// User returns the authenticated user context, retrieving from session or per-request cache.
-func (g *SessionGuard) User(r *http.Request) (contract.Authenticatable, bool) {
+// UserErr retrieves the authenticated user with explicit error reporting (C11).
+// Surfaces database/provider outages so callers can respond with 503 instead of treating as unauthenticated.
+func (g *SessionGuard) UserErr(r *http.Request) (contract.Authenticatable, bool, error) {
 	// 1. Inspect request context cache first to save database lookup overhead
 	if cacheVal := r.Context().Value(contract.UserContextKey); cacheVal != nil {
 		if cache, ok := cacheVal.(*contract.AuthCache); ok && cache.Loaded {
-			return cache.User, cache.User != nil
+			return cache.User, cache.User != nil, nil
 		}
 	}
 
 	// 2. Resolve active session from context
 	sess, err := g.getSession(r)
 	if err != nil {
-		return nil, false
+		return nil, false, nil
 	}
 
 	// 3. Extract the cached user ID
 	userID := sess.Get(g.sessionKey)
 	if userID == nil {
 		cacheUser(r, nil)
-		return nil, false
+		return nil, false, nil
 	}
 
 	// 4. Resolve user via Provider contract
 	user, err := g.provider.RetrieveByID(userID)
 	if err != nil {
-		// F-047: a provider error (e.g. DB outage) is NOT the same as "user not found".
-		// Log the operational error server-side so operators can diagnose it.
+		// F-047 / C11: provider error (e.g. DB outage) is surfaced
 		log.Printf("[GoStack] auth: provider.RetrieveByID error for guard %q: %v", g.name, err)
-		cacheUser(r, nil)
-		return nil, false
+		return nil, false, fmt.Errorf("auth: provider error: %w", err)
 	}
 	if user == nil {
 		cacheUser(r, nil)
-		return nil, false
+		return nil, false, nil
 	}
 
 	// 5. Cache for subsequent calls within this request lifecycle
 	cacheUser(r, user)
-	return user, true
+	return user, true, nil
+}
+
+// User returns the authenticated user context, retrieving from session or per-request cache.
+func (g *SessionGuard) User(r *http.Request) (contract.Authenticatable, bool) {
+	u, ok, _ := g.UserErr(r)
+	return u, ok
 }
 
 // Login commits user details to session, signing them in.

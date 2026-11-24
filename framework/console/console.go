@@ -68,11 +68,13 @@ func NewKernel() *Kernel {
 }
 
 // Register adds a Command to the console registry.
-func (k *Kernel) Register(cmd Command) {
+// Returns an error if cmd is nil. (D35: boot code that fails closed returns a diagnostic, not a panic)
+func (k *Kernel) Register(cmd Command) error {
 	if cmd == nil {
-		panic("console: cannot register nil command")
+		return fmt.Errorf("console: cannot register nil command")
 	}
 	k.commands[cmd.Name()] = cmd
+	return nil
 }
 
 // Run executes the matched command based on terminal arguments.

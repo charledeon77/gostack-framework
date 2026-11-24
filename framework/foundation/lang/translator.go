@@ -36,18 +36,22 @@ type FileTranslator struct {
 }
 
 // NewTranslator constructs and loads a FileTranslator instance.
-// In non-production environments, it logs warnings if dictionary loading encounters syntax or file read errors.
+// Core dictionaries are compiled into the binary; a parse failure there is a build defect
+// and must be logged in every environment. Custom dictionaries are operator input and their
+// errors are always logged loudly with the file name. (C27)
 func NewTranslator(customDir string) *FileTranslator {
 	t := &FileTranslator{
 		dict:      make(map[string]map[string]string),
 		customDir: customDir,
 	}
-	if err := t.loadCore(); err != nil && os.Getenv("APP_ENV") != "production" {
-		fmt.Printf("[Transios Warning] Failed loading core translations: %v\n", err)
+	if err := t.loadCore(); err != nil {
+		// Core dict failure is a build defect — always log, never swallow.
+		fmt.Printf("[Transios ERROR] Failed loading core translations: %v\n", err)
 	}
 	if customDir != "" {
-		if err := t.loadCustom(); err != nil && os.Getenv("APP_ENV") != "production" {
-			fmt.Printf("[Transios Warning] Failed loading custom translations: %v\n", err)
+		if err := t.loadCustom(); err != nil {
+			// Custom dict failure is operator input — log loudly in every environment.
+			fmt.Printf("[Transios WARNING] Failed loading custom translations: %v\n", err)
 		}
 	}
 	return t

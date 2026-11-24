@@ -29,11 +29,13 @@ Implementation:
 package admin
 
 import (
-	"github.com/charledeon77/gostack-framework/framework/contract"
+	"fmt"
 	"net/http"
 	"reflect"
 	"strings"
 	"sync"
+
+	"github.com/charledeon77/gostack-framework/framework/contract"
 )
 
 // AuthGuard is the pluggable authentication middleware for the admin panel.
@@ -106,12 +108,19 @@ var global = &Registry{
 }
 
 // Register adds a model to the global admin panel registry.
-// The model argument should be a pointer to a struct (e.g. &model.User{}).
-func Register(model any) {
-	t := reflect.TypeOf(model)
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
+// The model argument must be a non-nil pointer to a struct (e.g. &model.User{}).
+func Register(model any) error {
+	if model == nil {
+		return fmt.Errorf("admin: Register requires a non-nil pointer to a struct, got nil")
 	}
+	t := reflect.TypeOf(model)
+	if t == nil {
+		return fmt.Errorf("admin: Register requires a non-nil pointer to a struct, got nil")
+	}
+	if t.Kind() != reflect.Ptr || t.Elem().Kind() != reflect.Struct {
+		return fmt.Errorf("admin: Register requires a pointer to a struct, got %v", t)
+	}
+	t = t.Elem()
 
 	name := t.Name()
 	tableName := strings.ToLower(name) + "s"
@@ -141,16 +150,25 @@ func Register(model any) {
 		Label:     name + "s",
 	}
 
+	key := strings.ToLower(name)
 	global.mu.Lock()
-	global.entries[strings.ToLower(name)] = entry
-	global.mu.Unlock()
+	defer global.mu.Unlock()
+	if _, exists := global.entries[key]; exists {
+		return fmt.Errorf("admin: model %q is already registered", name)
+	}
+	global.entries[key] = entry
+	return nil
 }
 
-// All returns all registered admin entries.
+// All returns a copy of all registered admin entries.
 func All() map[string]*AdminEntry {
 	global.mu.RLock()
 	defer global.mu.RUnlock()
-	return global.entries
+	cpy := make(map[string]*AdminEntry, len(global.entries))
+	for k, v := range global.entries {
+		cpy[k] = v
+	}
+	return cpy
 }
 
 // Find retrieves an admin entry by its lowercase model name.

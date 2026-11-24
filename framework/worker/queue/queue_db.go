@@ -146,15 +146,28 @@ func NewDatabaseQueue(db *sql.DB, table, failedTable, queueName string, pollInte
 
 // Register maps a job name to a constructor so workers can re-hydrate jobs
 // from their serialised JSON payload.
+// C6: Validates constructor and binds key by constructor().Name().
 //
 // Example:
 //
 //	dbq.Register("SendWelcomeEmail", func() contract.Job { return &SendWelcomeEmail{} })
-func (q *DatabaseQueue) Register(name string, constructor func() contract.Job) {
+func (q *DatabaseQueue) Register(name string, constructor func() contract.Job) error {
+	if constructor == nil {
+		return fmt.Errorf("queue: constructor cannot be nil")
+	}
+	jobInstance := constructor()
+	if jobInstance == nil {
+		return fmt.Errorf("queue: constructor returned nil job")
+	}
+	actualName := jobInstance.Name()
+	if actualName != name {
+		return fmt.Errorf("queue: registered name %q does not match job.Name() %q", name, actualName)
+	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.registry[name] = constructor
-	RegisterJob(name, constructor)
+	q.registry[actualName] = constructor
+	RegisterJob(actualName, constructor)
+	return nil
 }
 
 // Push inserts a job into the database queue immediately.
@@ -323,13 +336,11 @@ func (q *DatabaseQueue) processNext(workerID int) error {
 	// Deserialise and run the job.
 	var env dbJobEnvelope
 	if err = json.Unmarshal([]byte(payload), &env); err != nil {
-		// B5: Move corrupt job to failed list rather than deleting silently
-		_, _ = q.db.Exec(
-			fmt.Sprintf(`INSERT INTO %s (queue, payload, attempts, error, failed_at) VALUES (%s, %s, %s, %s, %s)`,
-				q.failedTable, q.ph(1), q.ph(2), q.ph(3), q.ph(4), q.ph(5)),
-			q.queue, payload, attempts, fmt.Sprintf("corrupt job payload: %v", err), time.Now().Unix(),
-		)
-		_ = q.deleteJob(jobID)
+		// B5: Move corrupt job to failed list via deadLetter helper
+		reason := fmt.Sprintf("corrupt job payload: %v", err)
+		if dlErr := q.deadLetter(jobID, payload, attempts, reason); dlErr != nil {
+			return fmt.Errorf("corrupt job payload (id=%d): dead-letter recording failed: %w", jobID, dlErr)
+		}
 		return fmt.Errorf("corrupt job payload (id=%d): %w", jobID, err)
 	}
 
@@ -338,25 +349,21 @@ func (q *DatabaseQueue) processNext(workerID int) error {
 	q.mu.RUnlock()
 
 	if !ok {
-		// B5: Move unregistered job to failed list rather than deleting silently
-		_, _ = q.db.Exec(
-			fmt.Sprintf(`INSERT INTO %s (queue, payload, attempts, error, failed_at) VALUES (%s, %s, %s, %s, %s)`,
-				q.failedTable, q.ph(1), q.ph(2), q.ph(3), q.ph(4), q.ph(5)),
-			q.queue, payload, attempts, fmt.Sprintf("no registered handler for job %q", env.Name), time.Now().Unix(),
-		)
-		_ = q.deleteJob(jobID)
+		// B5: Move unregistered job to failed list via deadLetter helper
+		reason := fmt.Sprintf("no registered handler for job %q", env.Name)
+		if dlErr := q.deadLetter(jobID, payload, attempts, reason); dlErr != nil {
+			return fmt.Errorf("unregistered job %q (id=%d): dead-letter recording failed: %w", env.Name, jobID, dlErr)
+		}
 		return fmt.Errorf("no registered handler for job %q (id=%d)", env.Name, jobID)
 	}
 
 	job := constructor()
 	if err = json.Unmarshal(env.Payload, job); err != nil {
-		// B5: Move unhydratable job to failed list rather than deleting silently
-		_, _ = q.db.Exec(
-			fmt.Sprintf(`INSERT INTO %s (queue, payload, attempts, error, failed_at) VALUES (%s, %s, %s, %s, %s)`,
-				q.failedTable, q.ph(1), q.ph(2), q.ph(3), q.ph(4), q.ph(5)),
-			q.queue, payload, attempts, fmt.Sprintf("failed to hydrate job %q: %v", env.Name, err), time.Now().Unix(),
-		)
-		_ = q.deleteJob(jobID)
+		// B5: Move unhydratable job to failed list via deadLetter helper
+		reason := fmt.Sprintf("failed to hydrate job %q: %v", env.Name, err)
+		if dlErr := q.deadLetter(jobID, payload, attempts, reason); dlErr != nil {
+			return fmt.Errorf("unhydratable job %q (id=%d): dead-letter recording failed: %w", env.Name, jobID, dlErr)
+		}
 		return fmt.Errorf("failed to hydrate job %q (id=%d): %w", env.Name, jobID, err)
 	}
 
@@ -390,25 +397,37 @@ func (q *DatabaseQueue) processNext(workerID int) error {
 			return nil
 		}
 
-		// Permanently failed — move to failed_jobs.
-		// SEC-32: Only delete the job row after the dead-letter INSERT succeeds.
-		// If the INSERT fails, return the error and leave the job row intact so it is not silently lost.
-		if _, dlErr := q.db.Exec(
-			fmt.Sprintf(`INSERT INTO %s (queue, payload, attempts, error, failed_at) VALUES (%s, %s, %s, %s, %s)`,
-				q.failedTable, q.ph(1), q.ph(2), q.ph(3), q.ph(4), q.ph(5)),
-			q.queue, payload, attempts, runErr.Error(), time.Now().Unix(),
-		); dlErr != nil {
-			fmt.Printf("[DatabaseQueue Worker %d] Job %s dead-letter INSERT failed: %v — job NOT deleted\n",
+		// Permanently failed — move to failed_jobs via deadLetter
+		if dlErr := q.deadLetter(jobID, payload, attempts, runErr.Error()); dlErr != nil {
+			fmt.Printf("[DatabaseQueue Worker %d] Job %s dead-letter failed: %v — job NOT deleted\n",
 				workerID, env.Name, dlErr)
 			return dlErr
 		}
 		fmt.Printf("[DatabaseQueue Worker %d] Job %s permanently failed: %v\n", workerID, env.Name, runErr)
+		return nil
 	}
 
 	if err := q.deleteJob(jobID); err != nil {
 		// B4: If delete fails, release the job so it isn't permanently stranded
 		_, _ = q.db.Exec(fmt.Sprintf(`UPDATE %s SET reserved_at = NULL WHERE id = %s`, q.table, q.ph(1)), jobID)
 		return err
+	}
+	return nil
+}
+
+func (q *DatabaseQueue) deadLetter(jobID int64, payload string, attempts int, reason string) error {
+	_, err := q.db.Exec(
+		fmt.Sprintf(`INSERT INTO %s (queue, payload, attempts, error, failed_at) VALUES (%s, %s, %s, %s, %s)`,
+			q.failedTable, q.ph(1), q.ph(2), q.ph(3), q.ph(4), q.ph(5)),
+		q.queue, payload, attempts, reason, time.Now().Unix(),
+	)
+	if err != nil {
+		_, _ = q.db.Exec(fmt.Sprintf(`UPDATE %s SET reserved_at = NULL WHERE id = %s`, q.table, q.ph(1)), jobID)
+		return fmt.Errorf("deadLetter insert failed: %w", err)
+	}
+	if err := q.deleteJob(jobID); err != nil {
+		_, _ = q.db.Exec(fmt.Sprintf(`UPDATE %s SET reserved_at = NULL WHERE id = %s`, q.table, q.ph(1)), jobID)
+		return fmt.Errorf("deadLetter deleteJob failed: %w", err)
 	}
 	return nil
 }
@@ -465,15 +484,18 @@ func (q *DatabaseQueue) GetFailedJobs() ([]contract.FailedJob, error) {
 		var failedAt int64
 
 		if err := rows.Scan(&id, &payload, &attempts, &errMsg, &failedAt); err != nil {
-			continue
+			return nil, fmt.Errorf("failed to scan failed job: %w", err)
 		}
 
 		var env dbJobEnvelope
-		_ = json.Unmarshal([]byte(payload), &env)
+		jobName := "(unreadable payload)"
+		if err := json.Unmarshal([]byte(payload), &env); err == nil && env.Name != "" {
+			jobName = env.Name
+		}
 
 		jobs = append(jobs, contract.FailedJob{
 			ID:       fmt.Sprintf("%d", id),
-			Name:     env.Name,
+			Name:     jobName,
 			Payload:  payload,
 			Attempts: attempts,
 			Error:    errMsg,

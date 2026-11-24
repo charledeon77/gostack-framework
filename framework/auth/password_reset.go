@@ -124,10 +124,9 @@ func (b *PasswordResetBroker) CreateToken(identifier string) (string, error) {
 	return rawToken, nil
 }
 
-// VerifyToken checks whether a raw token matches the stored hash and is not expired.
-// Deprecated: VerifyToken does not consume the token and allows replay within the TTL window.
-// Production password reset flows MUST use ConsumeToken to guarantee single-use semantics (F-058).
-func (b *PasswordResetBroker) VerifyToken(identifier, rawToken string) (bool, error) {
+// PeekToken checks whether a raw token matches the stored hash and is not expired without consuming it.
+// Note: PeekToken does not authorise password changes; it is intended only to validate whether to display a reset form.
+func (b *PasswordResetBroker) PeekToken(identifier, rawToken string) (bool, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -146,6 +145,11 @@ func (b *PasswordResetBroker) VerifyToken(identifier, rawToken string) (bool, er
 	}
 
 	return true, nil
+}
+
+// VerifyToken verifies and immediately consumes the reset token to ensure single use (C13).
+func (b *PasswordResetBroker) VerifyToken(identifier, rawToken string) (bool, error) {
+	return b.ConsumeToken(identifier, rawToken)
 }
 
 // ConsumeToken verifies and immediately deletes the reset token to ensure single use.

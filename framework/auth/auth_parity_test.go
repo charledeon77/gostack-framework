@@ -16,9 +16,9 @@ type mockVerifiableUser struct {
 	verified bool
 }
 
-func (m *mockVerifiableUser) GetID() any      { return m.id }
-func (m *mockVerifiableUser) GetEmail() string { return m.email }
-func (m *mockVerifiableUser) GetPassword() string { return m.password }
+func (m *mockVerifiableUser) GetID() any             { return m.id }
+func (m *mockVerifiableUser) GetEmail() string       { return m.email }
+func (m *mockVerifiableUser) GetPassword() string    { return m.password }
 func (m *mockVerifiableUser) HasVerifiedEmail() bool { return m.verified }
 func (m *mockVerifiableUser) MarkEmailAsVerified() error {
 	m.verified = true
@@ -45,26 +45,26 @@ func TestPAR03_PasswordReset(t *testing.T) {
 		t.Fatal("security violation: raw token stored instead of hash")
 	}
 
-	// 3. Verify token works
-	valid, err := broker.VerifyToken("user@example.com", rawToken)
+	// 3. Peek token works (non-consuming preview)
+	valid, err := broker.PeekToken("user@example.com", rawToken)
 	if err != nil || !valid {
-		t.Fatalf("expected token to verify: %v", err)
+		t.Fatalf("expected token to peek: %v", err)
 	}
 
 	// 4. Bad token fails
-	valid, err = broker.VerifyToken("user@example.com", "wrong-token")
+	valid, err = broker.PeekToken("user@example.com", "wrong-token")
 	if valid || err == nil {
 		t.Fatal("expected wrong token to fail")
 	}
 
-	// 5. Consume token (single-use)
-	valid, err = broker.ConsumeToken("user@example.com", rawToken)
+	// 5. Verify token consumes token (single-use)
+	valid, err = broker.VerifyToken("user@example.com", rawToken)
 	if err != nil || !valid {
-		t.Fatalf("failed to consume token: %v", err)
+		t.Fatalf("failed to verify/consume token: %v", err)
 	}
 
 	// 6. Replay fails
-	valid, err = broker.ConsumeToken("user@example.com", rawToken)
+	valid, err = broker.VerifyToken("user@example.com", rawToken)
 	if valid || err == nil {
 		t.Fatal("expected consumed token replay to fail")
 	}

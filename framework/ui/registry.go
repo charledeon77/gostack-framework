@@ -195,10 +195,17 @@ func FilterSlugify(val any, _ ...string) string {
 // FilterPlural returns the singular or plural form based on the "count" string arg.
 // Usage in template: {{ count | plural("apple", "apples") }}
 func FilterPlural(val any, args ...string) string {
-	count := 0
-	_, _ = fmt.Sscanf(fmt.Sprint(val), "%d", &count)
+	var count int
+	raw := fmt.Sprint(val)
+	if _, err := fmt.Sscanf(raw, "%d", &count); err != nil {
+		// D12: non-integer input is returned verbatim — a formatting helper is a no-op on input it does not understand.
+		if len(args) == 0 {
+			return raw
+		}
+		return raw
+	}
 	if len(args) == 0 {
-		return fmt.Sprint(val)
+		return raw
 	}
 	if len(args) == 1 {
 		if count == 1 {
@@ -316,8 +323,9 @@ func WriteMasterAssetBlock(w io.Writer) {
 	// 2. External Reactive script link
 	_, _ = io.WriteString(w, fmt.Sprintf("<script defer src=\"%s\"></script>\n", jsURL))
 
-	// 3. Development Hot Reload Client script
-	if os.Getenv("APP_ENV") != "production" {
+	// 3. Development Hot Reload Client script — D13: inject only for explicit dev environments, not "not production"
+	appEnv := strings.ToLower(os.Getenv("APP_ENV"))
+	if appEnv == "local" || appEnv == "development" {
 		_, _ = io.WriteString(w, fmt.Sprintf("<script defer src=\"%s\"></script>\n", hotURL))
 	}
 }

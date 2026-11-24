@@ -258,14 +258,21 @@ func (store *DBSessionStore) Save(s contract.Session) error {
 }
 
 // Exists reports whether the session exists in the database and is not expired (SEC-16).
-func (store *DBSessionStore) Exists(id string) bool {
+// C5: Returns an error on database connectivity failures.
+func (store *DBSessionStore) Exists(id string) (bool, error) {
 	query := fmt.Sprintf("SELECT 1 FROM %s WHERE id = ? AND last_activity > ?", store.table)
 	if isPostgresDriver(store.driver) {
 		query = fmt.Sprintf("SELECT 1 FROM %s WHERE id = $1 AND last_activity > $2", store.table)
 	}
 	var one int
 	err := store.db.QueryRow(query, id, time.Now().Add(-store.ttl).Unix()).Scan(&one)
-	return err == nil
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, fmt.Errorf("db session store: exists check failed: %w", err)
+	}
+	return true, nil
 }
 
 // Destroy deletes a session from the database.

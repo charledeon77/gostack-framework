@@ -75,9 +75,20 @@ func SessionMiddleware(store contract.SessionStore, cookieName string) Middlewar
 
 		// 1. Inspect request cookies for existing session tokens (SEC-16)
 		cookie, err := ctx.Request.Cookie(cookieName)
-		if err == nil && cookie != nil && cookie.Value != "" && IsValidSessionID(cookie.Value) && store.Exists(cookie.Value) {
-			sessionID = cookie.Value
-		} else {
+		if err == nil && cookie != nil && cookie.Value != "" && IsValidSessionID(cookie.Value) {
+			exists, existsErr := store.Exists(cookie.Value)
+			if existsErr != nil {
+				// C5: Outage from session store must return 503 instead of treating as guest
+				ctx.Writer.WriteHeader(netHTTP.StatusServiceUnavailable)
+				_, _ = ctx.Writer.Write([]byte("503 Service Unavailable: Session store unavailable"))
+				return fmt.Errorf("session store unavailable: %w", existsErr)
+			}
+			if exists {
+				sessionID = cookie.Value
+			}
+		}
+
+		if sessionID == "" {
 			// Generate a fresh cryptographically secure session ID if missing, invalid format, or unknown in store
 			sessionID = generateSessionID()
 			if sessionID == "" {

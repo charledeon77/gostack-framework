@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -120,6 +121,7 @@ func (c *Connection) Read() {
 	// F-069: Bound maximum frame read limit at the websocket layer before buffering.
 	c.ws.MaxPayloadBytes = wsMaxMessageSize
 
+	var loggedNoHandler bool
 	for {
 		// SEC-17: Extend read deadline on every message received (ping resets the clock).
 		_ = c.ws.SetReadDeadline(time.Now().Add(wsReadDeadline))
@@ -139,11 +141,14 @@ func (c *Connection) Read() {
 			continue
 		}
 
-		// B12: Route through OnMessage if registered; fallback to hub.Broadcast for backwards compatibility
+		// B12: Route through OnMessage if registered; never implicitly broadcast to all clients.
 		if c.hub.OnMessage != nil {
 			c.hub.OnMessage(c, msg)
 		} else {
-			c.hub.Broadcast(msg)
+			if !loggedNoHandler {
+				log.Println("websocket: payload received but no OnMessage handler registered; frame discarded")
+				loggedNoHandler = true
+			}
 		}
 	}
 }

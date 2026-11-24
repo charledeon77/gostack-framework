@@ -55,8 +55,52 @@ func TestHub_Broadcast(t *testing.T) {
 	}
 }
 
+func TestHub_ClientMessageDiscardedWithoutOnMessage(t *testing.T) {
+	hub := NewHub()
+	// OnMessage is nil by default
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go hub.Run(ctx)
+
+	server := httptest.NewServer(hub.Handler())
+	defer server.Close()
+
+	wsURL := "ws" + server.URL[4:]
+
+	ws1, err := websocket.Dial(wsURL, "", "http://localhost/")
+	if err != nil {
+		t.Fatalf("Failed to connect ws1: %v", err)
+	}
+	defer ws1.Close()
+
+	ws2, err := websocket.Dial(wsURL, "", "http://localhost/")
+	if err != nil {
+		t.Fatalf("Failed to connect ws2: %v", err)
+	}
+	defer ws2.Close()
+
+	time.Sleep(100 * time.Millisecond)
+
+	msg := []byte("message without onmessage handler")
+	if err = websocket.Message.Send(ws1, msg); err != nil {
+		t.Fatalf("Failed to send on ws1: %v", err)
+	}
+
+	var rx2 []byte
+	ws2.SetDeadline(time.Now().Add(200 * time.Millisecond))
+	err = websocket.Message.Receive(ws2, &rx2)
+	if err == nil {
+		t.Fatalf("expected ws2 to not receive message when OnMessage is nil, but got %q", rx2)
+	}
+}
+
 func TestHub_ClientMessageBroadcasts(t *testing.T) {
 	hub := NewHub()
+	// B12: Broadcasting is an explicit application hook, not an implicit fallback
+	hub.OnMessage = func(conn *Connection, msg []byte) {
+		conn.hub.Broadcast(msg)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

@@ -103,8 +103,9 @@ func (s *RedisSession) serialise() ([]byte, error) {
 
 // RedisSessionStore implements contract.SessionStore using a Redis client.
 type RedisSessionStore struct {
-	client *redis.Client
-	ttl    time.Duration
+	client  *redis.Client
+	ttl     time.Duration
+	timeout time.Duration
 }
 
 // NewRedisSessionStore creates a Redis-backed session store.
@@ -112,7 +113,21 @@ func NewRedisSessionStore(client *redis.Client, ttl time.Duration) *RedisSession
 	if ttl <= 0 {
 		ttl = 2 * time.Hour
 	}
-	return &RedisSessionStore{client: client, ttl: ttl}
+	return &RedisSessionStore{client: client, ttl: ttl, timeout: 5 * time.Second}
+}
+
+// SetTimeout configures the request deadline for Redis operations (C24).
+func (store *RedisSessionStore) SetTimeout(d time.Duration) *RedisSessionStore {
+	store.timeout = d
+	return store
+}
+
+func (store *RedisSessionStore) withTimeout() (context.Context, context.CancelFunc) {
+	to := store.timeout
+	if to <= 0 {
+		to = 5 * time.Second
+	}
+	return context.WithTimeout(context.Background(), to)
 }
 
 // Load retrieves a session from Redis or creates a new one.
@@ -122,7 +137,9 @@ func (store *RedisSessionStore) Load(id string) (contract.Session, error) {
 		return sess, nil
 	}
 
-	payload, err := store.client.Get(context.Background(), id).Bytes()
+	ctx, cancel := store.withTimeout()
+	defer cancel()
+	payload, err := store.client.Get(ctx, id).Bytes()
 	if err != nil {
 		if err == redis.Nil {
 			return sess, nil
@@ -151,21 +168,31 @@ func (store *RedisSessionStore) Save(s contract.Session) error {
 		return fmt.Errorf("redis session store: marshal failed: %w", err)
 	}
 
-	return store.client.Set(context.Background(), s.ID(), payload, store.ttl).Err()
+	ctx, cancel := store.withTimeout()
+	defer cancel()
+	return store.client.Set(ctx, s.ID(), payload, store.ttl).Err()
 }
 
 // Exists reports whether the session exists in Redis and is not expired (SEC-16).
-func (store *RedisSessionStore) Exists(id string) bool {
+// C5: Returns an error on Redis store outage.
+func (store *RedisSessionStore) Exists(id string) (bool, error) {
 	if id == "" {
-		return false
+		return false, nil
 	}
-	n, err := store.client.Exists(context.Background(), id).Result()
-	return err == nil && n > 0
+	ctx, cancel := store.withTimeout()
+	defer cancel()
+	n, err := store.client.Exists(ctx, id).Result()
+	if err != nil {
+		return false, fmt.Errorf("redis session store: exists check failed: %w", err)
+	}
+	return n > 0, nil
 }
 
 // Destroy removes a session from Redis.
 func (store *RedisSessionStore) Destroy(id string) error {
-	return store.client.Del(context.Background(), id).Err()
+	ctx, cancel := store.withTimeout()
+	defer cancel()
+	return store.client.Del(ctx, id).Err()
 }
 
 // Rotate generates a new ID, migrates data, and deletes the old record in Redis (SEC-04).

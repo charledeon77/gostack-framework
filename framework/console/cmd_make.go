@@ -81,7 +81,8 @@ func parseMakeArgs(args []string) (name string, force bool, err error) {
 	if err := validateGeneratorName(positional[0]); err != nil {
 		return "", false, err
 	}
-	return positional[0], force, nil
+	trimmedName := strings.TrimSpace(positional[0])
+	return trimmedName, force, nil
 }
 
 // SEC-39: Safe file writing preventing accidental overwrites unless --force is passed

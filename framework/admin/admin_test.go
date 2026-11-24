@@ -42,6 +42,27 @@ func TestAdmin_UnsetAppEnvRequiresGuard(t *testing.T) {
 	}
 }
 
+func openTestAdminDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("failed to open sqlite in-memory db: %v", err)
+	}
+	return db
+}
+
+func TestAdminMount_RejectsNilDB(t *testing.T) {
+	for _, env := range []string{"local", "development", "testing", "staging", "production", ""} {
+		os.Setenv("APP_ENV", env)
+		mux := http.NewServeMux()
+		err := Mount(mux, nil, "/admin")
+		if err == nil {
+			t.Errorf("expected Mount with nil db to return error in env %q, got nil", env)
+		}
+	}
+	os.Unsetenv("APP_ENV")
+}
+
 func TestAdminMount_LocalWithoutGuardSucceeds(t *testing.T) {
 	os.Setenv("APP_ENV", "local")
 	defer os.Unsetenv("APP_ENV")
@@ -50,8 +71,11 @@ func TestAdminMount_LocalWithoutGuardSucceeds(t *testing.T) {
 	AuthGuard = nil
 	defer func() { AuthGuard = oldGuard }()
 
+	db := openTestAdminDB(t)
+	defer db.Close()
+
 	mux := http.NewServeMux()
-	err := Mount(mux, nil, "/admin")
+	err := Mount(mux, db, "/admin")
 	if err != nil {
 		t.Fatalf("expected Mount in local to succeed, got %v", err)
 	}
@@ -80,8 +104,11 @@ func TestAdmin_DestructionRequiresPOST(t *testing.T) {
 	os.Setenv("APP_ENV", "local")
 	defer os.Unsetenv("APP_ENV")
 
+	db := openTestAdminDB(t)
+	defer db.Close()
+
 	mux := http.NewServeMux()
-	_ = Mount(mux, nil, "/admin")
+	_ = Mount(mux, db, "/admin")
 
 	req := httptest.NewRequest("GET", "/admin/users/1/delete", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
@@ -100,8 +127,11 @@ func TestAdmin_SequenceRequiresPOST(t *testing.T) {
 	os.Setenv("APP_ENV", "local")
 	defer os.Unsetenv("APP_ENV")
 
+	db := openTestAdminDB(t)
+	defer db.Close()
+
 	mux := http.NewServeMux()
-	_ = Mount(mux, nil, "/admin")
+	_ = Mount(mux, db, "/admin")
 
 	reqRetry := httptest.NewRequest("GET", "/admin/sequence/retry?id=123", nil)
 	reqRetry.RemoteAddr = "127.0.0.1:1234"

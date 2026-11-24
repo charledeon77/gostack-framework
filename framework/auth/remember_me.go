@@ -164,6 +164,13 @@ func (m *RememberMeManager) Revoke(w http.ResponseWriter, cookieVal string) {
 		m.mu.Unlock()
 	}
 
+	// D23: clearing cookie must carry same security flags as the creating cookie.
+	revSecure := true
+	appEnv := strings.ToLower(os.Getenv("APP_ENV"))
+	if appEnv == "local" || appEnv == "development" {
+		revSecure = false
+	}
+
 	http.SetCookie(w, &http.Cookie{
 		Name:     m.cookieName,
 		Value:    "",
@@ -171,6 +178,8 @@ func (m *RememberMeManager) Revoke(w http.ResponseWriter, cookieVal string) {
 		Expires:  time.Unix(0, 0),
 		MaxAge:   -1,
 		HttpOnly: true,
+		Secure:   revSecure,
+		SameSite: http.SameSiteLaxMode,
 	})
 }
 

@@ -228,7 +228,7 @@ func TestSessionGuard_SEC03_LoginRotateAndLogoutDestroy(t *testing.T) {
 	if sessionCookie.Value == "initial-session-id-12345678901234567890123456789012" {
 		t.Fatal("expected session cookie value to be rotated to a new ID on Login")
 	}
-	if memStore.Exists("initial-session-id-12345678901234567890123456789012") {
+	if oldExists, _ := memStore.Exists("initial-session-id-12345678901234567890123456789012"); oldExists {
 		t.Fatal("expected old session ID to no longer exist in store after Login rotation")
 	}
 
@@ -253,7 +253,7 @@ func TestSessionGuard_SEC03_LoginRotateAndLogoutDestroy(t *testing.T) {
 		t.Fatalf("Logout failed: %v", err)
 	}
 
-	if memStore.Exists(newSess.ID()) {
+	if newExists, _ := memStore.Exists(newSess.ID()); newExists {
 		t.Fatal("expected session to be destroyed from store on Logout")
 	}
 

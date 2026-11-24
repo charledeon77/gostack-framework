@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/charledeon77/gostack-framework/framework/contract"
@@ -173,7 +174,20 @@ func handleList(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, c
 		return
 	}
 
-	query := fmt.Sprintf("SELECT * FROM %s LIMIT 100", entry.TableName)
+	// C19: Paginate with ?page= and COUNT(*)
+	page := 1
+	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	pageSize := 100
+	offset := (page - 1) * pageSize
+
+	var totalRows int
+	_ = db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", entry.TableName)).Scan(&totalRows)
+
+	query := fmt.Sprintf("SELECT * FROM %s LIMIT %d OFFSET %d", entry.TableName, pageSize, offset)
 	rows, err := db.Query(query)
 	if err != nil {
 		log.Printf("[GoStack Admin] Query error: %v", err)
@@ -215,7 +229,7 @@ func handleList(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, c
 		}
 		escModel := html.EscapeString(modelName)
 		escID := html.EscapeString(fmt.Sprintf("%v", id))
-		tableRows += fmt.Sprintf(`<td><a href="/admin/%s/%s">Edit</a> | <form method="POST" action="/admin/%s/%s/delete" style="display:inline"><input type="hidden" name="_csrf" value="%s"><button type="submit" onclick="return confirm('Delete?')" style="background:none;border:none;color:#ef4444;cursor:pointer;padding:0;font:inherit;text-decoration:underline">Delete</button></form></td></tr>`, escModel, escID, escModel, escID, escCSRF)
+		tableRows += fmt.Sprintf(`<td><a href="/admin/%s/%s">Edit</a> | <form method="POST" action="/admin/%s/%s/delete" class="inline-form"><input type="hidden" name="_csrf" value="%s"><button type="submit" class="btn-delete-link">Delete</button></form></td></tr>`, escModel, escID, escModel, escID, escCSRF)
 	}
 	if err := rows.Err(); err != nil {
 		log.Printf("[GoStack Admin] Row iteration error: %v", err)
@@ -292,7 +306,10 @@ func handleEdit(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, i
 	}
 
 	if r.Method == http.MethodPost {
-		r.ParseForm()
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "400 Bad Request: Malformed form body", http.StatusBadRequest)
+			return
+		}
 		setClauses := []string{}
 		args := []any{}
 		isPg := isPostgresDB(db)
@@ -431,13 +448,13 @@ func handleSequenceDashboard(w http.ResponseWriter, r *http.Request, csrfToken s
 				<td><span class="error-msg">%s</span></td>
 				<td>
 					<div class="action-buttons">
-						<form method="POST" action="/admin/sequence/retry?id=%s" style="display:inline">
+						<form method="POST" action="/admin/sequence/retry?id=%s" class="inline-form">
 							<input type="hidden" name="_csrf" value="%s">
 							<button type="submit" class="btn-action btn-retry">Retry</button>
 						</form>
-						<form method="POST" action="/admin/sequence/delete?id=%s" style="display:inline">
+						<form method="POST" action="/admin/sequence/delete?id=%s" class="inline-form">
 							<input type="hidden" name="_csrf" value="%s">
-							<button type="submit" class="btn-action btn-delete" onclick="return confirm('Are you sure you want to permanently delete this job?')">Delete</button>
+							<button type="submit" class="btn-action btn-delete">Delete</button>
 						</form>
 					</div>
 				</td>
@@ -572,6 +589,8 @@ td a{color:#38bdf8;text-decoration:none;margin-right:0.5rem}
 td a:hover{text-decoration:underline}
 .back{color:#94a3b8;text-decoration:none;font-size:0.9rem}
 .back:hover{color:#e2e8f0}
+.inline-form{display:inline}
+.btn-delete-link{background:none;border:none;color:#ef4444;cursor:pointer;padding:0;font:inherit;text-decoration:underline}
 </style></head><body>
 <div class="header"><span class="logo">⚡ GoStack Admin</span><a href="/admin" class="back">← Dashboard</a></div>
 <div class="container">

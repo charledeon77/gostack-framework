@@ -22,6 +22,7 @@ package auth
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -53,12 +54,12 @@ func (g *TokenGuard) Check(r *http.Request) bool {
 	return ok
 }
 
-// User extracts the bearer token, retrieves the matching user, and caches them in request context.
-func (g *TokenGuard) User(r *http.Request) (contract.Authenticatable, bool) {
+// UserErr extracts the bearer token, retrieves the matching user, and surfaces provider errors (C11).
+func (g *TokenGuard) UserErr(r *http.Request) (contract.Authenticatable, bool, error) {
 	// 1. Inspect request context cache first
 	if cacheVal := r.Context().Value(contract.UserContextKey); cacheVal != nil {
 		if cache, ok := cacheVal.(*contract.AuthCache); ok && cache.Loaded {
-			return cache.User, cache.User != nil
+			return cache.User, cache.User != nil, nil
 		}
 	}
 
@@ -66,24 +67,29 @@ func (g *TokenGuard) User(r *http.Request) (contract.Authenticatable, bool) {
 	token := g.getToken(r)
 	if token == "" {
 		cacheUser(r, nil)
-		return nil, false
+		return nil, false, nil
 	}
 
 	// 3. Resolve user using the Credentials hook
 	user, err := g.provider.RetrieveByCredentials(map[string]any{"token": token})
 	if err != nil {
-		// F-064: log provider outage server-side instead of masking it
+		// F-064 / C11: surface provider outage
 		log.Printf("[GoStack] auth: TokenGuard provider error: %v", err)
-		cacheUser(r, nil)
-		return nil, false
+		return nil, false, fmt.Errorf("auth: token provider error: %w", err)
 	}
 	if user == nil {
 		cacheUser(r, nil)
-		return nil, false
+		return nil, false, nil
 	}
 
 	cacheUser(r, user)
-	return user, true
+	return user, true, nil
+}
+
+// User extracts the bearer token, retrieves the matching user, and caches them in request context.
+func (g *TokenGuard) User(r *http.Request) (contract.Authenticatable, bool) {
+	u, ok, _ := g.UserErr(r)
+	return u, ok
 }
 
 // Login is not supported for stateless TokenGuard (F-063).

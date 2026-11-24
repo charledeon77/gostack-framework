@@ -276,8 +276,9 @@ func TestSessionStore_SEC04_RotateAcrossStores(t *testing.T) {
 			_ = tc.store.Save(s)
 
 			oldID := s.ID()
-			if !tc.store.Exists(oldID) {
-				t.Fatalf("expected old ID %s to exist in store", oldID)
+			exists, err := tc.store.Exists(oldID)
+			if err != nil || !exists {
+				t.Fatalf("expected old ID %s to exist in store, got exists=%v, err=%v", oldID, exists, err)
 			}
 
 			newSess, err := tc.store.Rotate(oldID)
@@ -288,11 +289,13 @@ func TestSessionStore_SEC04_RotateAcrossStores(t *testing.T) {
 			if newSess.ID() == oldID {
 				t.Fatal("expected new ID to differ from old ID")
 			}
-			if tc.store.Exists(oldID) {
-				t.Fatal("expected old ID to be deleted after rotate")
+			existsOld, err := tc.store.Exists(oldID)
+			if err != nil || existsOld {
+				t.Fatalf("expected old ID to be deleted after rotate, got exists=%v, err=%v", existsOld, err)
 			}
-			if !tc.store.Exists(newSess.ID()) {
-				t.Fatal("expected new ID to exist in store")
+			existsNew, err := tc.store.Exists(newSess.ID())
+			if err != nil || !existsNew {
+				t.Fatalf("expected new ID to exist in store, got exists=%v, err=%v", existsNew, err)
 			}
 			if newSess.Get("role") != "admin" {
 				t.Fatalf("expected data 'role'='admin' to be migrated, got %v", newSess.Get("role"))

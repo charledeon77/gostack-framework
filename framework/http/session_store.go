@@ -213,11 +213,11 @@ func (store *InMemoryStore) Close() {
 }
 
 // Exists reports whether the session ID is currently active in the store (SEC-16).
-func (store *InMemoryStore) Exists(id string) bool {
+func (store *InMemoryStore) Exists(id string) (bool, error) {
 	store.mu.RLock()
 	defer store.mu.RUnlock()
 	_, exists := store.sessions[id]
-	return exists
+	return exists, nil
 }
 
 // Load retrieves a session by its unique ID from the store.

@@ -64,7 +64,13 @@ func CSRF(cookieName string) http.Middleware {
 		if str, ok := tokenVal.(string); ok && str != "" {
 			token = str
 		} else {
-			token = generateCSRFToken()
+			var err error
+			token, err = GenerateCSRFToken()
+			if err != nil {
+				ctx.Writer.WriteHeader(netHTTP.StatusInternalServerError)
+				_, _ = ctx.Writer.Write([]byte("500 Internal Server Error: Failed to generate CSRF token"))
+				return nil
+			}
 			sess.Set("csrf_token", token)
 		}
 
@@ -120,9 +126,4 @@ func GenerateCSRFToken() (string, error) {
 		return "", fmt.Errorf("csrf: failed to generate secure token: %w", err)
 	}
 	return hex.EncodeToString(b), nil
-}
-
-func generateCSRFToken() string {
-	token, _ := GenerateCSRFToken()
-	return token
 }

@@ -49,26 +49,33 @@ func main() {
 
 	// 3. Construct the CLI console kernel and register core actions
 	kernel := console.NewKernel()
-	kernel.Register(&console.NewCommand{})
-	kernel.Register(&console.ServeCommand{})
-	kernel.Register(&console.DevCommand{})
-	kernel.Register(&console.LangSearchCommand{})
-	kernel.Register(&console.MigrateCommand{})
-	kernel.Register(&console.RollbackCommand{})
-	kernel.Register(&console.MakeMigrationCommand{})
-	kernel.Register(&console.MakeControllerCommand{})
-	kernel.Register(&console.MakeAuthCommand{})
-	kernel.Register(&console.MakeModelCommand{})
-	kernel.Register(&console.MakeRequestCommand{})
-	kernel.Register(&console.MakeMiddlewareCommand{})
-	kernel.Register(&console.MakeMailCommand{})
-	kernel.Register(&console.MakeSeederCommand{})
-	kernel.Register(&console.SeedCommand{})
-	kernel.Register(&console.AddComponentCommand{})
-	kernel.Register(&console.MakeEventCommand{})
-	kernel.Register(&console.MakeJobCommand{})
-	kernel.Register(&console.MakePolicyCommand{})
-	kernel.Register(&console.MakeProviderCommand{})
+	for _, cmd := range []console.Command{
+		&console.NewCommand{},
+		&console.ServeCommand{},
+		&console.DevCommand{},
+		&console.LangSearchCommand{},
+		&console.MigrateCommand{},
+		&console.RollbackCommand{},
+		&console.MakeMigrationCommand{},
+		&console.MakeControllerCommand{},
+		&console.MakeAuthCommand{},
+		&console.MakeModelCommand{},
+		&console.MakeRequestCommand{},
+		&console.MakeMiddlewareCommand{},
+		&console.MakeMailCommand{},
+		&console.MakeSeederCommand{},
+		&console.SeedCommand{},
+		&console.AddComponentCommand{},
+		&console.MakeEventCommand{},
+		&console.MakeJobCommand{},
+		&console.MakePolicyCommand{},
+		&console.MakeProviderCommand{},
+	} {
+		if err := kernel.Register(cmd); err != nil {
+			fmt.Printf("[GoStack CLI Error] Failed to register command: %v\n", err)
+			os.Exit(1)
+		}
+	}
 
 
 	// 4. Bind kernel runner to CLI terminal inputs

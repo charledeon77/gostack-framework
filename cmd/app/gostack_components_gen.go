@@ -111,18 +111,18 @@ function toggleAccordion(trigger) {
 		if _, err := io.WriteString(w, `<div gs-component="accordion">
 <div class="gostack-components-accordion" data-controller="accordion">
               <div class="gostack-components-accordion-item active">
-                <button class="gostack-components-accordion-trigger" onclick="toggleAccordion(this)">
+                <button class="gostack-components-accordion-trigger" gs-click="GoStack.toggleAccordion(this)">
                   <span>Premium System Architecture</span>
                   <span class="gostack-components-accordion-icon">▼</span>
                 </button>
-                <div class="gostack-components-accordion-content" style="max-height: 200px;">
+                <div class="gostack-components-accordion-content">
                   <div class="gostack-components-accordion-content-inner">
                     A highly optimized serverless rendering pattern engineered to yield millisecond response states across all nodes.
                   </div>
                 </div>
               </div>
               <div class="gostack-components-accordion-item">
-                <button class="gostack-components-accordion-trigger" onclick="toggleAccordion(this)">
+                <button class="gostack-components-accordion-trigger" gs-click="GoStack.toggleAccordion(this)">
                   <span>Decentralized Databases</span>
                   <span class="gostack-components-accordion-icon">▼</span>
                 </button>

@@ -198,7 +198,10 @@ func (m *Mailer) Send(msg any) error {
 		return fmt.Errorf("mail: no recipients specified")
 	}
 
-	raw := m.BuildRaw(mailMsg)
+	raw, err := m.BuildRaw(mailMsg)
+	if err != nil {
+		return err
+	}
 
 	timeout := m.cfg.Timeout
 	if timeout <= 0 {
@@ -213,7 +216,6 @@ func (m *Mailer) Send(msg any) error {
 	isSSL := enc == "ssl" || (enc == "" && m.cfg.Port == 465)
 
 	var conn net.Conn
-	var err error
 	if isSSL {
 		dialer := &net.Dialer{Timeout: timeout}
 		conn, err = tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
@@ -282,7 +284,12 @@ func (m *Mailer) Send(msg any) error {
 
 // BuildRaw formats the Message into a raw SMTP bytes payload with correct MIME headers.
 // Supports multipart/alternative (text+HTML), file attachments, BCC, and Reply-To.
-func (m *Mailer) BuildRaw(msg Message) []byte {
+// A4-tail: Validates the message prior to writing headers to prevent CRLF injection.
+func (m *Mailer) BuildRaw(msg Message) ([]byte, error) {
+	if err := m.Validate(msg); err != nil {
+		return nil, fmt.Errorf("mail: message validation failed: %w", err)
+	}
+
 	boundary := "==GoStack_MIME_Boundary=="
 	hasAttachments := len(msg.Attachments) > 0
 	hasHTML := msg.HTMLBody != ""
@@ -391,7 +398,7 @@ func (m *Mailer) BuildRaw(msg Message) []byte {
 		b.WriteString(msg.Body)
 	}
 
-	return []byte(b.String())
+	return []byte(b.String()), nil
 }
 
 // ── MessageBuilder ───────────────────────────────────────────────────────────

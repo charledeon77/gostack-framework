@@ -32,7 +32,14 @@ func RequireAuth(manager *AuthManager, guardName string) http.Middleware {
 			ctx.Request = req.WithContext(context.WithValue(req.Context(), contract.UserContextKey, cache))
 		}
 
-		if !guard.Check(ctx.Request) {
+		user, ok, userErr := guard.UserErr(ctx.Request)
+		if userErr != nil {
+			// C11: Operational provider failure is a 503 Service Unavailable, not a 401 or redirect to /login
+			return ctx.JSON(netHTTP.StatusServiceUnavailable, map[string]string{
+				"error": "authentication service temporarily unavailable",
+			})
+		}
+		if !ok || user == nil {
 			accept := ctx.Request.Header.Get("Accept")
 			contentType := ctx.Request.Header.Get("Content-Type")
 			isAPI := strings.Contains(accept, "application/json") || 

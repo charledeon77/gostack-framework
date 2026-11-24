@@ -64,6 +64,7 @@ type MemoryQueue struct {
 	closed        bool
 	BackoffFactor time.Duration // Custom backoff multiplier (defaults to time.Second)
 	failedJobs    []memoryFailedJob
+	failSeq       uint64
 }
 
 // NewMemoryQueue creates a new MemoryQueue with the specified buffer capacity.
@@ -97,6 +98,43 @@ func (q *MemoryQueue) Push(job contract.Job) error {
 	return q.pushEnvelope(&memoryJobEnvelope{job: job, attempts: 0})
 }
 
+func backoffFor(attempts int, factor time.Duration) time.Duration {
+	if factor <= 0 {
+		factor = time.Second
+	}
+	if attempts > 10 {
+		attempts = 10
+	}
+	if attempts < 0 {
+		attempts = 0
+	}
+	return factor * time.Duration(1 << attempts)
+}
+
+func (q *MemoryQueue) recordFailure(job contract.Job, attempts int, payload string, reason string) string {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.failedJobs) >= 1000 {
+		q.failedJobs = q.failedJobs[1:]
+	}
+	q.failSeq++
+	id := fmt.Sprintf("mem-%d", q.failSeq)
+	if payload == "" && job != nil {
+		if b, err := json.Marshal(job); err == nil {
+			payload = string(b)
+		}
+	}
+	q.failedJobs = append(q.failedJobs, memoryFailedJob{
+		id:       id,
+		job:      job,
+		payload:  payload,
+		attempts: attempts,
+		errorMsg: reason,
+		failedAt: time.Now(),
+	})
+	return id
+}
+
 // PushDelayed dispatches a job to the queue, delaying execution by a set duration.
 // In this simple memory queue, we spawn a goroutine to wait, then push.
 func (q *MemoryQueue) PushDelayed(job contract.Job, delay time.Duration) error {
@@ -109,7 +147,10 @@ func (q *MemoryQueue) PushDelayed(job contract.Job, delay time.Duration) error {
 
 	go func() {
 		time.Sleep(delay)
-		_ = q.Push(job) // ignore error as it might be closed during wait
+		if pushErr := q.Push(job); pushErr != nil {
+			// D5: If push fails on delayed queue, record failure
+			q.recordFailure(job, 0, "", fmt.Sprintf("delayed push failed: %v", pushErr))
+		}
 	}()
 	return nil
 }
@@ -147,56 +188,40 @@ func (q *MemoryQueue) worker(id int) {
 				return
 			}
 			jobName := e.job.Name()
-			defer func() {
-				if r := recover(); r != nil {
-					fmt.Printf("[Sequence Worker %d Critical Panic] Job %s crashed: %v\n", id, jobName, r)
-					q.mu.Lock()
-					if len(q.failedJobs) >= 1000 {
-						q.failedJobs = q.failedJobs[1:]
+			var runErr error
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						// D32: Convert panic to runErr so it follows unified retry & failure logic
+						runErr = fmt.Errorf("panic: %v", r)
 					}
-					q.failedJobs = append(q.failedJobs, memoryFailedJob{
-						id:       fmt.Sprintf("panic-%d", time.Now().UnixNano()),
-						job:      e.job,
-						errorMsg: fmt.Sprintf("panic: %v", r),
-						failedAt: time.Now(),
-					})
-					q.mu.Unlock()
-				}
+				}()
+				runErr = e.job.Handle()
 			}()
 
-			err := e.job.Handle()
-			if err != nil {
+			if runErr != nil {
 				e.attempts++
 				if retryable, ok := e.job.(contract.Retryable); ok && e.attempts < retryable.MaxAttempts() {
-					// Exponential backoff: factor * 2^attempts
+					// Exponential backoff with clamping (D2)
 					factor := q.BackoffFactor
 					if factor == 0 {
 						factor = time.Second
 					}
-					backoff := factor * time.Duration(1<<e.attempts)
+					backoff := backoffFor(e.attempts, factor)
 					fmt.Printf("[Sequence Worker %d] Job %s execution failed: %v. Retrying in %v (attempt %d/%d)...\n",
-						id, jobName, err, backoff, e.attempts, retryable.MaxAttempts())
+						id, jobName, runErr, backoff, e.attempts, retryable.MaxAttempts())
 
 					go func(envRef *memoryJobEnvelope, d time.Duration) {
 						time.Sleep(d)
-						_ = q.pushEnvelope(envRef)
+						if pushErr := q.pushEnvelope(envRef); pushErr != nil {
+							// D5: Record failure when push to full/closed queue fails on retry
+							q.recordFailure(envRef.job, envRef.attempts, "", fmt.Sprintf("retry push failed: %v", pushErr))
+						}
 					}(e, backoff)
 				} else {
-					fmt.Printf("[Sequence Worker %d] Job %s execution failed: %v\n", id, jobName, err)
-					q.mu.Lock()
-					if len(q.failedJobs) >= 1000 {
-						q.failedJobs = q.failedJobs[1:]
-					}
-					payloadBytes, _ := json.Marshal(e.job)
-					q.failedJobs = append(q.failedJobs, memoryFailedJob{
-						id:       fmt.Sprintf("mem-%d", time.Now().UnixNano()),
-						job:      e.job,
-						payload:  string(payloadBytes),
-						attempts: e.attempts,
-						errorMsg: err.Error(),
-						failedAt: time.Now(),
-					})
-					q.mu.Unlock()
+					fmt.Printf("[Sequence Worker %d] Job %s execution failed: %v\n", id, jobName, runErr)
+					// C23: Shared failure recording with full payload and attempts
+					q.recordFailure(e.job, e.attempts, "", runErr.Error())
 				}
 			}
 		}(env)

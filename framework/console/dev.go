@@ -117,20 +117,22 @@ func (c *DevCommand) Execute(args []string) error {
 	// Helper: recursively snapshot component asset mod times
 	snapTemplates := func() map[string]time.Time {
 		snap := make(map[string]time.Time)
-		_ = filepath.Walk("templates/components", func(path string, info os.FileInfo, err error) error {
+		if err := filepath.Walk("templates/components", func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil
 			}
 			snap[path] = info.ModTime()
 			return nil
-		})
+		}); err != nil {
+			log.Printf("[GoStack Dev] Warning: templates walk error: %v — hot reload for templates may be incomplete", err)
+		}
 		return snap
 	}
 
 	// Helper: recursively snapshot Go source file mod times
 	snapGo := func() map[string]time.Time {
 		snap := make(map[string]time.Time)
-		_ = filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+		if err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return nil
 			}
@@ -149,7 +151,9 @@ func (c *DevCommand) Execute(args []string) error {
 				snap[path] = info.ModTime()
 			}
 			return nil
-		})
+		}); err != nil {
+			log.Printf("[GoStack Dev] Warning: source walk error: %v — hot reload for Go files may be incomplete", err)
+		}
 		return snap
 	}
 

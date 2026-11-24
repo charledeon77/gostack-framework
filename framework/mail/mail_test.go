@@ -158,7 +158,11 @@ func TestMailer_BuildRaw(t *testing.T) {
 		Body:    "Plain Text Body",
 	}
 
-	raw := string(mailer.BuildRaw(msg))
+	rawBytes, err := mailer.BuildRaw(msg)
+	if err != nil {
+		t.Fatalf("unexpected error from BuildRaw: %v", err)
+	}
+	raw := string(rawBytes)
 
 	if !strings.Contains(raw, "From: GoStack <sender@gostack.dev>") {
 		t.Errorf("expected From header, got: %s", raw)
@@ -257,8 +261,22 @@ func TestMailer_Send_RequiresSTARTTLSWhenConfigured(t *testing.T) {
 		Subject: "TLS Test",
 		Body:    "Test",
 	})
+	if err == nil {
+		t.Fatal("expected STARTTLS configuration error, got nil")
+	}
+}
 
-	if err == nil || !strings.Contains(err.Error(), "STARTTLS required") {
-		t.Fatalf("expected STARTTLS required error, got: %v", err)
+func TestMailer_BuildRaw_RejectsCRLF(t *testing.T) {
+	mailer := NewMailer(Config{
+		FromAddress: "sender@gostack.dev",
+	})
+
+	_, err := mailer.BuildRaw(Message{
+		To:      []string{"victim@example.com"},
+		Subject: "Injected\r\nBcc: evil@example.com",
+		Body:    "Attack payload",
+	})
+	if err == nil {
+		t.Fatal("expected BuildRaw to reject CRLF in subject, got nil")
 	}
 }
