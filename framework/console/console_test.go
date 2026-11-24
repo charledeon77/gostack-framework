@@ -431,3 +431,68 @@ func TestMakeJobAndProviderGenerators_ValidInterfaces(t *testing.T) {
 	}
 }
 
+func TestCommand_DatabaseDependencyContract(t *testing.T) {
+	kernel := NewKernel()
+	commands := []Command{
+		&NewCommand{},
+		&ServeCommand{},
+		&DevCommand{},
+		&LangSearchCommand{},
+		&MigrateCommand{},
+		&RollbackCommand{},
+		&MakeMigrationCommand{},
+		&MakeControllerCommand{},
+		&MakeAuthCommand{},
+		&MakeModelCommand{},
+		&MakeRequestCommand{},
+		&MakeMiddlewareCommand{},
+		&MakeMailCommand{},
+		&MakeSeederCommand{},
+		&SeedCommand{},
+		&AddComponentCommand{},
+		&MakeEventCommand{},
+		&MakeJobCommand{},
+		&MakePolicyCommand{},
+		&MakeProviderCommand{},
+	}
+
+	for _, cmd := range commands {
+		if err := kernel.Register(cmd); err != nil {
+			t.Fatalf("failed to register command %s: %v", cmd.Name(), err)
+		}
+	}
+
+	expectedDBCommands := map[string]bool{
+		"migrate":          true,
+		"migrate:rollback": true,
+		"db:seed":          true,
+		"serve":            true,
+	}
+
+	for name := range expectedDBCommands {
+		cmd, exists := kernel.Get(name)
+		if !exists {
+			t.Errorf("expected command %q to be registered in kernel", name)
+			continue
+		}
+		dep, isDep := cmd.(DatabaseDependent)
+		if !isDep || !dep.RequiresDatabase() {
+			t.Errorf("command %q is expected to require a database connection, but RequiresDatabase() is false or unimplemented", name)
+		}
+	}
+
+	// Commands that should NOT require a database connection
+	nonDBCommands := []string{"new", "dev", "make:migration", "make:controller", "make:model"}
+	for _, name := range nonDBCommands {
+		cmd, exists := kernel.Get(name)
+		if !exists {
+			t.Errorf("expected command %q to be registered in kernel", name)
+			continue
+		}
+		if dep, isDep := cmd.(DatabaseDependent); isDep && dep.RequiresDatabase() {
+			t.Errorf("command %q should NOT require a database connection, but RequiresDatabase() returned true", name)
+		}
+	}
+}
+
+

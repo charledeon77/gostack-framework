@@ -24,6 +24,9 @@ import (
 // MigrateCommand implements the console.Command interface for the "migrate" CLI action.
 type MigrateCommand struct{}
 
+// RequiresDatabase indicates this command requires an active database connection.
+func (c *MigrateCommand) RequiresDatabase() bool { return true }
+
 // Name returns the CLI trigger string for this command.
 func (c *MigrateCommand) Name() string { return "migrate" }
 
@@ -47,6 +50,9 @@ func (c *MigrateCommand) Execute(args []string) error {
 // RollbackCommand implements the console.Command interface for the "migrate:rollback" CLI action.
 type RollbackCommand struct{}
 
+// RequiresDatabase indicates this command requires an active database connection.
+func (c *RollbackCommand) RequiresDatabase() bool { return true }
+
 // Name returns the CLI trigger string for this command.
 func (c *RollbackCommand) Name() string { return "migrate:rollback" }
 
@@ -69,6 +75,9 @@ func (c *RollbackCommand) Execute(args []string) error {
 
 // SeedCommand implements the console.Command interface for the "db:seed" CLI action.
 type SeedCommand struct{}
+
+// RequiresDatabase indicates this command requires an active database connection.
+func (c *SeedCommand) RequiresDatabase() bool { return true }
 
 // Name returns the CLI trigger string for this command.
 func (c *SeedCommand) Name() string { return "db:seed" }

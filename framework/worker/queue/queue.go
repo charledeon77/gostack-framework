@@ -55,6 +55,11 @@ type memoryFailedJob struct {
 	failedAt time.Time
 }
 
+type memoryDelayedItem struct {
+	env *memoryJobEnvelope
+	due time.Time
+}
+
 // MemoryQueue is an in-memory, channel-backed implementation of the contract.Queue interface.
 // It is ideal for local development, testing, and single-instance deployments.
 type MemoryQueue struct {
@@ -65,14 +70,21 @@ type MemoryQueue struct {
 	BackoffFactor time.Duration // Custom backoff multiplier (defaults to time.Second)
 	failedJobs    []memoryFailedJob
 	failSeq       uint64
+	delayedItems  []*memoryDelayedItem
+	delayedWake   chan struct{}
 }
 
 // NewMemoryQueue creates a new MemoryQueue with the specified buffer capacity.
+// D8: Uses a single background scheduler goroutine instead of spawning a goroutine per delayed job.
 func NewMemoryQueue(capacity int) *MemoryQueue {
-	return &MemoryQueue{
-		jobs:       make(chan *memoryJobEnvelope, capacity),
-		failedJobs: make([]memoryFailedJob, 0),
+	q := &MemoryQueue{
+		jobs:         make(chan *memoryJobEnvelope, capacity),
+		failedJobs:   make([]memoryFailedJob, 0),
+		delayedItems: make([]*memoryDelayedItem, 0),
+		delayedWake:  make(chan struct{}, 1),
 	}
+	go q.runDelayedScheduler()
+	return q
 }
 
 // pushEnvelope pushes a job envelope to the internal channel.
@@ -136,23 +148,64 @@ func (q *MemoryQueue) recordFailure(job contract.Job, attempts int, payload stri
 }
 
 // PushDelayed dispatches a job to the queue, delaying execution by a set duration.
-// In this simple memory queue, we spawn a goroutine to wait, then push.
+// D8: Enqueues into the scheduler queue guarded by mutex, avoiding unbounded goroutine growth.
 func (q *MemoryQueue) PushDelayed(job contract.Job, delay time.Duration) error {
-	q.mu.RLock()
+	q.mu.Lock()
 	if q.closed {
-		q.mu.RUnlock()
+		q.mu.Unlock()
 		return ErrQueueClosed
 	}
-	q.mu.RUnlock()
+	item := &memoryDelayedItem{
+		env: &memoryJobEnvelope{job: job, attempts: 0},
+		due: time.Now().Add(delay),
+	}
+	q.delayedItems = append(q.delayedItems, item)
+	q.mu.Unlock()
 
-	go func() {
-		time.Sleep(delay)
-		if pushErr := q.Push(job); pushErr != nil {
-			// D5: If push fails on delayed queue, record failure
-			q.recordFailure(job, 0, "", fmt.Sprintf("delayed push failed: %v", pushErr))
-		}
-	}()
+	select {
+	case q.delayedWake <- struct{}{}:
+	default:
+	}
 	return nil
+}
+
+func (q *MemoryQueue) runDelayedScheduler() {
+	for {
+		q.mu.Lock()
+		if q.closed {
+			q.mu.Unlock()
+			return
+		}
+		now := time.Now()
+		var nextWait time.Duration = time.Second
+		var remaining []*memoryDelayedItem
+		var due []*memoryDelayedItem
+
+		for _, item := range q.delayedItems {
+			if !now.Before(item.due) {
+				due = append(due, item)
+			} else {
+				remaining = append(remaining, item)
+				diff := item.due.Sub(now)
+				if diff < nextWait {
+					nextWait = diff
+				}
+			}
+		}
+		q.delayedItems = remaining
+		q.mu.Unlock()
+
+		for _, item := range due {
+			if pushErr := q.pushEnvelope(item.env); pushErr != nil {
+				q.recordFailure(item.env.job, item.env.attempts, "", fmt.Sprintf("delayed push failed: %v", pushErr))
+			}
+		}
+
+		select {
+		case <-time.After(nextWait):
+		case <-q.delayedWake:
+		}
+	}
 }
 
 // StartWorkers starts a pool of background worker goroutines to process jobs.
@@ -172,6 +225,10 @@ func (q *MemoryQueue) Close() error {
 	}
 	q.closed = true
 	close(q.jobs) // workers will drain the channel and exit
+	select {
+	case q.delayedWake <- struct{}{}:
+	default:
+	}
 	q.mu.Unlock()
 
 	q.wg.Wait()
@@ -211,13 +268,22 @@ func (q *MemoryQueue) worker(id int) {
 					fmt.Printf("[Sequence Worker %d] Job %s execution failed: %v. Retrying in %v (attempt %d/%d)...\n",
 						id, jobName, runErr, backoff, e.attempts, retryable.MaxAttempts())
 
-					go func(envRef *memoryJobEnvelope, d time.Duration) {
-						time.Sleep(d)
-						if pushErr := q.pushEnvelope(envRef); pushErr != nil {
-							// D5: Record failure when push to full/closed queue fails on retry
-							q.recordFailure(envRef.job, envRef.attempts, "", fmt.Sprintf("retry push failed: %v", pushErr))
+					// D8: Schedule retry through the scheduler rather than leaking sleeping goroutines
+					q.mu.Lock()
+					if q.closed {
+						q.mu.Unlock()
+						q.recordFailure(e.job, e.attempts, "", "queue closed during retry schedule")
+					} else {
+						q.delayedItems = append(q.delayedItems, &memoryDelayedItem{
+							env: e,
+							due: time.Now().Add(backoff),
+						})
+						q.mu.Unlock()
+						select {
+						case q.delayedWake <- struct{}{}:
+						default:
 						}
-					}(e, backoff)
+					}
 				} else {
 					fmt.Printf("[Sequence Worker %d] Job %s execution failed: %v\n", id, jobName, runErr)
 					// C23: Shared failure recording with full payload and attempts
@@ -236,7 +302,7 @@ func (q *MemoryQueue) GetStats() (contract.QueueStats, error) {
 	return contract.QueueStats{
 		Driver:  "memory",
 		Pending: int64(len(q.jobs)),
-		Delayed: 0,
+		Delayed: int64(len(q.delayedItems)),
 		Failed:  int64(len(q.failedJobs)),
 	}, nil
 }

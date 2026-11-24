@@ -2,6 +2,7 @@ package http
 
 import (
 	"fmt"
+	"log"
 	"net"
 	netHTTP "net/http"
 	"strings"
@@ -184,7 +185,9 @@ func (rl *RateLimiter) Middleware() Middleware {
 			rl.mu.Unlock()
 			ctx.Writer.Header().Set("Retry-After", fmt.Sprintf("%d", retrySeconds))
 			ctx.Writer.WriteHeader(netHTTP.StatusTooManyRequests)
-			_, _ = ctx.Writer.Write([]byte("429 Too Many Requests: Rate limit exceeded"))
+			if _, err := ctx.Writer.Write([]byte("429 Too Many Requests: Rate limit exceeded")); err != nil {
+				log.Printf("[Throttle] write error: %v", err)
+			}
 			return nil
 		}
 

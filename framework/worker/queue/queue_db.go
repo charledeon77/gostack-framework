@@ -48,6 +48,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -408,8 +409,10 @@ func (q *DatabaseQueue) processNext(workerID int) error {
 	}
 
 	if err := q.deleteJob(jobID); err != nil {
-		// B4: If delete fails, release the job so it isn't permanently stranded
-		_, _ = q.db.Exec(fmt.Sprintf(`UPDATE %s SET reserved_at = NULL WHERE id = %s`, q.table, q.ph(1)), jobID)
+		// B4 / D36: If delete fails, release the job so it isn't permanently stranded, and log errors
+		if _, relErr := q.db.Exec(fmt.Sprintf(`UPDATE %s SET reserved_at = NULL WHERE id = %s`, q.table, q.ph(1)), jobID); relErr != nil {
+			log.Printf("[Sequence DBQueue CRITICAL] Failed to release reserved job %d after delete failure: %v", jobID, relErr)
+		}
 		return err
 	}
 	return nil
@@ -422,11 +425,15 @@ func (q *DatabaseQueue) deadLetter(jobID int64, payload string, attempts int, re
 		q.queue, payload, attempts, reason, time.Now().Unix(),
 	)
 	if err != nil {
-		_, _ = q.db.Exec(fmt.Sprintf(`UPDATE %s SET reserved_at = NULL WHERE id = %s`, q.table, q.ph(1)), jobID)
+		if _, relErr := q.db.Exec(fmt.Sprintf(`UPDATE %s SET reserved_at = NULL WHERE id = %s`, q.table, q.ph(1)), jobID); relErr != nil {
+			log.Printf("[Sequence DBQueue CRITICAL] Failed to release reserved job %d after deadLetter insert error: %v", jobID, relErr)
+		}
 		return fmt.Errorf("deadLetter insert failed: %w", err)
 	}
 	if err := q.deleteJob(jobID); err != nil {
-		_, _ = q.db.Exec(fmt.Sprintf(`UPDATE %s SET reserved_at = NULL WHERE id = %s`, q.table, q.ph(1)), jobID)
+		if _, relErr := q.db.Exec(fmt.Sprintf(`UPDATE %s SET reserved_at = NULL WHERE id = %s`, q.table, q.ph(1)), jobID); relErr != nil {
+			log.Printf("[Sequence DBQueue CRITICAL] Failed to release reserved job %d after deleteJob error: %v", jobID, relErr)
+		}
 		return fmt.Errorf("deadLetter deleteJob failed: %w", err)
 	}
 	return nil

@@ -7,7 +7,10 @@ import (
 )
 
 func TestTranslator_EmbedFallback(t *testing.T) {
-	translator := NewTranslator("")
+	translator, err := NewTranslator("")
+	if err != nil {
+		t.Fatalf("Failed to initialize translator: %v", err)
+	}
 
 	enMsg := translator.Trans("en", "auth.failed", nil)
 	if enMsg != "These credentials do not match our records." {
@@ -37,7 +40,10 @@ func TestTranslator_CustomOverrides(t *testing.T) {
 		t.Fatalf("Failed to write custom en.json: %v", err)
 	}
 
-	translator := NewTranslator(tmpDir)
+	translator, err := NewTranslator(tmpDir)
+	if err != nil {
+		t.Fatalf("Failed to initialize translator with custom dir: %v", err)
+	}
 
 	enMsg := translator.Trans("en", "auth.failed", nil)
 	if enMsg != "Oops, bad login info!" {

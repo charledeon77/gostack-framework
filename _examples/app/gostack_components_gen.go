@@ -4,9 +4,10 @@
 package main
 
 import (
+	"io"
+
 	"github.com/charledeon77/gostack-framework/framework/http"
 	"github.com/charledeon77/gostack-framework/framework/ui"
-	"io"
 )
 
 // RegisterComponents binds all compiled component views, styles, and scripts.
@@ -88,15 +89,21 @@ function toggleAccordion(trigger) {
 
 	t.Register("accordion", func(w io.Writer, data any, t http.ViewTranslator) error {
 		trans := func(key string, replace ...map[string]string) string {
-			if t == nil { return ui.Escape(key) }
+			if t == nil {
+				return ui.Escape(key)
+			}
 			return ui.Escape(t.Trans(key, replace...))
 		}
 		transRaw := func(key string, replace ...map[string]string) string {
-			if t == nil { return key }
+			if t == nil {
+				return key
+			}
 			return t.Trans(key, replace...)
 		}
 		transChoice := func(key string, count int, replace ...map[string]string) string {
-			if t == nil { return ui.Escape(key) }
+			if t == nil {
+				return ui.Escape(key)
+			}
 			return ui.Escape(t.TransChoice(key, count, replace...))
 		}
 		_ = trans
@@ -106,18 +113,18 @@ function toggleAccordion(trigger) {
 <!-- #1 Accordion HTML -->
             <div class="gostack-components-accordion">
               <div class="gostack-components-accordion-item active">
-                <button class="gostack-components-accordion-trigger" onclick="toggleAccordion(this)">
+                <button class="gostack-components-accordion-trigger" gs-click="GoStack.toggleAccordion($el)">
                   <span>Premium System Architecture</span>
                   <span class="gostack-components-accordion-icon">▼</span>
                 </button>
-                <div class="gostack-components-accordion-content" style="max-height: 200px;">
+                <div class="gostack-components-accordion-content">
                   <div class="gostack-components-accordion-content-inner">
                     A highly optimized serverless rendering pattern engineered to yield millisecond response states across all nodes.
                   </div>
                 </div>
               </div>
               <div class="gostack-components-accordion-item">
-                <button class="gostack-components-accordion-trigger" onclick="toggleAccordion(this)">
+                <button class="gostack-components-accordion-trigger" gs-click="GoStack.toggleAccordion($el)">
                   <span>Decentralized Databases</span>
                   <span class="gostack-components-accordion-icon">▼</span>
                 </button>
@@ -128,7 +135,9 @@ function toggleAccordion(trigger) {
                 </div>
               </div>
             </div>
-</div>`); err != nil { return err }
+</div>`); err != nil {
+			return err
+		}
 		return nil
 	})
 
@@ -169,15 +178,21 @@ background-color: #dc2626;
 
 	t.Register("button", func(w io.Writer, data any, t http.ViewTranslator) error {
 		trans := func(key string, replace ...map[string]string) string {
-			if t == nil { return ui.Escape(key) }
+			if t == nil {
+				return ui.Escape(key)
+			}
 			return ui.Escape(t.Trans(key, replace...))
 		}
 		transRaw := func(key string, replace ...map[string]string) string {
-			if t == nil { return key }
+			if t == nil {
+				return key
+			}
 			return t.Trans(key, replace...)
 		}
 		transChoice := func(key string, count int, replace ...map[string]string) string {
-			if t == nil { return ui.Escape(key) }
+			if t == nil {
+				return ui.Escape(key)
+			}
 			return ui.Escape(t.TransChoice(key, count, replace...))
 		}
 		_ = trans
@@ -190,17 +205,31 @@ background-color: #dc2626;
         - variant: 'primary', 'secondary', 'danger'
         - text: Button text 
     -->
-    <button class="gs-btn gs-btn-`); err != nil { return err }
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "variant"))); err != nil { return err }
-		if _, err := io.WriteString(w, `" gs-click="`); err != nil { return err }
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "onClick"))); err != nil { return err }
+    <button class="gs-btn gs-btn-`); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "variant"))); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, `" gs-click="`); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "onClick"))); err != nil {
+			return err
+		}
 		if _, err := io.WriteString(w, `">
-        `); err != nil { return err }
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "text"))); err != nil { return err }
+        `); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "text"))); err != nil {
+			return err
+		}
 		if _, err := io.WriteString(w, `
     </button>
 </div>
-</div>`); err != nil { return err }
+</div>`); err != nil {
+			return err
+		}
 		return nil
 	})
 
@@ -227,15 +256,21 @@ console.log('Counter component hydrated successfully');
 
 	t.Register("counter", func(w io.Writer, data any, t http.ViewTranslator) error {
 		trans := func(key string, replace ...map[string]string) string {
-			if t == nil { return ui.Escape(key) }
+			if t == nil {
+				return ui.Escape(key)
+			}
 			return ui.Escape(t.Trans(key, replace...))
 		}
 		transRaw := func(key string, replace ...map[string]string) string {
-			if t == nil { return key }
+			if t == nil {
+				return key
+			}
 			return t.Trans(key, replace...)
 		}
 		transChoice := func(key string, count int, replace ...map[string]string) string {
-			if t == nil { return ui.Escape(key) }
+			if t == nil {
+				return ui.Escape(key)
+			}
 			return ui.Escape(t.TransChoice(key, count, replace...))
 		}
 		_ = trans
@@ -247,7 +282,9 @@ console.log('Counter component hydrated successfully');
     <span gs-text="count">0</span>
     <button gs-click="count++">+</button>
 </div>
-</div>`); err != nil { return err }
+</div>`); err != nil {
+			return err
+		}
 		return nil
 	})
 
@@ -338,15 +375,21 @@ text-decoration: underline;
 
 	t.Register("login", func(w io.Writer, data any, t http.ViewTranslator) error {
 		trans := func(key string, replace ...map[string]string) string {
-			if t == nil { return ui.Escape(key) }
+			if t == nil {
+				return ui.Escape(key)
+			}
 			return ui.Escape(t.Trans(key, replace...))
 		}
 		transRaw := func(key string, replace ...map[string]string) string {
-			if t == nil { return key }
+			if t == nil {
+				return key
+			}
 			return t.Trans(key, replace...)
 		}
 		transChoice := func(key string, count int, replace ...map[string]string) string {
-			if t == nil { return ui.Escape(key) }
+			if t == nil {
+				return ui.Escape(key)
+			}
 			return ui.Escape(t.TransChoice(key, count, replace...))
 		}
 		_ = trans
@@ -356,8 +399,12 @@ text-decoration: underline;
 <div class="auth-card">
 	<h2>Login</h2>
 	<form action="/login" method="POST">
-		<input type="hidden" name="_token" value="`); err != nil { return err }
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "csrf_token"))); err != nil { return err }
+		<input type="hidden" name="_token" value="`); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "csrf_token"))); err != nil {
+			return err
+		}
 		if _, err := io.WriteString(w, `" />
 		<div class="form-group">
 			<label>Email Address</label>
@@ -367,14 +414,20 @@ text-decoration: underline;
 			<label>Password</label>
 			<input type="password" name="password" required />
 		</div>
-		<div class="alert alert-danger">`); err != nil { return err }
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "error"))); err != nil { return err }
+		<div class="alert alert-danger">`); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "error"))); err != nil {
+			return err
+		}
 		if _, err := io.WriteString(w, `</div>
 		<button type="submit" class="btn">Sign In</button>
 	</form>
 	<p class="auth-switch">Don't have an account? <a href="/register">Register</a></p>
 </div>
-</div>`); err != nil { return err }
+</div>`); err != nil {
+			return err
+		}
 		return nil
 	})
 
@@ -450,15 +503,21 @@ transform: scale(1);
 
 	t.Register("modal", func(w io.Writer, data any, t http.ViewTranslator) error {
 		trans := func(key string, replace ...map[string]string) string {
-			if t == nil { return ui.Escape(key) }
+			if t == nil {
+				return ui.Escape(key)
+			}
 			return ui.Escape(t.Trans(key, replace...))
 		}
 		transRaw := func(key string, replace ...map[string]string) string {
-			if t == nil { return key }
+			if t == nil {
+				return key
+			}
 			return t.Trans(key, replace...)
 		}
 		transChoice := func(key string, count int, replace ...map[string]string) string {
-			if t == nil { return ui.Escape(key) }
+			if t == nil {
+				return ui.Escape(key)
+			}
 			return ui.Escape(t.TransChoice(key, count, replace...))
 		}
 		_ = trans
@@ -467,35 +526,57 @@ transform: scale(1);
 		if _, err := io.WriteString(w, `<div gs-component="modal">
 <div gs-component="modal">
     <!-- Overlay -->
-    <div class="gs-modal-overlay gs-hidden" id="gs-modal-`); err != nil { return err }
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "id"))); err != nil { return err }
+    <div class="gs-modal-overlay gs-hidden" id="gs-modal-`); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "id"))); err != nil {
+			return err
+		}
 		if _, err := io.WriteString(w, `">
         <!-- Modal Dialog -->
         <div class="gs-modal-content">
             <div class="gs-modal-header">
-                <h3 class="gs-modal-title">`); err != nil { return err }
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "title"))); err != nil { return err }
+                <h3 class="gs-modal-title">`); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "title"))); err != nil {
+			return err
+		}
 		if _, err := io.WriteString(w, `</h3>
-                <button class="gs-modal-close" gs-click="GoStack.closeModal('`); err != nil { return err }
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "id"))); err != nil { return err }
+                <button class="gs-modal-close" gs-click="GoStack.closeModal('`); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "id"))); err != nil {
+			return err
+		}
 		if _, err := io.WriteString(w, `')">&times;</button>
             </div>
             
             <div class="gs-modal-body">
-                `); err != nil { return err }
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "content"))); err != nil { return err }
+                `); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "content"))); err != nil {
+			return err
+		}
 		if _, err := io.WriteString(w, `
             </div>
             
             <div class="gs-modal-footer">
-                `); err != nil { return err }
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "footer"))); err != nil { return err }
+                `); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "footer"))); err != nil {
+			return err
+		}
 		if _, err := io.WriteString(w, `
             </div>
         </div>
     </div>
 </div>
-</div>`); err != nil { return err }
+</div>`); err != nil {
+			return err
+		}
 		return nil
 	})
 
@@ -586,15 +667,21 @@ text-decoration: underline;
 
 	t.Register("register", func(w io.Writer, data any, t http.ViewTranslator) error {
 		trans := func(key string, replace ...map[string]string) string {
-			if t == nil { return ui.Escape(key) }
+			if t == nil {
+				return ui.Escape(key)
+			}
 			return ui.Escape(t.Trans(key, replace...))
 		}
 		transRaw := func(key string, replace ...map[string]string) string {
-			if t == nil { return key }
+			if t == nil {
+				return key
+			}
 			return t.Trans(key, replace...)
 		}
 		transChoice := func(key string, count int, replace ...map[string]string) string {
-			if t == nil { return ui.Escape(key) }
+			if t == nil {
+				return ui.Escape(key)
+			}
 			return ui.Escape(t.TransChoice(key, count, replace...))
 		}
 		_ = trans
@@ -604,8 +691,12 @@ text-decoration: underline;
 <div class="auth-card">
 	<h2>Register</h2>
 	<form action="/register" method="POST">
-		<input type="hidden" name="_token" value="`); err != nil { return err }
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "csrf_token"))); err != nil { return err }
+		<input type="hidden" name="_token" value="`); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "csrf_token"))); err != nil {
+			return err
+		}
 		if _, err := io.WriteString(w, `" />
 		<div class="form-group">
 			<label>Email Address</label>
@@ -615,14 +706,20 @@ text-decoration: underline;
 			<label>Password</label>
 			<input type="password" name="password" required />
 		</div>
-		<div class="alert alert-danger">`); err != nil { return err }
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "error"))); err != nil { return err }
+		<div class="alert alert-danger">`); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "error"))); err != nil {
+			return err
+		}
 		if _, err := io.WriteString(w, `</div>
 		<button type="submit" class="btn">Create Account</button>
 	</form>
 	<p class="auth-switch">Already have an account? <a href="/login">Login</a></p>
 </div>
-</div>`); err != nil { return err }
+</div>`); err != nil {
+			return err
+		}
 		return nil
 	})
 

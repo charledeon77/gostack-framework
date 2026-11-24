@@ -157,6 +157,12 @@ func Mount(mux *http.ServeMux, db *sql.DB, prefix string) error {
 	return nil
 }
 
+func writeTemplate(w http.ResponseWriter, format string, a ...any) {
+	if _, err := fmt.Fprintf(w, format, a...); err != nil {
+		log.Printf("[GoStack Admin] Render write error: %v", err)
+	}
+}
+
 func handleDashboard(w http.ResponseWriter, r *http.Request) {
 	entries := All()
 	var rows string
@@ -164,7 +170,7 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 		rows += fmt.Sprintf(`<tr><td><a href="/admin/%s">%s</a></td><td>%s</td></tr>`, html.EscapeString(name), html.EscapeString(entry.Label), html.EscapeString(entry.TableName))
 	}
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprintf(w, dashboardTpl, rows)
+	writeTemplate(w, dashboardTpl, rows)
 }
 
 func handleList(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, csrfToken string) {
@@ -244,7 +250,7 @@ func handleList(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, c
 	headers += "<th>Actions</th>"
 
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprintf(w, listTpl, html.EscapeString(entry.Label), html.EscapeString(entry.Label), html.EscapeString(modelName), headers, tableRows)
+	writeTemplate(w, listTpl, html.EscapeString(entry.Label), html.EscapeString(entry.Label), html.EscapeString(modelName), headers, tableRows)
 }
 
 func handleCreate(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, csrfToken string) {
@@ -295,7 +301,7 @@ func handleCreate(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName,
 		fields += fmt.Sprintf(`<div class="field"><label>%s</label><input name="%s" type="text"></div>`, html.EscapeString(col.Name), html.EscapeString(col.Name))
 	}
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprintf(w, editTpl, "Create "+html.EscapeString(entry.Label), "Create "+html.EscapeString(entry.Label), "/admin/"+html.EscapeString(modelName)+"/create", fields)
+	writeTemplate(w, editTpl, "Create "+html.EscapeString(entry.Label), "Create "+html.EscapeString(entry.Label), "/admin/"+html.EscapeString(modelName)+"/create", fields)
 }
 
 func handleEdit(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, id, csrfToken string) {
@@ -382,7 +388,7 @@ func handleEdit(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, i
 	escLabel := html.EscapeString(entry.Label)
 	escID := html.EscapeString(id)
 	escModel := html.EscapeString(modelName)
-	fmt.Fprintf(w, editTpl, "Edit "+escLabel+" #"+escID, "Edit "+escLabel+" #"+escID, "/admin/"+escModel+"/"+escID, fields)
+	writeTemplate(w, editTpl, "Edit "+escLabel+" #"+escID, "Edit "+escLabel+" #"+escID, "/admin/"+escModel+"/"+escID, fields)
 }
 
 func handleDestroy(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, id string) {
@@ -410,13 +416,13 @@ func handleSequenceDashboard(w http.ResponseWriter, r *http.Request, csrfToken s
 	w.Header().Set("Content-Type", "text/html")
 
 	if Queue == nil {
-		fmt.Fprintf(w, sequenceUnconfiguredTpl)
+		writeTemplate(w, sequenceUnconfiguredTpl)
 		return
 	}
 
 	inspector, ok := Queue.(contract.QueueInspector)
 	if !ok {
-		fmt.Fprintf(w, sequenceUnsupportedTpl)
+		writeTemplate(w, sequenceUnsupportedTpl)
 		return
 	}
 
@@ -486,7 +492,7 @@ func handleSequenceDashboard(w http.ResponseWriter, r *http.Request, csrfToken s
 		</div>
 	`, stats.Pending, stats.Delayed, stats.Failed)
 
-	fmt.Fprintf(w, sequenceTpl, stats.Driver, statsBar, rows)
+	writeTemplate(w, sequenceTpl, stats.Driver, statsBar, rows)
 }
 
 func handleSequenceRetry(w http.ResponseWriter, r *http.Request) {
@@ -848,6 +854,11 @@ tr:last-child td {
 	background: var(--accent-red);
 	color: var(--text-primary);
 }
+th.col-name { width: 20%%; }
+th.col-payload { width: 25%%; }
+th.col-attempts { width: 15%%; }
+th.col-error { width: 25%%; }
+th.col-actions { width: 15%%; }
 </style></head><body>
 <div class="header">
 	<div class="logo-area">
@@ -863,11 +874,11 @@ tr:last-child td {
 		<table>
 			<thead>
 				<tr>
-					<th style="width: 20%%">Job Name</th>
-					<th style="width: 25%%">Payload</th>
-					<th style="width: 15%%">Attempts</th>
-					<th style="width: 25%%">Last Error</th>
-					<th style="width: 15%%">Actions</th>
+					<th class="col-name">Job Name</th>
+					<th class="col-payload">Payload</th>
+					<th class="col-attempts">Attempts</th>
+					<th class="col-error">Last Error</th>
+					<th class="col-actions">Actions</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -934,12 +945,19 @@ code {
 .btn:hover {
 	background: #22d3ee;
 }
+.code-box {
+	text-align: left;
+	background: #0b0f19;
+	padding: 1rem;
+	border-radius: 8px;
+	border: 1px solid #24324f;
+}
 </style></head><body>
 <div class="card">
 	<h1>⚡ Sequence Queue Unconfigured</h1>
 	<p>The Sequence background queue dashboard is currently not active because no active queue instance was registered with the admin panel.</p>
 	<p>To register it, add this call during your application bootstrap (e.g. in your <code>main.go</code>):</p>
-	<p style="text-align: left; background: #0b0f19; padding: 1rem; border-radius: 8px; border: 1px solid #24324f;">
+	<p class="code-box">
 		<code>admin.SetQueue(myQueueInstance)</code>
 	</p>
 	<a href="/admin" class="btn">Return to Dashboard</a>

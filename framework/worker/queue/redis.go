@@ -1,3 +1,6 @@
+// Package queue provides background queue adapters for GoStack.
+//
+// Delivery guarantee for RedisQueue: At-least-once. Handlers must be idempotent.
 package queue
 
 // Purpose: To provide a Redis-backed queue driver for distributed GoStack deployments.
@@ -23,7 +26,9 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/big"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -46,32 +51,58 @@ type jobPayload struct {
 
 // RedisQueue implements contract.Queue using a Redis List as the backing store.
 type RedisQueue struct {
-	client        *redis.Client
-	ctx           context.Context
-	cancel        context.CancelFunc
-	registry      map[string]func() contract.Job
-	BackoffFactor time.Duration // Custom backoff multiplier (defaults to time.Second)
+	client             *redis.Client
+	ctx                context.Context
+	cancel             context.CancelFunc
+	registry           map[string]func() contract.Job
+	BackoffFactor      time.Duration // Custom backoff multiplier (defaults to time.Second)
+	lostRecoveryWrites int64         // D36: count recovery write failures
 }
 
 // NewRedisQueue creates a new Redis-backed queue.
 // registry maps job names to constructor functions so deserialization can produce
 // the correct concrete Job type.
-func NewRedisQueue(addr, password string, db int, registry map[string]func() contract.Job) *RedisQueue {
+// C6: Validates constructors at boot time and keys entries by job.Name().
+func NewRedisQueue(addr, password string, db int, registry map[string]func() contract.Job) (*RedisQueue, error) {
+	validated := make(map[string]func() contract.Job)
+	for name, constructor := range registry {
+		if constructor == nil {
+			return nil, fmt.Errorf("redisqueue: constructor for job %q cannot be nil", name)
+		}
+		sample := constructor()
+		if sample == nil {
+			return nil, fmt.Errorf("redisqueue: constructor for job %q returned nil", name)
+		}
+		actualName := sample.Name()
+		validated[actualName] = constructor
+		if actualName != name {
+			// Register supplied name as alias so lookups succeed under either key
+			validated[name] = constructor
+		}
+		RegisterJob(actualName, constructor)
+	}
+
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     addr,
 		Password: password,
 		DB:       db,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
-	for name, constructor := range registry {
-		RegisterJob(name, constructor)
-	}
 	return &RedisQueue{
 		client:   rdb,
 		ctx:      ctx,
 		cancel:   cancel,
-		registry: registry,
+		registry: validated,
+	}, nil
+}
+
+// MustNewRedisQueue creates a new RedisQueue or panics if registry validation fails.
+func MustNewRedisQueue(addr, password string, db int, registry map[string]func() contract.Job) *RedisQueue {
+	q, err := NewRedisQueue(addr, password, db, registry)
+	if err != nil {
+		panic(err)
 	}
+	return q
 }
 
 // pushPayload encodes the payload and pushes it to the head of the Redis list.
@@ -126,6 +157,40 @@ func (q *RedisQueue) StartWorkers(workers int) {
 	foundation.SafeGo("redis-delayed-scheduler", q.runDelayedScheduler)
 }
 
+func (q *RedisQueue) deadLetterRedis(raw []byte, reason string) error {
+	var payload jobPayload
+	if err := json.Unmarshal(raw, &payload); err == nil {
+		payload.Error = reason
+		if encoded, err := json.Marshal(payload); err == nil {
+			raw = encoded
+		}
+	} else {
+		env, _ := json.Marshal(map[string]any{
+			"raw":       string(raw),
+			"error":     reason,
+			"failed_at": time.Now().UTC().Format(time.RFC3339),
+		})
+		raw = env
+	}
+
+	var writeErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		writeErr = q.client.LPush(q.ctx, redisFailedKey, raw).Err()
+		if writeErr == nil {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	// Fallback if writing dead-letter fails: push back to live queue so it is not dropped
+	if pushErr := q.client.RPush(q.ctx, redisQueueKey, raw).Err(); pushErr != nil {
+		atomic.AddInt64(&q.lostRecoveryWrites, 1)
+		log.Printf("[Sequence RedisQueue CRITICAL] Failed to dead-letter job AND fallback live push failed: deadLetterErr=%v, fallbackErr=%v, payload=%s", writeErr, pushErr, string(raw))
+		return fmt.Errorf("redisqueue: dead-letter write failed (%v) and fallback push failed (%v)", writeErr, pushErr)
+	}
+	log.Printf("[Sequence RedisQueue Warning] Failed to dead-letter job after 3 attempts (%v); safely re-enqueued to live queue", writeErr)
+	return fmt.Errorf("redisqueue: failed to write dead letter after 3 attempts (re-enqueued): %w", writeErr)
+}
+
 func (q *RedisQueue) runWorker() {
 	for {
 		if q.ctx.Err() != nil {
@@ -148,16 +213,28 @@ func (q *RedisQueue) runWorker() {
 		var payload jobPayload
 		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 			fmt.Printf("[Sequence Worker] Failed to decode job payload: %v\n", err)
+			if dlErr := q.deadLetterRedis([]byte(raw), fmt.Sprintf("failed to decode job payload: %v", err)); dlErr != nil {
+				log.Printf("[Sequence Worker CRITICAL] Dead-letter recovery failed: %v", dlErr)
+				time.Sleep(500 * time.Millisecond)
+			}
 			continue
 		}
 		constructor, exists := q.registry[payload.Name]
 		if !exists {
 			fmt.Printf("[Sequence Worker] Unknown job type: %s\n", payload.Name)
+			if dlErr := q.deadLetterRedis([]byte(raw), fmt.Sprintf("unknown job type: %s", payload.Name)); dlErr != nil {
+				log.Printf("[Sequence Worker CRITICAL] Dead-letter recovery failed: %v", dlErr)
+				time.Sleep(500 * time.Millisecond)
+			}
 			continue
 		}
 		job := constructor()
 		if err := json.Unmarshal(payload.Data, job); err != nil {
 			fmt.Printf("[Sequence Worker] Failed to unmarshal job data: %v\n", err)
+			if dlErr := q.deadLetterRedis([]byte(raw), fmt.Sprintf("failed to unmarshal job data: %v", err)); dlErr != nil {
+				log.Printf("[Sequence Worker CRITICAL] Dead-letter recovery failed: %v", dlErr)
+				time.Sleep(500 * time.Millisecond)
+			}
 			continue
 		}
 
@@ -187,19 +264,30 @@ func (q *RedisQueue) runWorker() {
 					payload.Name, handleErr, backoff, payload.Attempts, retryable.MaxAttempts())
 				
 				if retryErr := q.pushDelayedPayload(payload, backoff); retryErr != nil {
-					fmt.Printf("[Sequence Worker] Failed to queue retry for job %s: %v\n", payload.Name, retryErr)
+					fmt.Printf("[Sequence Worker] Failed to queue retry for job %s: %v — falling through to dead-letter write (D37)\n", payload.Name, retryErr)
+					payload.Error = fmt.Sprintf("retry schedule failed: %v (original: %v)", retryErr, handleErr)
+					var dlErr error
+					if encoded, mErr := json.Marshal(payload); mErr == nil {
+						dlErr = q.deadLetterRedis(encoded, payload.Error)
+					} else {
+						dlErr = q.deadLetterRedis([]byte(raw), payload.Error)
+					}
+					if dlErr != nil {
+						log.Printf("[Sequence Worker CRITICAL] Dead-letter recovery failed: %v", dlErr)
+						time.Sleep(500 * time.Millisecond)
+					}
 				}
 			} else {
 				fmt.Printf("[Sequence Worker] Job %s failed: %v. Storing in dead-letter list.\n", payload.Name, handleErr)
-				failedEncoded, marshalErr := json.Marshal(payload)
-				if marshalErr == nil {
-					if dlErr := q.client.LPush(q.ctx, redisFailedKey, failedEncoded).Err(); dlErr != nil {
-						fmt.Printf("[Sequence Worker] Failed to write dead letter: %v\n", dlErr)
-					}
+				var dlErr error
+				if encoded, mErr := json.Marshal(payload); mErr == nil {
+					dlErr = q.deadLetterRedis(encoded, handleErr.Error())
 				} else {
-					if dlErr := q.client.LPush(q.ctx, redisFailedKey, raw).Err(); dlErr != nil {
-						fmt.Printf("[Sequence Worker] Failed to write raw dead letter: %v\n", dlErr)
-					}
+					dlErr = q.deadLetterRedis([]byte(raw), handleErr.Error())
+				}
+				if dlErr != nil {
+					log.Printf("[Sequence Worker CRITICAL] Dead-letter recovery failed: %v", dlErr)
+					time.Sleep(500 * time.Millisecond)
 				}
 			}
 		}
@@ -267,10 +355,11 @@ func (q *RedisQueue) GetStats() (contract.QueueStats, error) {
 	}
 
 	return contract.QueueStats{
-		Driver:  "redis",
-		Pending: pending,
-		Delayed: delayed,
-		Failed:  failed,
+		Driver:             "redis",
+		Pending:            pending,
+		Delayed:            delayed,
+		Failed:             failed,
+		LostRecoveryWrites: atomic.LoadInt64(&q.lostRecoveryWrites),
 	}, nil
 }
 

@@ -43,6 +43,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"reflect"
 	"regexp"
 	"sort"
@@ -961,17 +962,40 @@ func (qb *QueryBuilder) DeleteModel(model any) error {
 	sqlStr := fmt.Sprintf("DELETE FROM %s", qb.table)
 	sqlStr += qb.whereSQL()
 
-	if err := qb.executor().Exec(sqlStr, qb.bindings...); err != nil {
-		return err
-	}
-
-	// Fire AfterDelete hook.
+	// C3: When a model implements a post-hook, statement and hook share one transactional boundary.
 	if model != nil {
 		if hook, ok := model.(AfterDeleter); ok {
+			if qb.tx == nil && qb.db != nil {
+				tx, err := qb.db.BeginTx()
+				if err != nil {
+					return fmt.Errorf("[Crafter] failed to begin transaction for AfterDelete hook: %w", err)
+				}
+				if err := tx.Exec(sqlStr, qb.bindings...); err != nil {
+					if rbErr := tx.Rollback(); rbErr != nil {
+						log.Printf("[Crafter CRITICAL] Failed to rollback transaction after DeleteModel Exec error: %v (original: %v)", rbErr, err)
+					}
+					return err
+				}
+				if err := hook.AfterDelete(); err != nil {
+					if rbErr := tx.Rollback(); rbErr != nil {
+						log.Printf("[Crafter CRITICAL] Failed to rollback transaction after AfterDelete hook error: %v (original: %v)", rbErr, err)
+					}
+					return fmt.Errorf("[Crafter] AfterDelete hook failed: %w", err)
+				}
+				return tx.Commit()
+			}
+			if err := qb.executor().Exec(sqlStr, qb.bindings...); err != nil {
+				return err
+			}
 			if err := hook.AfterDelete(); err != nil {
 				return fmt.Errorf("[Crafter] AfterDelete hook failed: %w", err)
 			}
+			return nil
 		}
+	}
+
+	if err := qb.executor().Exec(sqlStr, qb.bindings...); err != nil {
+		return err
 	}
 	return nil
 }
@@ -1158,17 +1182,42 @@ func (qb *QueryBuilder) InsertModel(model any, data map[string]any) error {
 	}
 
 	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", qb.table, strings.Join(columns, ", "), strings.Join(placeholders, ", "))
-	if err := qb.executor().Exec(query, bindings...); err != nil {
-		return err
-	}
 
-	// Fire AfterCreate hook if model implements it.
+	// C3: When a model implements a post-hook, statement and hook share one transactional boundary.
 	if model != nil {
 		if hook, ok := model.(AfterCreator); ok {
+			if qb.tx == nil && qb.db != nil {
+				tx, err := qb.db.BeginTx()
+				if err != nil {
+					return fmt.Errorf("[SparkORM] failed to begin transaction for AfterCreate hook: %w", err)
+				}
+				if err := tx.Exec(query, bindings...); err != nil {
+					if rbErr := tx.Rollback(); rbErr != nil {
+						log.Printf("[SparkORM CRITICAL] Failed to rollback transaction after InsertModel Exec error: %v (original: %v)", rbErr, err)
+					}
+					return err
+				}
+				if err := hook.AfterCreate(); err != nil {
+					if rbErr := tx.Rollback(); rbErr != nil {
+						log.Printf("[SparkORM CRITICAL] Failed to rollback transaction after AfterCreate hook error: %v (original: %v)", rbErr, err)
+					}
+					return fmt.Errorf("[SparkORM] AfterCreate hook failed: %w", err)
+				}
+				return tx.Commit()
+			}
+			// Already within an enclosing transaction or non-standard executor
+			if err := qb.executor().Exec(query, bindings...); err != nil {
+				return err
+			}
 			if err := hook.AfterCreate(); err != nil {
 				return fmt.Errorf("[SparkORM] AfterCreate hook failed: %w", err)
 			}
+			return nil
 		}
+	}
+
+	if err := qb.executor().Exec(query, bindings...); err != nil {
+		return err
 	}
 	return nil
 }

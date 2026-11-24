@@ -13,12 +13,14 @@ the project-local CLI at `cmd/gostack/main.go`, which is compiled against the
 project's exact dependency versions.
 
 Installation:
-  go install github.com/charledeon77/gostack-framework/cmd/gost@latest
+
+	go install github.com/charledeon77/gostack-framework/cmd/gost@latest
 
 Usage:
-  gost new <project-name>           Interactive wizard (recommended)
-  gost new <project-name> -n        Headless / CI mode with smart defaults
-  gost new <project-name> --db-engine=sqlite --no-interaction
+
+	gost new <project-name>           Interactive wizard (recommended)
+	gost new <project-name> -n        Headless / CI mode with smart defaults
+	gost new <project-name> --db-engine=sqlite --no-interaction
 */
 package main
 
@@ -112,7 +114,10 @@ func main() {
 	// "new" is the only command handled globally by the installer
 	if commandName == "new" {
 		kernel := console.NewKernel()
-		kernel.Register(&console.NewCommand{})
+		if err := kernel.Register(&console.NewCommand{}); err != nil {
+			fmt.Printf("\033[1;31m[GoStack Error]\033[0m failed to register command: %v\n", err)
+			os.Exit(1)
+		}
 		if err := kernel.Run(args); err != nil {
 			fmt.Printf("\033[1;31m[GoStack Error]\033[0m %v\n", err)
 			os.Exit(1)

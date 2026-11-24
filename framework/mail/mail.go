@@ -39,6 +39,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"mime"
 	"net"
 	netmail "net/mail"
@@ -152,6 +153,35 @@ func (m *Mailer) Validate(msg Message) error {
 	return nil
 }
 
+// deadlineWriter wraps an io.WriteCloser and resets the underlying network connection
+// deadline before every write call. This bounds unbounded DATA transfers by inactivity
+// rather than total transfer duration (D26), ensuring large attachments succeed on slow links.
+type deadlineWriter struct {
+	w       io.WriteCloser
+	conn    net.Conn
+	timeout time.Duration
+	written int
+	total   int
+}
+
+func (dw *deadlineWriter) Write(p []byte) (n int, err error) {
+	_ = dw.conn.SetDeadline(time.Now().Add(dw.timeout))
+	n, err = dw.w.Write(p)
+	dw.written += n
+	if err != nil {
+		return n, fmt.Errorf("mail: DATA write failed after %d of %d bytes: %w", dw.written, dw.total, err)
+	}
+	return n, nil
+}
+
+func (dw *deadlineWriter) Close() error {
+	_ = dw.conn.SetDeadline(time.Now().Add(dw.timeout))
+	if err := dw.w.Close(); err != nil {
+		return fmt.Errorf("mail: finalizing DATA payload failed after %d of %d bytes: %w", dw.written, dw.total, err)
+	}
+	return nil
+}
+
 // Send formats and sends the given Message via SMTP.
 // Rejects any attempt at SMTP header injection (SEC-06).
 func (m *Mailer) Send(msg any) error {
@@ -227,6 +257,7 @@ func (m *Mailer) Send(msg any) error {
 	}
 	defer conn.Close()
 
+	// D26: Set deadline for initial SMTP handshake
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 
 	client, err := smtp.NewClient(conn, m.cfg.Host)
@@ -235,8 +266,15 @@ func (m *Mailer) Send(msg any) error {
 	}
 	defer client.Close()
 
+	// D25: Explicitly run capability negotiation (EHLO) so handshake errors are surfaced instead of misread as absent features
+	if err := client.Hello("localhost"); err != nil {
+		return fmt.Errorf("mail: capability negotiation failed: %w", err)
+	}
+
 	// Handle STARTTLS if not already under SSL and not explicitly disabled (F-035: zero value / default requires STARTTLS-or-fail)
 	if !isSSL && enc != "none" {
+		// D26: Per-phase deadline for capability check and STARTTLS negotiation
+		_ = conn.SetDeadline(time.Now().Add(timeout))
 		if ok, _ := client.Extension("STARTTLS"); ok {
 			if err := client.StartTLS(tlsConfig); err != nil {
 				return fmt.Errorf("mail: STARTTLS failed: %w", err)
@@ -249,6 +287,8 @@ func (m *Mailer) Send(msg any) error {
 	}
 
 	if auth != nil {
+		// D26: Per-phase deadline for authentication
+		_ = conn.SetDeadline(time.Now().Add(timeout))
 		if ok, _ := client.Extension("AUTH"); ok {
 			if err := client.Auth(auth); err != nil {
 				return fmt.Errorf("mail: authentication failed: %w", err)
@@ -256,27 +296,49 @@ func (m *Mailer) Send(msg any) error {
 		}
 	}
 
+	// D26: Per-phase deadline for MAIL FROM and recipient validation
+	_ = conn.SetDeadline(time.Now().Add(timeout))
 	if err := client.Mail(m.cfg.FromAddress); err != nil {
 		return fmt.Errorf("mail: MAIL FROM failed: %w", err)
 	}
 
 	for _, rcpt := range cleaned {
+		_ = conn.SetDeadline(time.Now().Add(timeout))
 		if err := client.Rcpt(rcpt); err != nil {
 			return fmt.Errorf("mail: RCPT TO <%s> failed: %w", rcpt, err)
 		}
 	}
 
+	// D26: Reset deadline before sending DATA block
+	_ = conn.SetDeadline(time.Now().Add(timeout))
 	w, err := client.Data()
 	if err != nil {
 		return fmt.Errorf("mail: DATA command failed: %w", err)
 	}
 
-	if _, err := w.Write(raw); err != nil {
-		return fmt.Errorf("mail: writing payload failed: %w", err)
+	dw := &deadlineWriter{
+		w:       w,
+		conn:    conn,
+		timeout: timeout,
+		total:   len(raw),
 	}
 
-	if err := w.Close(); err != nil {
-		return fmt.Errorf("mail: finalizing DATA payload failed: %w", err)
+	// Write in chunks through deadlineWriter so each chunk resets the inactivity deadline (D26)
+	chunkSize := 32 * 1024
+	buf := raw
+	for len(buf) > 0 {
+		end := chunkSize
+		if end > len(buf) {
+			end = len(buf)
+		}
+		if _, err := dw.Write(buf[:end]); err != nil {
+			return err
+		}
+		buf = buf[end:]
+	}
+
+	if err := dw.Close(); err != nil {
+		return err
 	}
 
 	return client.Quit()

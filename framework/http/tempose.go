@@ -90,7 +90,9 @@ func (t *Tempose) Render(w io.Writer, name string, data any, trans ViewTranslato
 			return err
 		}
 		// Write the master asset block (base styles + components CSS + GlideJS + component scripts)
-		ui.WriteMasterAssetBlock(w)
+		if err := ui.WriteMasterAssetBlock(w); err != nil {
+			return fmt.Errorf("tempose: failed to write master asset block: %w", err)
+		}
 		// Write the rest of the HTML (including the closing </head> tag)
 		if _, err := w.Write(htmlBytes[idx:]); err != nil {
 			return err

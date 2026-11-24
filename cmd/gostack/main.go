@@ -39,12 +39,9 @@ func main() {
 	dsn := foundation.Get("DB_DSN", "")
 
 	// 2. Connect database if credentials are provided.
-	// Note: Generator commands (make:migration, make:controller) do not require a database connection,
-	// so we log a warning instead of fatalling if connection configuration is missing or invalid.
+	var dbErr error
 	if dsn != "" {
-		if err := gostack.InitDatabase(driver, dsn); err != nil {
-			log.Printf("[GoStack CLI Warning] Database connection failed: %v\n", err)
-		}
+		dbErr = gostack.InitDatabase(driver, dsn)
 	}
 
 	// 3. Construct the CLI console kernel and register core actions
@@ -75,6 +72,27 @@ func main() {
 			fmt.Printf("[GoStack CLI Error] Failed to register command: %v\n", err)
 			os.Exit(1)
 		}
+	}
+
+	// D21: Commands that declare a database requirement must fail closed.
+	// Querying the command's own DatabaseDependent capability eliminates string drift.
+	if len(os.Args) > 1 {
+		subcommand := os.Args[1]
+		if cmd, exists := kernel.Get(subcommand); exists {
+			if req, ok := cmd.(console.DatabaseDependent); ok && req.RequiresDatabase() {
+				if dsn == "" {
+					fmt.Printf("[GoStack CLI Error] Command %q requires a database connection, but DB_DSN is empty.\n", subcommand)
+					os.Exit(1)
+				}
+				if dbErr != nil {
+					fmt.Printf("[GoStack CLI Error] Command %q requires a database connection, but connection failed: %v\n", subcommand, dbErr)
+					os.Exit(1)
+				}
+			}
+		}
+	}
+	if dbErr != nil {
+		log.Printf("[GoStack CLI Warning] Database connection failed: %v\n", dbErr)
 	}
 
 

@@ -423,6 +423,9 @@ func (c *AssetCompiler) compileHTML(componentName, rawHTML string) (string, bool
 		// Document generated via layout inheritance (@extends) already has the component badge
 		// injected into the layout's primary @yield slot (<div gs-component="...">).
 		wrappedHTML = trimmedHTML
+	} else if strings.HasPrefix(lower, fmt.Sprintf("<div gs-component=\"%s\"", componentName)) {
+		// D14: Template already contains outer component wrapper; avoid nested duplicate wrappers.
+		wrappedHTML = trimmedHTML
 	} else {
 		wrappedHTML = fmt.Sprintf("<div gs-component=\"%s\">\n%s\n</div>", componentName, trimmedHTML)
 	}

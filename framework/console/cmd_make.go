@@ -157,6 +157,17 @@ func (c *MakeMigrationCommand) Execute(args []string) error {
 	fileName := fmt.Sprintf("%s_%s.go", versionStr, rawName)
 	filePath := filepath.Join("database", "migrations", fileName)
 
+	// D17: Avoid timestamp collisions when multiple migrations are generated within the same second
+	for {
+		if _, statErr := os.Stat(filePath); os.IsNotExist(statErr) {
+			break
+		}
+		versionInt++
+		versionStr = fmt.Sprintf("%d", versionInt)
+		fileName = fmt.Sprintf("%s_%s.go", versionStr, rawName)
+		filePath = filepath.Join("database", "migrations", fileName)
+	}
+
 	tmpl, err := template.New("migration").Parse(migrationStub)
 	if err != nil {
 		return fmt.Errorf("failed to parse migration template: %w", err)
@@ -304,6 +315,18 @@ func (c *MakeAuthCommand) Execute(args []string) error {
 	var versionUsers int64
 	if _, err := fmt.Sscanf(versionStr, "%d", &versionUsers); err != nil {
 		return fmt.Errorf("failed to compile version timestamp: %w", err)
+	}
+
+	// D17: Check collision for generated auth migration files
+	for {
+		uPath := filepath.Join("database", "migrations", fmt.Sprintf("%d_create_users_table.go", versionUsers))
+		tPath := filepath.Join("database", "migrations", fmt.Sprintf("%d_create_user_tokens_table.go", versionUsers+1))
+		if _, uErr := os.Stat(uPath); os.IsNotExist(uErr) {
+			if _, tErr := os.Stat(tPath); os.IsNotExist(tErr) {
+				break
+			}
+		}
+		versionUsers += 2
 	}
 	versionTokens := versionUsers + 1
 

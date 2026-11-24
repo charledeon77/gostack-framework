@@ -7,6 +7,7 @@ import (
 	"html"
 	"html/template"
 	"io"
+	"log"
 	"os"
 	"reflect"
 	"sort"
@@ -309,8 +310,8 @@ func RegisterComponentScript(name, js string) {
 // WriteMasterAssetBlock streams the linked stylesheet and script tags into the HTTP response writer.
 // It is called once per page render, typically just before the closing </head> tag.
 // It emits external <link> and <script defer> tags satisfying strict Content Security Policies (CSP)
-// without requiring 'unsafe-inline'.
-func WriteMasterAssetBlock(w io.Writer) {
+// without requiring 'unsafe-inline'. Returns an error if writing to w fails (D30).
+func WriteMasterAssetBlock(w io.Writer) error {
 	registryMu.RLock()
 	cssURL := registeredStylesheetURL
 	jsURL := registeredScriptURL
@@ -318,23 +319,30 @@ func WriteMasterAssetBlock(w io.Writer) {
 	registryMu.RUnlock()
 
 	// 1. External Stylesheet link
-	_, _ = io.WriteString(w, fmt.Sprintf("<link rel=\"stylesheet\" href=\"%s\">\n", cssURL))
+	if _, err := io.WriteString(w, fmt.Sprintf("<link rel=\"stylesheet\" href=\"%s\">\n", cssURL)); err != nil {
+		return err
+	}
 
 	// 2. External Reactive script link
-	_, _ = io.WriteString(w, fmt.Sprintf("<script defer src=\"%s\"></script>\n", jsURL))
+	if _, err := io.WriteString(w, fmt.Sprintf("<script defer src=\"%s\"></script>\n", jsURL)); err != nil {
+		return err
+	}
 
 	// 3. Development Hot Reload Client script — D13: inject only for explicit dev environments, not "not production"
 	appEnv := strings.ToLower(os.Getenv("APP_ENV"))
 	if appEnv == "local" || appEnv == "development" {
-		_, _ = io.WriteString(w, fmt.Sprintf("<script defer src=\"%s\"></script>\n", hotURL))
+		if _, err := io.WriteString(w, fmt.Sprintf("<script defer src=\"%s\"></script>\n", hotURL)); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-// Evaluate performs a safe runtime reflection lookup of a field name on a given data object.
-// It supports nested dot-notation paths (e.g. "User.Profile.Name").
-func Evaluate(data any, field string) any {
+// EvaluateErr performs a safe runtime reflection lookup of a field name on a given data object.
+// Returns an error if an intermediate field or path component fails to resolve (D33).
+func EvaluateErr(data any, field string) (any, error) {
 	if data == nil {
-		return ""
+		return "", fmt.Errorf("evaluator: nil data object for field %q", field)
 	}
 	parts := strings.Split(field, ".")
 	current := data
@@ -342,15 +350,37 @@ func Evaluate(data any, field string) any {
 		if part == "" {
 			continue
 		}
-		current = evaluateSingle(current, part)
-		if current == nil {
-			return ""
+		res, err := evaluateSingleErr(current, part)
+		if err != nil {
+			return "", err
 		}
+		current = res
 	}
-	return current
+	return current, nil
 }
 
-func evaluateSingle(data any, field string) any {
+// Evaluate performs a safe runtime reflection lookup of a field name on a given data object.
+// It supports nested dot-notation paths (e.g. "User.Profile.Name").
+// D33: Structural reflection failures are logged loudly in ALL environments (including production).
+func Evaluate(data any, field string) any {
+	res, err := EvaluateErr(data, field)
+	if err != nil {
+		log.Printf("[Tempose Error] Reflection lookup failed for %q: %v", field, err)
+		return ""
+	}
+	return res
+}
+
+// EvaluateOptional performs a reflection lookup but returns empty string without logging if the field is absent.
+func EvaluateOptional(data any, field string) any {
+	res, err := EvaluateErr(data, field)
+	if err != nil {
+		return ""
+	}
+	return res
+}
+
+func evaluateSingleErr(data any, field string) (any, error) {
 	val := reflect.ValueOf(data)
 	if val.Kind() == reflect.Ptr {
 		val = val.Elem()
@@ -361,21 +391,27 @@ func evaluateSingle(data any, field string) any {
 		kv := reflect.ValueOf(field)
 		res := val.MapIndex(kv)
 		if res.IsValid() {
-			return res.Interface()
+			return res.Interface(), nil
 		}
+		return nil, fmt.Errorf("map key %q not found", field)
 	case reflect.Struct:
 		f := val.FieldByName(field)
-		if f.IsValid() && f.CanInterface() {
-			return f.Interface()
+		if f.IsValid() {
+			if f.CanInterface() {
+				return f.Interface(), nil
+			}
+			return nil, fmt.Errorf("struct field %q is unexported", field)
 		}
 		// Try method lookup
 		m := val.MethodByName(field)
 		if m.IsValid() && m.Type().NumIn() == 0 && m.Type().NumOut() == 1 {
 			res := m.Call(nil)
-			return res[0].Interface()
+			return res[0].Interface(), nil
 		}
+		return nil, fmt.Errorf("struct field or method %q not found", field)
+	default:
+		return nil, fmt.Errorf("cannot lookup field %q on type %T", field, data)
 	}
-	return nil
 }
 
 // EvaluateBool inspects the resolved value of a field path and returns its truthiness.

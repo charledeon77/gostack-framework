@@ -52,8 +52,7 @@ func (e *Engine) ServeHTTP(w netHTTP.ResponseWriter, r *netHTTP.Request) {
 
 			// Never drop the TCP socket ungracefully — return a standardized 500 response
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.WriteHeader(netHTTP.StatusInternalServerError)
-			_, _ = w.Write([]byte(fmt.Sprintf(`<!DOCTYPE html>
+			_ = writeResponse(w, netHTTP.StatusInternalServerError, []byte(fmt.Sprintf(`<!DOCTYPE html>
 <html>
 <head><title>500 Internal Server Error</title><style>body{font-family:sans-serif;background:#0b0f19;color:#f8fafc;padding:40px;display:flex;justify-content:center;align-items:center;height:80vh;} .card{background:#1e293b;padding:30px;border-radius:12px;border:1px solid #334155;max-width:600px;text-align:center;} h1{color:#ef4444;margin-top:0;} p{color:#94a3b8;line-height:1.6;}</style></head>
 <body><div class="card"><h1>500 Internal Server Error</h1><p>An unexpected condition was encountered while processing this request. The application kernel intercepted the crash safely.</p></div></body></html>`)))
@@ -81,21 +80,30 @@ func (e *Engine) ServeHTTP(w netHTTP.ResponseWriter, r *netHTTP.Request) {
 			var maxBytesErr *netHTTP.MaxBytesError
 			if errors.As(err, &maxBytesErr) {
 				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-				w.WriteHeader(netHTTP.StatusRequestEntityTooLarge)
-				_, _ = w.Write([]byte("413 Request Entity Too Large: request body exceeds configured limit"))
+				_ = writeResponse(w, netHTTP.StatusRequestEntityTooLarge, []byte("413 Request Entity Too Large: request body exceeds configured limit"))
 				return
 			}
 			if e.Router != nil && e.Router.errorHandler != nil {
 				e.Router.errorHandler(ctx, err)
 				return
 			}
-			w.WriteHeader(netHTTP.StatusInternalServerError)
-			_, _ = w.Write([]byte("500 Internal Server Error - GoStack Engine"))
+			_ = writeResponse(w, netHTTP.StatusInternalServerError, []byte("500 Internal Server Error - GoStack Engine"))
 		}
 	}
 
 	effectiveMethod := r.Method
 	effectiveWriter := w
+
+	// C26: Reject malformed form bodies on mutating methods with 400 Bad Request
+	if r.Method == netHTTP.MethodPost || r.Method == netHTTP.MethodPut || r.Method == netHTTP.MethodPatch || r.Method == netHTTP.MethodDelete {
+		ct := r.Header.Get("Content-Type")
+		if strings.Contains(ct, "application/x-www-form-urlencoded") || strings.Contains(ct, "multipart/form-data") {
+			if parseErr := r.ParseForm(); parseErr != nil {
+				_ = writeResponse(w, netHTTP.StatusBadRequest, []byte("400 Bad Request: Malformed form body"))
+				return
+			}
+		}
+	}
 
 	// HTTP Method Spoofing (PAR-10): Allow POST forms with _method=PUT/PATCH/DELETE
 	// or X-HTTP-Method-Override header to match the overridden HTTP method.
@@ -191,8 +199,7 @@ func (e *Engine) ServeHTTP(w netHTTP.ResponseWriter, r *netHTTP.Request) {
 			}
 			e.Router.methodNotAllowedHandler(ctx)
 		} else {
-			w.WriteHeader(netHTTP.StatusMethodNotAllowed)
-			_, _ = w.Write([]byte("405 Method Not Allowed - GoStack Engine"))
+			_ = writeResponse(w, netHTTP.StatusMethodNotAllowed, []byte("405 Method Not Allowed - GoStack Engine"))
 		}
 		return
 	}
@@ -207,7 +214,18 @@ func (e *Engine) ServeHTTP(w netHTTP.ResponseWriter, r *netHTTP.Request) {
 		}
 		e.Router.notFoundHandler(ctx)
 	} else {
-		w.WriteHeader(netHTTP.StatusNotFound)
-		_, _ = w.Write([]byte("404 Page Not Found - GoStack Engine"))
+		_ = writeResponse(w, netHTTP.StatusNotFound, []byte("404 Page Not Found - GoStack Engine"))
 	}
+}
+
+// writeResponse safely writes status code and body, logging errors on broken connections (C25).
+func writeResponse(w netHTTP.ResponseWriter, statusCode int, body []byte) error {
+	w.WriteHeader(statusCode)
+	if len(body) > 0 {
+		if _, err := w.Write(body); err != nil {
+			log.Printf("[GoStack HTTP] Response write error (status %d): %v", statusCode, err)
+			return err
+		}
+	}
+	return nil
 }

@@ -279,10 +279,11 @@ type Queue interface {
 
 // QueueStats holds the metrics for the active queue engine.
 type QueueStats struct {
-	Driver  string `json:"driver"`
-	Pending int64  `json:"pending"`
-	Delayed int64  `json:"delayed"`
-	Failed  int64  `json:"failed"`
+	Driver             string `json:"driver"`
+	Pending            int64  `json:"pending"`
+	Delayed            int64  `json:"delayed"`
+	Failed             int64  `json:"failed"`
+	LostRecoveryWrites int64  `json:"lost_recovery_writes,omitempty"`
 }
 
 // FailedJob represents metadata of a background job that failed execution and exceeded retries.

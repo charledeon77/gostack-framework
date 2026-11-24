@@ -8,6 +8,7 @@ package health
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -26,10 +27,12 @@ func LivenessHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(Status{
+		if err := json.NewEncoder(w).Encode(Status{
 			Status:    "up",
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
-		})
+		}); err != nil {
+			log.Printf("[Health] Liveness response encode error: %v", err)
+		}
 	}
 }
 
@@ -93,11 +96,13 @@ func ReadinessHandler(db contract.Database, cache contract.CacheStore) http.Hand
 		}
 
 		w.WriteHeader(code)
-		_ = json.NewEncoder(w).Encode(Status{
+		if err := json.NewEncoder(w).Encode(Status{
 			Status:    status,
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Checks:    checks,
-		})
+		}); err != nil {
+			log.Printf("[Health] Readiness response encode error: %v", err)
+		}
 	}
 }
 

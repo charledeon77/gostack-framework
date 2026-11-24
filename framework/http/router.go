@@ -21,13 +21,28 @@ import (
 
 // Route represents a registered HTTP path pattern.
 type Route struct {
-	RouteName string
-	Method    string
-	Pattern   string
-	Segments  []string
-	HasParams bool
-	Handler   func(ctx *Context) error
-	router    *Router
+	RouteName       string
+	Method          string
+	Pattern         string
+	Segments        []string
+	HasParams       bool
+	Handler         func(ctx *Context) error
+	rawHandler      func(ctx *Context) error
+	routeMiddleware []Middleware
+	router          *Router
+}
+
+func (r *Route) compile() {
+	pipeline := NewPipeline()
+	allMiddleware := make([]Middleware, 0, len(r.router.globalMiddleware)+len(r.routeMiddleware))
+	allMiddleware = append(allMiddleware, r.router.globalMiddleware...)
+	allMiddleware = append(allMiddleware, r.routeMiddleware...)
+	pipeline.Through(allMiddleware...)
+	r.Handler = func(ctx *Context) error {
+		return pipeline.Run(ctx, func(c *Context) error {
+			return r.rawHandler(c)
+		})
+	}
 }
 
 // Name registers a logical name for the route, allowing dynamic URL building.
@@ -62,12 +77,15 @@ func NewRouter() *Router {
 
 // Use registers one or more global middleware layers that execute on every route.
 // Global middleware runs before route-specific or group-specific middleware.
-// F-313: Calling Use after routes have already been registered returns a loud error/log or wraps them.
+// C28: Global middleware registered via Use() retroactively covers all routes, regardless of registration order.
 func (r *Router) Use(middleware ...Middleware) *Router {
-	if len(r.routes) > 0 || len(r.dynamicRoutes) > 0 {
-		log.Printf("[WARNING] router.Use() called after routes were already registered. Global middleware must be registered before routes to guarantee complete coverage.")
-	}
 	r.globalMiddleware = append(r.globalMiddleware, middleware...)
+	for _, route := range r.dynamicRoutes {
+		route.compile()
+		if !route.HasParams {
+			r.routes[route.Method+" "+route.Pattern] = route.Handler
+		}
+	}
 	return r
 }
 
@@ -101,45 +119,37 @@ func (r *Router) register(method, path string, handler func(ctx *Context), middl
 }
 
 func (r *Router) registerWithError(method, path string, handler func(ctx *Context) error, middleware []Middleware) *Route {
-	pipeline := NewPipeline()
-	allMiddleware := make([]Middleware, 0, len(r.globalMiddleware)+len(middleware))
-	allMiddleware = append(allMiddleware, r.globalMiddleware...)
-	allMiddleware = append(allMiddleware, middleware...)
-	pipeline.Through(allMiddleware...)
-	runPipeline := func(ctx *Context) error {
-		return pipeline.Run(ctx, func(c *Context) error {
-			return handler(c)
-		})
-	}
-
 	segments, hasParams := parsePattern(path)
 
-	// ── Conflict Detection ──────────────────────────────────────────────────────
-	// Check static routes map for exact duplicates.
+	// ── Conflict Detection (D1) ──────────────────────────────────────────────────
+	// Remove any earlier duplicate from dynamicRoutes so the last registered route wins as logged.
 	staticKey := method + " " + path
 	if _, exists := r.routes[staticKey]; exists {
 		log.Printf("[GoStack Router] WARNING: Duplicate route detected: %s %s — previous registration overwritten.", method, path)
 	}
-	// Check dynamic routes for parameter pattern duplicates.
-	for _, existing := range r.dynamicRoutes {
+	for i := len(r.dynamicRoutes) - 1; i >= 0; i-- {
+		existing := r.dynamicRoutes[i]
 		if existing.Method == method && existing.Pattern == path {
 			log.Printf("[GoStack Router] WARNING: Duplicate dynamic route detected: %s %s — previous registration overwritten.", method, path)
+			r.dynamicRoutes = append(r.dynamicRoutes[:i], r.dynamicRoutes[i+1:]...)
 			break
 		}
 	}
 
 	route := &Route{
-		Method:    method,
-		Pattern:   path,
-		Segments:  segments,
-		HasParams: hasParams,
-		Handler:   runPipeline,
-		router:    r,
+		Method:          method,
+		Pattern:         path,
+		Segments:        segments,
+		HasParams:       hasParams,
+		rawHandler:      handler,
+		routeMiddleware: middleware,
+		router:          r,
 	}
+	route.compile()
 	r.dynamicRoutes = append(r.dynamicRoutes, route)
 
 	if !hasParams {
-		r.routes[method+" "+path] = runPipeline
+		r.routes[staticKey] = route.Handler
 	}
 	return route
 }

@@ -68,21 +68,10 @@ func RegisterComponents(t *http.Tempose) {
   color: var(--accent);
 }`)
 
-	ui.RegisterComponentScript("accordion", `// Toggle accordion logic
+	ui.RegisterComponentScript("accordion", `// Toggle accordion logic delegating to the CSP-safe GoStack runtime method
 function toggleAccordion(trigger) {
-  const item = trigger.parentElement;
-  const content = item.querySelector('.gostack-components-accordion-content');
-  
-  if (item.classList.contains('active')) {
-    item.classList.remove('active');
-    content.style.maxHeight = '0px';
-  } else {
-    document.querySelectorAll('.gostack-components-accordion-item').forEach(el => {
-      el.classList.remove('active');
-      el.querySelector('.gostack-components-accordion-content').style.maxHeight = '0px';
-    });
-    item.classList.add('active');
-    content.style.maxHeight = '200px';
+  if (typeof window !== 'undefined' && window.GoStack && window.GoStack.toggleAccordion) {
+    window.GoStack.toggleAccordion(trigger);
   }
 }`)
 
@@ -109,9 +98,9 @@ function toggleAccordion(trigger) {
 		_ = transRaw
 		_ = transChoice
 		if _, err := io.WriteString(w, `<div gs-component="accordion">
-<div class="gostack-components-accordion" data-controller="accordion">
+<div class="gostack-components-accordion">
               <div class="gostack-components-accordion-item active">
-                <button class="gostack-components-accordion-trigger" gs-click="GoStack.toggleAccordion(this)">
+                <button class="gostack-components-accordion-trigger" gs-click="GoStack.toggleAccordion($el)">
                   <span>Premium System Architecture</span>
                   <span class="gostack-components-accordion-icon">▼</span>
                 </button>
@@ -122,7 +111,7 @@ function toggleAccordion(trigger) {
                 </div>
               </div>
               <div class="gostack-components-accordion-item">
-                <button class="gostack-components-accordion-trigger" gs-click="GoStack.toggleAccordion(this)">
+                <button class="gostack-components-accordion-trigger" gs-click="GoStack.toggleAccordion($el)">
                   <span>Decentralized Databases</span>
                   <span class="gostack-components-accordion-icon">▼</span>
                 </button>
@@ -197,7 +186,6 @@ function toggleAccordion(trigger) {
 		_ = transRaw
 		_ = transChoice
 		if _, err := io.WriteString(w, `<div gs-component="button">
-<div gs-component="button">
     
     <button class="gs-btn gs-btn-`); err != nil {
 			return err
@@ -220,7 +208,6 @@ function toggleAccordion(trigger) {
 		}
 		if _, err := io.WriteString(w, `
     </button>
-</div>
 </div>`); err != nil {
 			return err
 		}
@@ -518,7 +505,6 @@ to {
 		_ = transRaw
 		_ = transChoice
 		if _, err := io.WriteString(w, `<div gs-component="modal">
-<div gs-component="modal">
     
     <div class="gs-modal-overlay gs-hidden" id="gs-modal-`); err != nil {
 			return err
@@ -573,7 +559,6 @@ to {
             </div>
         </div>
     </div>
-</div>
 </div>`); err != nil {
 			return err
 		}
@@ -723,6 +708,6 @@ to {
 		return nil
 	})
 
-	ui.RegisterAssetURLs("/assets/css/gostack.css?v=3cd2a51f", "/assets/js/gostack.js?v=b3943017")
+	ui.RegisterAssetURLs("/assets/css/gostack.css?v=3cd2a51f", "/assets/js/gostack.js?v=951cc785")
 
 }

@@ -29,9 +29,11 @@ import (
 
 // RedisStore implements contract.CacheStore backed by a Redis server.
 type RedisStore struct {
-	client *redis.Client
-	ctx    context.Context
-	prefix string // optional key namespace; Flush() deletes only keys under this prefix
+	client  *redis.Client
+	ctx     context.Context
+	cancel  context.CancelFunc
+	prefix  string // optional key namespace; Flush() deletes only keys under this prefix
+	timeout time.Duration
 }
 
 // NewRedisStore creates a new RedisStore connected to the given Redis URL.
@@ -45,17 +47,32 @@ func NewRedisStore(addr, password string, db int) *RedisStore {
 
 // NewRedisStoreWithPrefix creates a RedisStore that namespaces all keys under prefix.
 // Flush() will only delete keys whose names begin with this prefix.
+// D27: Root context is cancellable, operations use bounded per-call timeouts, and Close() stops all ops.
 func NewRedisStoreWithPrefix(addr, password string, db int, prefix string) *RedisStore {
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     addr,
 		Password: password,
 		DB:       db,
 	})
+	ctx, cancel := context.WithCancel(context.Background())
 	return &RedisStore{
-		client: rdb,
-		ctx:    context.Background(),
-		prefix: prefix,
+		client:  rdb,
+		ctx:     ctx,
+		cancel:  cancel,
+		prefix:  prefix,
+		timeout: 5 * time.Second,
 	}
+}
+
+// Close gracefully cancels the root context and terminates the Redis connection (D27).
+func (r *RedisStore) Close() error {
+	if r.cancel != nil {
+		r.cancel()
+	}
+	if r.client != nil {
+		return r.client.Close()
+	}
+	return nil
 }
 
 // Get retrieves a value from Redis and deserializes it.

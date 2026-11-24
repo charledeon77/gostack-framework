@@ -55,6 +55,13 @@ type Command interface {
 	Execute(args []string) error
 }
 
+// DatabaseDependent is an optional interface that commands can implement
+// to declare whether they strictly require an active database connection.
+// D21: Placing the requirement on the command itself prevents command list drift.
+type DatabaseDependent interface {
+	RequiresDatabase() bool
+}
+
 // Kernel coordinates command registration and execution.
 type Kernel struct {
 	commands map[string]Command
@@ -75,6 +82,12 @@ func (k *Kernel) Register(cmd Command) error {
 	}
 	k.commands[cmd.Name()] = cmd
 	return nil
+}
+
+// Get returns the registered Command matching the given name, or false if not registered.
+func (k *Kernel) Get(name string) (Command, bool) {
+	cmd, exists := k.commands[name]
+	return cmd, exists
 }
 
 // Run executes the matched command based on terminal arguments.

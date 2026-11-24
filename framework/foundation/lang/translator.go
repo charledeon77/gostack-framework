@@ -33,28 +33,48 @@ type FileTranslator struct {
 	mu        sync.RWMutex
 	dict      map[string]map[string]string // locale -> key -> value
 	customDir string
+	warnings  []string
 }
 
 // NewTranslator constructs and loads a FileTranslator instance.
 // Core dictionaries are compiled into the binary; a parse failure there is a build defect
-// and must be logged in every environment. Custom dictionaries are operator input and their
-// errors are always logged loudly with the file name. (C27)
-func NewTranslator(customDir string) *FileTranslator {
+// and returns an error in every environment. Custom dictionaries are operator input:
+// errors are logged loudly with the file name and captured in Warnings() (C27).
+func NewTranslator(customDir string) (*FileTranslator, error) {
 	t := &FileTranslator{
 		dict:      make(map[string]map[string]string),
 		customDir: customDir,
+		warnings:  make([]string, 0),
 	}
 	if err := t.loadCore(); err != nil {
-		// Core dict failure is a build defect — always log, never swallow.
 		fmt.Printf("[Transios ERROR] Failed loading core translations: %v\n", err)
+		return nil, fmt.Errorf("transios: failed loading core translations: %w", err)
 	}
 	if customDir != "" {
 		if err := t.loadCustom(); err != nil {
-			// Custom dict failure is operator input — log loudly in every environment.
 			fmt.Printf("[Transios WARNING] Failed loading custom translations: %v\n", err)
+			t.warnings = append(t.warnings, err.Error())
 		}
 	}
+	return t, nil
+}
+
+// MustNewTranslator constructs a FileTranslator or panics if core translations fail to load.
+func MustNewTranslator(customDir string) *FileTranslator {
+	t, err := NewTranslator(customDir)
+	if err != nil {
+		panic(err)
+	}
 	return t
+}
+
+// Warnings returns all non-fatal warning messages encountered during custom dictionary loading.
+func (t *FileTranslator) Warnings() []string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	cpy := make([]string, len(t.warnings))
+	copy(cpy, t.warnings)
+	return cpy
 }
 
 // loadCore parses the core embedded translation dictionaries.

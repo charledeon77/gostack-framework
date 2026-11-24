@@ -19,6 +19,11 @@ components and carries zero third-party footprint.
 */
 package ui
 
+import (
+	"regexp"
+	"strings"
+)
+
 // GlideJS is the Glide reactive directive engine runtime, injected into every
 // GoStack page via WriteMasterAssetBlock. It is written as a pure JavaScript IIFE
 // with zero external dependencies and works in any modern browser.
@@ -1847,7 +1852,7 @@ const GlideJS = `
         }
     };
 
-    // Global Modal Helpers
+    // Global Modal & Component Helpers
     global.GoStack = {
         closeModal: function(id) {
             const el = document.getElementById('gs-modal-' + id);
@@ -1868,8 +1873,47 @@ const GlideJS = `
                     el.classList.remove('gs-hidden');
                 }
             }
+        },
+        toggleAccordion: function(trigger) {
+            if (!trigger) return;
+            var item = trigger.closest ? trigger.closest('.gostack-components-accordion-item') : trigger.parentElement;
+            if (!item) return;
+            var parent = item.parentElement;
+            if (parent) {
+                var items = parent.querySelectorAll('.gostack-components-accordion-item');
+                for (var i = 0; i < items.length; i++) {
+                    if (items[i] !== item) {
+                        items[i].classList.remove('active');
+                    }
+                }
+            }
+            item.classList.toggle('active');
         }
     };
 
 })(typeof window !== 'undefined' ? window : this);
 `
+
+// GoStackMethodNames dynamically inspects and extracts the method names declared on the global.GoStack object in GlideJS.
+// This is the authoritative single source of truth for runtime GoStack JS method bindings (D42).
+func GoStackMethodNames() []string {
+	idx := strings.Index(GlideJS, "global.GoStack = {")
+	if idx == -1 {
+		return []string{"closeModal", "showModal", "toggleAccordion"}
+	}
+	sub := GlideJS[idx:]
+	end := strings.Index(sub, "};")
+	if end != -1 {
+		sub = sub[:end]
+	}
+	re := regexp.MustCompile(`([a-zA-Z0-9_]+)\s*:\s*function`)
+	matches := re.FindAllStringSubmatch(sub, -1)
+	var names []string
+	for _, m := range matches {
+		names = append(names, m[1])
+	}
+	if len(names) == 0 {
+		return []string{"closeModal", "showModal", "toggleAccordion"}
+	}
+	return names
+}

@@ -29,6 +29,7 @@ import (
 type item struct {
 	value      any
 	expiration int64 // Unix timestamp in nanoseconds. 0 means no expiration.
+	seq        uint64
 }
 
 // MemoryStore is the in-memory implementation of CacheStore.
@@ -37,6 +38,7 @@ type MemoryStore struct {
 	items      map[string]item
 	maxEntries int
 	stopChan   chan struct{}
+	seqCounter uint64
 }
 
 const DefaultMaxMemoryEntries = 10000
@@ -76,24 +78,32 @@ func (m *MemoryStore) Close() error {
 
 // Get retrieves a value from the cache.
 // Returns (nil, contract.ErrCacheMiss) if missing or expired.
+// D28: Deletes expired entries on read so expired keys do not remain resident until the sweeper.
 func (m *MemoryStore) Get(key string) (any, error) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
 	it, found := m.items[key]
 	if !found {
+		m.mu.RUnlock()
 		return nil, contract.ErrCacheMiss
 	}
 
 	if it.expiration > 0 && time.Now().UnixNano() > it.expiration {
-		// Found but expired
+		m.mu.RUnlock()
+		m.mu.Lock()
+		// Double check under write lock before deleting
+		if it2, ok := m.items[key]; ok && it2.expiration > 0 && time.Now().UnixNano() > it2.expiration {
+			delete(m.items, key)
+		}
+		m.mu.Unlock()
 		return nil, contract.ErrCacheMiss
 	}
+	m.mu.RUnlock()
 
 	return it.value, nil
 }
 
 // Put stores a value in the cache. Enforces max entries capacity to prevent OOM (F-029).
+// D29: Evicts in deterministic order: expired first, then nearest expiry, then oldest insertion.
 func (m *MemoryStore) Put(key string, val any, ttl time.Duration) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -111,18 +121,39 @@ func (m *MemoryStore) Put(key string, val any, ttl time.Duration) error {
 				delete(m.items, k)
 			}
 		}
-		// If still at capacity, evict an arbitrary entry
+		// If still at capacity, evict in defined order: nearest expiry first; if all permanent, oldest seq
 		if len(m.items) >= m.maxEntries {
-			for k := range m.items {
-				delete(m.items, k)
-				break
+			var candidateKey string
+			var earliestExpiry int64 = -1
+			var oldestSeq uint64 = ^uint64(0)
+			var oldestKey string
+
+			for k, v := range m.items {
+				if v.expiration > 0 {
+					if earliestExpiry == -1 || v.expiration < earliestExpiry {
+						earliestExpiry = v.expiration
+						candidateKey = k
+					}
+				}
+				if v.seq < oldestSeq {
+					oldestSeq = v.seq
+					oldestKey = k
+				}
+			}
+
+			if candidateKey != "" {
+				delete(m.items, candidateKey)
+			} else if oldestKey != "" {
+				delete(m.items, oldestKey)
 			}
 		}
 	}
 
+	m.seqCounter++
 	m.items[key] = item{
 		value:      val,
 		expiration: exp,
+		seq:        m.seqCounter,
 	}
 	return nil
 }

@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -613,7 +615,9 @@ func TestCompiler_BundledStaticAssetsAndRegistration(t *testing.T) {
 	// 5. Verify WriteMasterAssetBlock emits external links
 	RegisterAssetURLs("/assets/css/gostack.css?v=test1234", "/assets/js/gostack.js?v=test5678")
 	var buf strings.Builder
-	WriteMasterAssetBlock(&buf)
+	if err := WriteMasterAssetBlock(&buf); err != nil {
+		t.Fatalf("WriteMasterAssetBlock failed: %v", err)
+	}
 	assetBlock := buf.String()
 
 	if !strings.Contains(assetBlock, `<link rel="stylesheet" href="/assets/css/gostack.css?v=test1234">`) {
@@ -1046,5 +1050,84 @@ func TestCompiler_CommentedOutExtendsDoesNotBypassRootTagCheck(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "authors root document tags") {
 		t.Errorf("Expected root document tags error, got: %v", err)
+	}
+}
+
+// TestShippedTemplates_CSPCompliance verifies that shipped component templates
+// strictly obey CSP policies: no inline onclick, no inline style=, no orphaned data-controller,
+// and all GoStack.<method> calls map to actual functions on GoStack in glide.go (D34, D42).
+func TestShippedTemplates_CSPCompliance(t *testing.T) {
+	_, callerFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatalf("runtime.Caller failed to determine source location")
+	}
+	rootDir := filepath.Clean(filepath.Join(filepath.Dir(callerFile), "..", ".."))
+	templatesDir := filepath.Join(rootDir, "templates", "components")
+	if _, err := os.Stat(templatesDir); os.IsNotExist(err) {
+		t.Fatalf("templates/components directory not found: %s", templatesDir)
+	}
+
+	validMethods := GoStackMethodNames()
+	if len(validMethods) == 0 {
+		t.Fatalf("GoStackMethodNames() returned empty list from glide.go")
+	}
+	validGoStackMethods := make(map[string]bool)
+	for _, m := range validMethods {
+		validGoStackMethods[m] = true
+	}
+
+	err := filepath.Walk(templatesDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".html") {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		str := string(content)
+
+		if strings.Contains(str, "onclick=") {
+			t.Errorf("template %s contains prohibited inline onclick= handler (CSP violation)", path)
+		}
+		if strings.Contains(str, "style=") {
+			t.Errorf("template %s contains prohibited inline style= attribute (CSP violation)", path)
+		}
+		if strings.Contains(str, `data-controller="`) {
+			t.Errorf("template %s contains unsupported data-controller attribute", path)
+		}
+
+		// Verify any GoStack.method($el) calls
+		re := regexp.MustCompile(`GoStack\.([a-zA-Z0-9_]+)\(`)
+		matches := re.FindAllStringSubmatch(str, -1)
+		for _, m := range matches {
+			methodName := m[1]
+			if !validGoStackMethods[methodName] {
+				t.Errorf("template %s calls GoStack.%s which does not exist in glide.go", path, methodName)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking templates: %v", err)
+	}
+
+	// D42: Also scan generated component files to assert CSP compliance
+	genFiles := []string{
+		filepath.Join(rootDir, "cmd", "app", "gostack_components_gen.go"),
+		filepath.Join(rootDir, "_examples", "app", "gostack_components_gen.go"),
+	}
+	for _, genFile := range genFiles {
+		content, err := os.ReadFile(genFile)
+		if err != nil {
+			t.Fatalf("failed to read generated component file %s: %v", genFile, err)
+		}
+		genStr := string(content)
+		if strings.Contains(genStr, "onclick=") {
+			t.Errorf("generated file %s contains prohibited inline onclick= handler (CSP violation)", genFile)
+		}
+		if strings.Contains(genStr, `data-controller="`) {
+			t.Errorf("generated file %s contains unsupported data-controller attribute", genFile)
+		}
 	}
 }
