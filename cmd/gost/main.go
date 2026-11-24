@@ -28,6 +28,7 @@ import (
 	"os/exec"
 	"runtime"
 	"runtime/debug"
+	"strings"
 
 	"github.com/charledeon77/gostack-framework/framework/console"
 )
@@ -87,10 +88,14 @@ func main() {
 	// Handle upgrade command — works from anywhere, updates the global CLI.
 	if commandName == "upgrade" || commandName == "update" {
 		fmt.Println("\033[1;36m⚙ Checking for GoStack updates...\033[0m")
-		// F-267: Pin to current release or latest stable release tag
-		targetPkg := "github.com/charledeon77/gostack-framework/cmd/gost@v" + getVersion()
-		if getVersion() == "dev" {
-			targetPkg = "github.com/charledeon77/gostack-framework/cmd/gost@latest"
+		// F-267: Normalize version string and pin to release tag or fallback to latest
+		ver := getVersion()
+		targetPkg := "github.com/charledeon77/gostack-framework/cmd/gost@latest"
+		if ver != "" && ver != "dev" && ver != "(devel)" {
+			if !strings.HasPrefix(ver, "v") {
+				ver = "v" + ver
+			}
+			targetPkg = "github.com/charledeon77/gostack-framework/cmd/gost@" + ver
 		}
 		updateCmd := exec.Command("go", "install", targetPkg)
 		updateCmd.Stdout = os.Stdout

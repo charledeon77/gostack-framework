@@ -36,14 +36,19 @@ type FileTranslator struct {
 }
 
 // NewTranslator constructs and loads a FileTranslator instance.
+// In non-production environments, it logs warnings if dictionary loading encounters syntax or file read errors.
 func NewTranslator(customDir string) *FileTranslator {
 	t := &FileTranslator{
 		dict:      make(map[string]map[string]string),
 		customDir: customDir,
 	}
-	t.loadCore()
+	if err := t.loadCore(); err != nil && os.Getenv("APP_ENV") != "production" {
+		fmt.Printf("[Transios Warning] Failed loading core translations: %v\n", err)
+	}
 	if customDir != "" {
-		t.loadCustom()
+		if err := t.loadCustom(); err != nil && os.Getenv("APP_ENV") != "production" {
+			fmt.Printf("[Transios Warning] Failed loading custom translations: %v\n", err)
+		}
 	}
 	return t
 }

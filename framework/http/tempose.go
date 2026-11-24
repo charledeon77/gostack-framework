@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"strings"
 	"sync"
 
 	"github.com/charledeon77/gostack-framework/framework/ui"
@@ -82,25 +81,52 @@ func (t *Tempose) Render(w io.Writer, name string, data any, trans ViewTranslato
 		return err
 	}
 	
-	html := buf.String()
-	// F-106: use LastIndex to target the document's actual closing </head> tag rather than a false match in comments
-	if idx := strings.LastIndex(strings.ToLower(html), "</head>"); idx != -1 {
+	htmlBytes := buf.Bytes()
+	// F-106: case-insensitive byte scan for </head> preserving exact byte indices
+	idx := findClosingHeadTag(htmlBytes)
+	if idx != -1 {
 		// Write everything up to </head>
-		if _, err := io.WriteString(w, html[:idx]); err != nil {
+		if _, err := w.Write(htmlBytes[:idx]); err != nil {
 			return err
 		}
 		// Write the master asset block (base styles + components CSS + GlideJS + component scripts)
 		ui.WriteMasterAssetBlock(w)
 		// Write the rest of the HTML (including the closing </head> tag)
-		if _, err := io.WriteString(w, html[idx:]); err != nil {
+		if _, err := w.Write(htmlBytes[idx:]); err != nil {
 			return err
 		}
 	} else {
 		// Fragment rendering (e.g. HTMX swaps or partials) — just stream straight to the writer
-		if _, err := io.WriteString(w, html); err != nil {
+		if _, err := w.Write(htmlBytes); err != nil {
 			return err
 		}
 	}
 	
 	return nil
+}
+
+// findClosingHeadTag locates the last case-insensitive occurrence of "</head>" without altering byte offsets.
+func findClosingHeadTag(b []byte) int {
+	target := []byte("</head>")
+	targetLen := len(target)
+	if len(b) < targetLen {
+		return -1
+	}
+	for i := len(b) - targetLen; i >= 0; i-- {
+		match := true
+		for j := 0; j < targetLen; j++ {
+			c := b[i+j]
+			if c >= 'A' && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			if c != target[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
 }

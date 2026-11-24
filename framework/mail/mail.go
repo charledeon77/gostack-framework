@@ -41,6 +41,7 @@ import (
 	"fmt"
 	"mime"
 	"net"
+	netmail "net/mail"
 	"net/smtp"
 	"os"
 	"path/filepath"
@@ -101,32 +102,45 @@ func validateHeaderField(name, val string) error {
 	return nil
 }
 
-// Validate checks all message headers for header-injection characters (SEC-06).
+func validateEmailAddress(name, addr string) error {
+	if err := validateHeaderField(name, addr); err != nil {
+		return err
+	}
+	if addr == "" {
+		return nil
+	}
+	if _, err := netmail.ParseAddress(addr); err != nil {
+		return fmt.Errorf("mail: invalid address in %q: %w", name, err)
+	}
+	return nil
+}
+
+// Validate checks all message headers for header-injection characters and address validity (A4, SEC-06).
 func (m *Mailer) Validate(msg Message) error {
 	if err := validateHeaderField("Subject", msg.Subject); err != nil {
 		return err
 	}
-	if err := validateHeaderField("FromAddress", m.cfg.FromAddress); err != nil {
+	if err := validateEmailAddress("FromAddress", m.cfg.FromAddress); err != nil {
 		return err
 	}
 	if err := validateHeaderField("FromName", m.cfg.FromName); err != nil {
 		return err
 	}
-	if err := validateHeaderField("ReplyTo", msg.ReplyTo); err != nil {
+	if err := validateEmailAddress("ReplyTo", msg.ReplyTo); err != nil {
 		return err
 	}
 	for _, to := range msg.To {
-		if err := validateHeaderField("To", to); err != nil {
+		if err := validateEmailAddress("To", to); err != nil {
 			return err
 		}
 	}
 	for _, cc := range msg.CC {
-		if err := validateHeaderField("Cc", cc); err != nil {
+		if err := validateEmailAddress("Cc", cc); err != nil {
 			return err
 		}
 	}
 	for _, bcc := range msg.BCC {
-		if err := validateHeaderField("Bcc", bcc); err != nil {
+		if err := validateEmailAddress("Bcc", bcc); err != nil {
 			return err
 		}
 	}
@@ -219,14 +233,16 @@ func (m *Mailer) Send(msg any) error {
 	}
 	defer client.Close()
 
-	// Handle STARTTLS if not already under SSL and not explicitly disabled
+	// Handle STARTTLS if not already under SSL and not explicitly disabled (F-035: zero value / default requires STARTTLS-or-fail)
 	if !isSSL && enc != "none" {
 		if ok, _ := client.Extension("STARTTLS"); ok {
 			if err := client.StartTLS(tlsConfig); err != nil {
 				return fmt.Errorf("mail: STARTTLS failed: %w", err)
 			}
-		} else if enc == "tls" || enc == "starttls" {
+		} else if enc != "" {
 			return fmt.Errorf("mail: STARTTLS required by configuration but not supported by server %s", m.cfg.Host)
+		} else {
+			return fmt.Errorf("mail: STARTTLS encryption required by default but not supported by server %s (specify Encryption: \"none\" to permit insecure plaintext)", m.cfg.Host)
 		}
 	}
 

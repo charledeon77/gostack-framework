@@ -16,24 +16,25 @@ table using atomic reserve-then-process logic. Failed jobs are tracked with
 attempt counts and moved to the failed_jobs table after exhausting retries.
 
 Required migrations:
-  CREATE TABLE jobs (
-      id           INTEGER PRIMARY KEY AUTO_INCREMENT,
-      queue        VARCHAR(128) NOT NULL DEFAULT 'default',
-      payload      TEXT         NOT NULL,
-      attempts     INTEGER      NOT NULL DEFAULT 0,
-      reserved_at  INTEGER      NULL,
-      available_at INTEGER      NOT NULL,
-      created_at   INTEGER      NOT NULL
-  );
 
-  CREATE TABLE failed_jobs (
-      id         INTEGER PRIMARY KEY AUTO_INCREMENT,
-      queue      VARCHAR(128) NOT NULL,
-      payload    TEXT         NOT NULL,
-      attempts   INTEGER      NOT NULL,
-      error      TEXT         NOT NULL,
-      failed_at  INTEGER      NOT NULL
-  );
+	CREATE TABLE jobs (
+	    id           INTEGER PRIMARY KEY AUTO_INCREMENT,
+	    queue        VARCHAR(128) NOT NULL DEFAULT 'default',
+	    payload      TEXT         NOT NULL,
+	    attempts     INTEGER      NOT NULL DEFAULT 0,
+	    reserved_at  INTEGER      NULL,
+	    available_at INTEGER      NOT NULL,
+	    created_at   INTEGER      NOT NULL
+	);
+
+	CREATE TABLE failed_jobs (
+	    id         INTEGER PRIMARY KEY AUTO_INCREMENT,
+	    queue      VARCHAR(128) NOT NULL,
+	    payload    TEXT         NOT NULL,
+	    attempts   INTEGER      NOT NULL,
+	    error      TEXT         NOT NULL,
+	    failed_at  INTEGER      NOT NULL
+	);
 
 Implementation:
 - DatabaseQueue: Implements contract.Queue using a *sql.DB backend.
@@ -65,10 +66,10 @@ type dbJobEnvelope struct {
 // It is safe for use across multiple worker instances.
 type DatabaseQueue struct {
 	db           *sql.DB
-	driver       string        // detected driver name: "postgres", "mysql", "sqlite", etc.
-	table        string        // jobs table name
-	failedTable  string        // failed_jobs table name
-	queue        string        // logical queue name (allows multiple queues in one table)
+	driver       string // detected driver name: "postgres", "mysql", "sqlite", etc.
+	table        string // jobs table name
+	failedTable  string // failed_jobs table name
+	queue        string // logical queue name (allows multiple queues in one table)
 	pollInterval time.Duration
 	registry     map[string]func() contract.Job // job name → constructor
 	mu           sync.RWMutex
@@ -322,7 +323,13 @@ func (q *DatabaseQueue) processNext(workerID int) error {
 	// Deserialise and run the job.
 	var env dbJobEnvelope
 	if err = json.Unmarshal([]byte(payload), &env); err != nil {
-		q.deleteJob(jobID)
+		// B5: Move corrupt job to failed list rather than deleting silently
+		_, _ = q.db.Exec(
+			fmt.Sprintf(`INSERT INTO %s (queue, payload, attempts, error, failed_at) VALUES (%s, %s, %s, %s, %s)`,
+				q.failedTable, q.ph(1), q.ph(2), q.ph(3), q.ph(4), q.ph(5)),
+			q.queue, payload, attempts, fmt.Sprintf("corrupt job payload: %v", err), time.Now().Unix(),
+		)
+		_ = q.deleteJob(jobID)
 		return fmt.Errorf("corrupt job payload (id=%d): %w", jobID, err)
 	}
 
@@ -331,13 +338,25 @@ func (q *DatabaseQueue) processNext(workerID int) error {
 	q.mu.RUnlock()
 
 	if !ok {
-		q.deleteJob(jobID)
+		// B5: Move unregistered job to failed list rather than deleting silently
+		_, _ = q.db.Exec(
+			fmt.Sprintf(`INSERT INTO %s (queue, payload, attempts, error, failed_at) VALUES (%s, %s, %s, %s, %s)`,
+				q.failedTable, q.ph(1), q.ph(2), q.ph(3), q.ph(4), q.ph(5)),
+			q.queue, payload, attempts, fmt.Sprintf("no registered handler for job %q", env.Name), time.Now().Unix(),
+		)
+		_ = q.deleteJob(jobID)
 		return fmt.Errorf("no registered handler for job %q (id=%d)", env.Name, jobID)
 	}
 
 	job := constructor()
 	if err = json.Unmarshal(env.Payload, job); err != nil {
-		q.deleteJob(jobID)
+		// B5: Move unhydratable job to failed list rather than deleting silently
+		_, _ = q.db.Exec(
+			fmt.Sprintf(`INSERT INTO %s (queue, payload, attempts, error, failed_at) VALUES (%s, %s, %s, %s, %s)`,
+				q.failedTable, q.ph(1), q.ph(2), q.ph(3), q.ph(4), q.ph(5)),
+			q.queue, payload, attempts, fmt.Sprintf("failed to hydrate job %q: %v", env.Name, err), time.Now().Unix(),
+		)
+		_ = q.deleteJob(jobID)
 		return fmt.Errorf("failed to hydrate job %q (id=%d): %w", env.Name, jobID, err)
 	}
 
@@ -386,7 +405,12 @@ func (q *DatabaseQueue) processNext(workerID int) error {
 		fmt.Printf("[DatabaseQueue Worker %d] Job %s permanently failed: %v\n", workerID, env.Name, runErr)
 	}
 
-	return q.deleteJob(jobID)
+	if err := q.deleteJob(jobID); err != nil {
+		// B4: If delete fails, release the job so it isn't permanently stranded
+		_, _ = q.db.Exec(fmt.Sprintf(`UPDATE %s SET reserved_at = NULL WHERE id = %s`, q.table, q.ph(1)), jobID)
+		return err
+	}
+	return nil
 }
 
 func (q *DatabaseQueue) deleteJob(id int64) error {

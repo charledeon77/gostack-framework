@@ -11,21 +11,20 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/charledeon77/gostack-framework/framework/contract"
 )
 
 const adminCSRFCookieName = "admin_csrf"
 
-func getOrSetAdminCSRF(w http.ResponseWriter, r *http.Request) string {
+func getOrSetAdminCSRF(w http.ResponseWriter, r *http.Request) (string, error) {
 	cookie, err := r.Cookie(adminCSRFCookieName)
 	if err == nil && cookie.Value != "" {
-		return cookie.Value
+		return cookie.Value, nil
 	}
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		return hex.EncodeToString([]byte(fmt.Sprintf("%d-%d", time.Now().UnixNano(), os.Getpid())))
+		return "", fmt.Errorf("admin: failed to generate secure CSRF token: %w", err)
 	}
 	token := hex.EncodeToString(b)
 	http.SetCookie(w, &http.Cookie{
@@ -36,7 +35,7 @@ func getOrSetAdminCSRF(w http.ResponseWriter, r *http.Request) string {
 		SameSite: http.SameSiteLaxMode,
 		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
 	})
-	return token
+	return token, nil
 }
 
 func verifyAdminCSRF(r *http.Request) bool {
@@ -87,7 +86,15 @@ func isSensitiveColumn(colName string) bool {
 		strings.Contains(lower, "totp")
 }
 
+func isAutoManagedColumn(colName string) bool {
+	lower := strings.ToLower(colName)
+	return lower == "id" || lower == "created_at" || lower == "updated_at" || lower == "deleted_at"
+}
+
 func Mount(mux *http.ServeMux, db *sql.DB, prefix string) error {
+	if db == nil {
+		return fmt.Errorf("admin: database connection cannot be nil")
+	}
 	if prefix == "" {
 		prefix = "/admin"
 	}
@@ -111,7 +118,11 @@ func Mount(mux *http.ServeMux, db *sql.DB, prefix string) error {
 		path := strings.TrimPrefix(r.URL.Path, prefix)
 		parts := strings.Split(strings.Trim(path, "/"), "/")
 
-		csrfToken := getOrSetAdminCSRF(w, r)
+		csrfToken, err := getOrSetAdminCSRF(w, r)
+		if err != nil {
+			http.Error(w, "500 Internal Server Error: Failed to initialize CSRF token", http.StatusInternalServerError)
+			return
+		}
 		if r.Method == http.MethodPost {
 			if !verifyAdminCSRF(r) {
 				http.Error(w, "403 Forbidden: Invalid or missing CSRF token", http.StatusForbidden)
@@ -187,7 +198,8 @@ func handleList(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, c
 		}
 		if err := rows.Scan(ptrs...); err != nil {
 			log.Printf("[GoStack Admin] Scan error: %v", err)
-			continue
+			http.Error(w, fmt.Sprintf("500 Internal Server Error: Failed to scan row: %v", err), http.StatusInternalServerError)
+			return
 		}
 		tableRows += "<tr>"
 		var id any
@@ -207,6 +219,8 @@ func handleList(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, c
 	}
 	if err := rows.Err(); err != nil {
 		log.Printf("[GoStack Admin] Row iteration error: %v", err)
+		http.Error(w, fmt.Sprintf("500 Internal Server Error: Row iteration error: %v", err), http.StatusInternalServerError)
+		return
 	}
 
 	var headers string
@@ -227,15 +241,21 @@ func handleCreate(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName,
 	}
 
 	if r.Method == http.MethodPost {
-		r.ParseForm()
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "400 Bad Request: Malformed form body", http.StatusBadRequest)
+			return
+		}
 		setClauses := []string{}
 		args := []any{}
 		isPg := isPostgresDB(db)
 		for _, col := range entry.Columns {
-			if col.Name == "id" {
+			if isAutoManagedColumn(col.Name) {
 				continue
 			}
 			val := r.FormValue(col.Name)
+			if val == "" && isSensitiveColumn(col.Name) {
+				continue
+			}
 			setClauses = append(setClauses, col.Name)
 			args = append(args, val)
 		}

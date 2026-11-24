@@ -226,8 +226,10 @@ func (q *RedisQueue) runDelayedScheduler() {
 				continue
 			}
 			for _, job := range jobs {
-				q.client.LPush(q.ctx, redisQueueKey, job)
-				q.client.ZRem(q.ctx, redisDelayedKey, job)
+				// B6: only remove from delayed sorted set if LPush succeeded
+				if err := q.client.LPush(q.ctx, redisQueueKey, job).Err(); err == nil {
+					q.client.ZRem(q.ctx, redisDelayedKey, job)
+				}
 			}
 		}
 	}

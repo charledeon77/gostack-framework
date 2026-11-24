@@ -1,9 +1,11 @@
 package auth
 
 import (
-	"github.com/charledeon77/gostack-framework/framework/contract"
 	"reflect"
 	"strings"
+	"sync"
+
+	"github.com/charledeon77/gostack-framework/framework/contract"
 )
 
 // Policy defines a callback function to determine if a user has access to a specific resource.
@@ -11,6 +13,7 @@ type Policy func(user contract.Authenticatable, model any) bool
 
 // Gate manages permissions and policies.
 type Gate struct {
+	mu        sync.RWMutex
 	abilities map[string]func(user contract.Authenticatable, args ...any) bool
 	policies  map[string]Policy
 }
@@ -25,16 +28,23 @@ func NewGate() *Gate {
 
 // Define registers a named ability callback.
 func (g *Gate) Define(ability string, fn func(user contract.Authenticatable, args ...any) bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.abilities[ability] = fn
 }
 
 // RegisterPolicy registers a policy for a specific resource type name (e.g. "post").
 func (g *Gate) RegisterPolicy(resourceName string, policy Policy) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.policies[strings.ToLower(resourceName)] = policy
 }
 
 // Allows checks if the given user is allowed to perform the ability.
 func (g *Gate) Allows(user contract.Authenticatable, ability string, args ...any) bool {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
 	if fn, ok := g.abilities[ability]; ok {
 		return fn(user, args...)
 	}

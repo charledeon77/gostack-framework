@@ -111,7 +111,7 @@ function toggleAccordion(trigger) {
 		if _, err := io.WriteString(w, `<div gs-component="accordion">
 <div class="gostack-components-accordion" data-controller="accordion">
               <div class="gostack-components-accordion-item active">
-                <button class="gostack-components-accordion-trigger" data-action="toggle">
+                <button class="gostack-components-accordion-trigger" onclick="toggleAccordion(this)">
                   <span>Premium System Architecture</span>
                   <span class="gostack-components-accordion-icon">▼</span>
                 </button>
@@ -122,7 +122,7 @@ function toggleAccordion(trigger) {
                 </div>
               </div>
               <div class="gostack-components-accordion-item">
-                <button class="gostack-components-accordion-trigger" data-action="toggle">
+                <button class="gostack-components-accordion-trigger" onclick="toggleAccordion(this)">
                   <span>Decentralized Databases</span>
                   <span class="gostack-components-accordion-icon">▼</span>
                 </button>
@@ -205,10 +205,10 @@ function toggleAccordion(trigger) {
 		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "variant"))); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(w, `" data-action="`); err != nil {
+		if _, err := io.WriteString(w, `" gs-click="`); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "action"))); err != nil {
+		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "onClick"))); err != nil {
 			return err
 		}
 		if _, err := io.WriteString(w, `">
@@ -543,13 +543,13 @@ to {
 			return err
 		}
 		if _, err := io.WriteString(w, `</h3>
-                <button class="gs-modal-close" data-action="close" data-target="`); err != nil {
+                <button class="gs-modal-close" gs-click="GoStack.closeModal('`); err != nil {
 			return err
 		}
 		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "id"))); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(w, `">&times;</button>
+		if _, err := io.WriteString(w, `')">&times;</button>
             </div>
             
             <div class="gs-modal-body">

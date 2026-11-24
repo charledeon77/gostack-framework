@@ -150,10 +150,15 @@ func (s *LocalStorage) PutStream(path string, r io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("storage: failed to open target file for writing: %w", err)
 	}
-	defer f.Close()
 
 	if _, err := io.Copy(f, r); err != nil {
+		_ = f.Close()
 		return fmt.Errorf("storage: failed to write stream to file: %w", err)
+	}
+
+	// C22: explicitly verify Close() error on flush
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("storage: failed to flush file to disk: %w", err)
 	}
 
 	return nil

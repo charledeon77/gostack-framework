@@ -111,6 +111,7 @@ func (m *RememberMeManager) ValidateAndRotate(w http.ResponseWriter, cookieVal s
 
 	if time.Now().After(stored.ExpiresAt) {
 		delete(m.tokens, series)
+		m.removeUserSeries(stored.UserID, series)
 		return "", errors.New("remember token expired")
 	}
 
@@ -156,7 +157,10 @@ func (m *RememberMeManager) Revoke(w http.ResponseWriter, cookieVal string) {
 	if len(parts) == 2 {
 		series := parts[0]
 		m.mu.Lock()
-		delete(m.tokens, series)
+		if stored, exists := m.tokens[series]; exists {
+			delete(m.tokens, series)
+			m.removeUserSeries(stored.UserID, series)
+		}
 		m.mu.Unlock()
 	}
 
@@ -183,4 +187,19 @@ func (m *RememberMeManager) revokeAllUnsafe(userID string) {
 		delete(m.tokens, s)
 	}
 	delete(m.userSeries, userID)
+}
+
+func (m *RememberMeManager) removeUserSeries(userID, series string) {
+	list := m.userSeries[userID]
+	filtered := list[:0]
+	for _, s := range list {
+		if s != series {
+			filtered = append(filtered, s)
+		}
+	}
+	if len(filtered) == 0 {
+		delete(m.userSeries, userID)
+	} else {
+		m.userSeries[userID] = filtered
+	}
 }

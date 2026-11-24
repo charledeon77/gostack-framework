@@ -732,23 +732,23 @@ func (qb *QueryBuilder) OrderBy(col, dir string) *QueryBuilder {
 	return qb
 }
 
-// Limit caps the number of rows returned.
-//
-// Example:
-//
-//	gostack.Table("posts").Limit(10).Get(&posts)
+// Limit caps the number of rows returned. Pass a negative integer (e.g. -1) to explicitly remove any limit.
 func (qb *QueryBuilder) Limit(n int) *QueryBuilder {
-	qb.limitVal = n
+	if n < 0 {
+		qb.limitVal = -1
+	} else {
+		qb.limitVal = n
+	}
 	return qb
 }
 
-// Offset skips the first n rows before returning results.
-//
-// Example:
-//
-//	gostack.Table("posts").Limit(10).Offset(20).Get(&posts)
+// Offset skips the first n rows before returning results. Pass 0 or a negative number to omit offset.
 func (qb *QueryBuilder) Offset(n int) *QueryBuilder {
-	qb.offsetVal = n
+	if n < 0 {
+		qb.offsetVal = 0
+	} else {
+		qb.offsetVal = n
+	}
 	return qb
 }
 
@@ -844,6 +844,30 @@ func (qb *QueryBuilder) UpdateModel(model any, data map[string]any) error {
 		if bs, ok := model.(BeforeSaver); ok {
 			if err := bs.BeforeSave(); err != nil {
 				return fmt.Errorf("[Crafter] BeforeSave hook failed: %w", err)
+			}
+			// Re-extract mutated fields from the model into the data map
+			modelVal := reflect.ValueOf(model)
+			if modelVal.Kind() == reflect.Ptr {
+				modelVal = modelVal.Elem()
+			}
+			if modelVal.Kind() == reflect.Struct {
+				modelType := modelVal.Type()
+				for col := range data {
+					for i := 0; i < modelType.NumField(); i++ {
+						field := modelType.Field(i)
+						dbTag := field.Tag.Get("db")
+						if dbTag == "" {
+							dbTag = strings.ToLower(field.Name)
+						}
+						if dbTag == col {
+							fVal := modelVal.Field(i)
+							if fVal.CanInterface() {
+								data[col] = fVal.Interface()
+							}
+							break
+						}
+					}
+				}
 			}
 		}
 	}
@@ -994,6 +1018,8 @@ func (qb *QueryBuilder) With(relations ...string) *QueryBuilder {
 }
 
 // WhereIn adds a "WHERE col IN (?, ?, ...)" clause to the query state.
+// Values are automatically partitioned into chunks of 500 (combined with OR)
+// to prevent exceeding database driver parameter placeholder limits.
 func (qb *QueryBuilder) WhereIn(col string, vals []any) *QueryBuilder {
 	if !columnRegex.MatchString(col) {
 		qb.setErr(fmt.Errorf("[Crafter] invalid column identifier in WhereIn: %q", col))
@@ -1004,23 +1030,41 @@ func (qb *QueryBuilder) WhereIn(col string, vals []any) *QueryBuilder {
 		return qb
 	}
 
-	var placeholders []string
 	wdrv := ""
 	if qb.db != nil {
 		wdrv = qb.db.Driver()
 	}
-	for _, val := range vals {
-		var placeholder string
-		if wdrv == "postgres" || wdrv == "cockroach" || wdrv == "cockroachdb" {
-			placeholder = fmt.Sprintf("$%d", len(qb.bindings)+1)
-		} else {
-			placeholder = "?"
+
+	const chunkSize = 500
+	var clauses []string
+
+	for start := 0; start < len(vals); start += chunkSize {
+		end := start + chunkSize
+		if end > len(vals) {
+			end = len(vals)
 		}
-		placeholders = append(placeholders, placeholder)
-		qb.bindings = append(qb.bindings, val)
+		chunk := vals[start:end]
+
+		var placeholders []string
+		for _, val := range chunk {
+			var placeholder string
+			if wdrv == "postgres" || wdrv == "cockroach" || wdrv == "cockroachdb" {
+				placeholder = fmt.Sprintf("$%d", len(qb.bindings)+1)
+			} else {
+				placeholder = "?"
+			}
+			placeholders = append(placeholders, placeholder)
+			qb.bindings = append(qb.bindings, val)
+		}
+		clauses = append(clauses, fmt.Sprintf("%s IN (%s)", col, strings.Join(placeholders, ", ")))
 	}
 
-	qb.where = append(qb.where, fmt.Sprintf("%s IN (%s)", col, strings.Join(placeholders, ", ")))
+	if len(clauses) == 1 {
+		qb.where = append(qb.where, clauses[0])
+	} else {
+		qb.where = append(qb.where, "("+strings.Join(clauses, " OR ")+")")
+	}
+
 	return qb
 }
 

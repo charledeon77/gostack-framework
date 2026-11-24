@@ -27,6 +27,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"fmt"
 	netHTTP "net/http"
 	"os"
 	"strings"
@@ -112,14 +113,16 @@ func CSRF(cookieName string) http.Middleware {
 }
 
 // GenerateCSRFToken generates a cryptographically secure 32-byte hexadecimal CSRF token.
-func GenerateCSRFToken() string {
+// B9: Returns an empty string and error instead of panicking on entropy failure.
+func GenerateCSRFToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		panic("csrf: failed to generate secure token")
+		return "", fmt.Errorf("csrf: failed to generate secure token: %w", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }
 
 func generateCSRFToken() string {
-	return GenerateCSRFToken()
+	token, _ := GenerateCSRFToken()
+	return token
 }

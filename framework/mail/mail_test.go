@@ -128,6 +128,7 @@ func TestMailer_Send(t *testing.T) {
 		Password:    "testpass",
 		FromAddress: "sender@gostack.dev",
 		FromName:    "GoStack Test",
+		Encryption:  "none",
 	}
 
 	mailer := NewMailer(cfg)

@@ -26,6 +26,7 @@ A `sync.WaitGroup` is used in StartWorkers to safely manage worker goroutines.
 package queue
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -48,6 +49,8 @@ type memoryJobEnvelope struct {
 type memoryFailedJob struct {
 	id       string
 	job      contract.Job
+	payload  string
+	attempts int
 	errorMsg string
 	failedAt time.Time
 }
@@ -184,9 +187,12 @@ func (q *MemoryQueue) worker(id int) {
 					if len(q.failedJobs) >= 1000 {
 						q.failedJobs = q.failedJobs[1:]
 					}
+					payloadBytes, _ := json.Marshal(e.job)
 					q.failedJobs = append(q.failedJobs, memoryFailedJob{
 						id:       fmt.Sprintf("mem-%d", time.Now().UnixNano()),
 						job:      e.job,
+						payload:  string(payloadBytes),
+						attempts: e.attempts,
 						errorMsg: err.Error(),
 						failedAt: time.Now(),
 					})
@@ -220,8 +226,8 @@ func (q *MemoryQueue) GetFailedJobs() ([]contract.FailedJob, error) {
 		jobs[i] = contract.FailedJob{
 			ID:       f.id,
 			Name:     f.job.Name(),
-			Payload:  "{}", 
-			Attempts: 1, 
+			Payload:  f.payload,
+			Attempts: f.attempts,
 			Error:    f.errorMsg,
 			FailedAt: f.failedAt,
 		}

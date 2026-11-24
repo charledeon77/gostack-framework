@@ -10,12 +10,12 @@ import (
 	"os"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 	"unicode"
 )
-
 
 // SafeHTML represents a string value that has already been sanitized and can be safely rendered as raw HTML.
 type SafeHTML string
@@ -78,10 +78,45 @@ func ApplyFilter(val any, filterName string, args ...string) string {
 		if ft.Kind() != reflect.Func {
 			return fmt.Sprint(val)
 		}
-		inArgs := []reflect.Value{reflect.ValueOf(val)}
+		inArgs := []reflect.Value{}
+		if ft.NumIn() > 0 {
+			firstParamType := ft.In(0)
+			if val == nil {
+				inArgs = append(inArgs, reflect.Zero(firstParamType))
+			} else {
+				vVal := reflect.ValueOf(val)
+				if vVal.Type().AssignableTo(firstParamType) {
+					inArgs = append(inArgs, vVal)
+				} else if vVal.Type().ConvertibleTo(firstParamType) {
+					inArgs = append(inArgs, vVal.Convert(firstParamType))
+				} else {
+					inArgs = append(inArgs, reflect.ValueOf(val))
+				}
+			}
+		}
 		for _, a := range args {
-			if ft.NumIn() > len(inArgs) {
-				inArgs = append(inArgs, reflect.ValueOf(a))
+			idx := len(inArgs)
+			if ft.NumIn() > idx {
+				targetType := ft.In(idx)
+				switch targetType.Kind() {
+				case reflect.Int, reflect.Int64, reflect.Int32, reflect.Int16, reflect.Int8:
+					if n, err := strconv.ParseInt(a, 10, 64); err == nil {
+						inArgs = append(inArgs, reflect.ValueOf(n).Convert(targetType))
+					} else {
+						inArgs = append(inArgs, reflect.Zero(targetType))
+					}
+				case reflect.Float64, reflect.Float32:
+					if f, err := strconv.ParseFloat(a, 64); err == nil {
+						inArgs = append(inArgs, reflect.ValueOf(f).Convert(targetType))
+					} else {
+						inArgs = append(inArgs, reflect.Zero(targetType))
+					}
+				case reflect.Bool:
+					b := a == "true" || a == "1"
+					inArgs = append(inArgs, reflect.ValueOf(b))
+				default:
+					inArgs = append(inArgs, reflect.ValueOf(a))
+				}
 			}
 		}
 		// Pad missing args with zero values
@@ -186,8 +221,6 @@ func FilterUpper(val any, _ ...string) string {
 func FilterLower(val any, _ ...string) string {
 	return strings.ToLower(fmt.Sprint(val))
 }
-
-
 
 // HotReloadClientJS provides the browser client SSE connection for development hot reloading.
 const HotReloadClientJS = `if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
@@ -314,7 +347,7 @@ func evaluateSingle(data any, field string) any {
 	if val.Kind() == reflect.Ptr {
 		val = val.Elem()
 	}
-	
+
 	switch val.Kind() {
 	case reflect.Map:
 		kv := reflect.ValueOf(field)

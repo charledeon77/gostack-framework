@@ -107,11 +107,10 @@ func (a *SQLAdapter) QueryContext(ctx context.Context, sqlString string, args ..
 	return rows, nil
 }
 
-// Query executes the provided SQL query with a default 30-second timeout context.
-// F-219: bounds unbounded queries while preserving rows reading capability.
+// Query executes the provided SQL query with a background context.
+// Caller is responsible for reading rows and closing them. Use QueryContext to specify explicit deadlines.
 func (a *SQLAdapter) Query(sqlString string, args ...any) (any, error) {
-	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
-	return a.QueryContext(ctx, sqlString, args...)
+	return a.QueryContext(context.Background(), sqlString, args...)
 }
 
 // ExecContext executes a SQL statement that returns no rows with a caller-supplied context.
@@ -209,10 +208,10 @@ func (t *SQLTx) QueryContext(ctx context.Context, sqlString string, args ...any)
 	return rows, nil
 }
 
-// Query executes a parameterized SQL query inside the transaction with a default 30-second timeout.
+// Query executes a parameterized SQL query inside the transaction with a background context.
+// Caller is responsible for reading rows and closing them. Use QueryContext to specify explicit deadlines.
 func (t *SQLTx) Query(sqlString string, args ...any) (any, error) {
-	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
-	return t.QueryContext(ctx, sqlString, args...)
+	return t.QueryContext(context.Background(), sqlString, args...)
 }
 
 // Commit finalizes the transaction.

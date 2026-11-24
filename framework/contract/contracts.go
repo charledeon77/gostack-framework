@@ -45,6 +45,9 @@ import (
 // SEC-46: Distinguishes between a genuine cache miss and an operational/network failure.
 var ErrCacheMiss = errors.New("cache: key not found")
 
+// ErrUserNotFound is returned when a requested user does not exist.
+var ErrUserNotFound = errors.New("auth: user not found")
+
 // Database defines the behaviors required for any database driver 
 // used within the framework. By using this interface, we ensure that
 // the QueryBuilder can interact with any database system that implements

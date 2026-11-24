@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 	netHTTP "net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -324,14 +325,14 @@ func (r *Router) URL(name string, params map[string]string) (string, error) {
 			if !ok {
 				return "", fmt.Errorf("missing parameter %q for route %q", paramKey, name)
 			}
-			parts[i] = val
+			parts[i] = url.PathEscape(val)
 		} else if strings.HasPrefix(part, "{") && strings.HasSuffix(part, "}") {
 			paramKey := part[1 : len(part)-1]
 			val, ok := params[paramKey]
 			if !ok {
 				return "", fmt.Errorf("missing parameter %q for route %q", paramKey, name)
 			}
-			parts[i] = val
+			parts[i] = url.PathEscape(val)
 		} else if part == "*" {
 			val, ok := params["*"]
 			if !ok {

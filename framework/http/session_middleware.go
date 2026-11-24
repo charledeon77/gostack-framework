@@ -32,15 +32,13 @@ package http
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
-	mrand "math/rand"
 	netHTTP "net/http"
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/charledeon77/gostack-framework/framework/contract"
 )
@@ -82,6 +80,9 @@ func SessionMiddleware(store contract.SessionStore, cookieName string) Middlewar
 		} else {
 			// Generate a fresh cryptographically secure session ID if missing, invalid format, or unknown in store
 			sessionID = generateSessionID()
+			if sessionID == "" {
+				return fmt.Errorf("session: failed to acquire cryptographic entropy")
+			}
 			isNewSession = true
 		}
 
@@ -129,11 +130,12 @@ func SessionMiddleware(store contract.SessionStore, cookieName string) Middlewar
 		// 6. Execute subsequent middlewares and handler controllers
 		err = next(ctx)
 
-		// 7. Persist session updates back to the storage adapter
+		// 7. Persist session updates back to the storage adapter (C4: Join errors if both handler and save fail)
 		if saveErr := store.Save(sess); saveErr != nil {
-			if err == nil {
-				return saveErr
+			if err != nil {
+				return errors.Join(err, saveErr)
 			}
+			return saveErr
 		}
 
 		return err
@@ -160,14 +162,12 @@ func GetSession(ctx *Context) contract.Session {
 }
 
 // generateSessionID builds a cryptographically secure 32-byte hexadecimal random token string.
-// If crypto/rand encounters a system error, it falls back to a time-seeded source (F-038) instead of panicking.
+// F-038: If crypto/rand encounters a system error, it fails closed by returning an empty string
+// instead of panicking or generating a weak, predictable pseudo-random identifier.
 func generateSessionID() string {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		// Fallback: mix high-resolution time with counter to ensure uniqueness without crashing the process
-		fallback := fmt.Sprintf("%x%x%x", os.Getpid(), time.Now().UnixNano(), mrand.Int63())
-		hash := sha256.Sum256([]byte(fallback))
-		return hex.EncodeToString(hash[:])
+		return ""
 	}
 	return hex.EncodeToString(b)
 }

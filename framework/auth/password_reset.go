@@ -32,6 +32,8 @@ type PasswordResetBroker struct {
 	throttle map[string]time.Time           // identifier -> last request time
 	ttl      time.Duration
 	cooldown time.Duration
+	stopChan chan struct{}
+	once     sync.Once
 }
 
 // NewPasswordResetBroker creates a broker with specified TTL and cooldown duration.
@@ -48,25 +50,39 @@ func NewPasswordResetBroker(ttl, cooldown time.Duration) *PasswordResetBroker {
 		throttle: make(map[string]time.Time),
 		ttl:      ttl,
 		cooldown: cooldown,
+		stopChan: make(chan struct{}),
 	}
 	// F-059: start a background sweeper to prevent expired entries from accumulating indefinitely.
 	go b.sweepLoop()
 	return b
 }
 
+// Close terminates the background sweeper goroutine.
+func (b *PasswordResetBroker) Close() {
+	b.once.Do(func() {
+		close(b.stopChan)
+	})
+}
+
 // sweepLoop periodically removes expired reset records and throttle entries.
 func (b *PasswordResetBroker) sweepLoop() {
 	ticker := time.NewTicker(5 * time.Minute)
-	for range ticker.C {
-		b.mu.Lock()
-		now := time.Now()
-		for id, rec := range b.records {
-			if now.After(rec.ExpiresAt) {
-				delete(b.records, id)
-				delete(b.throttle, id)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-b.stopChan:
+			return
+		case <-ticker.C:
+			b.mu.Lock()
+			now := time.Now()
+			for id, rec := range b.records {
+				if now.After(rec.ExpiresAt) {
+					delete(b.records, id)
+					delete(b.throttle, id)
+				}
 			}
+			b.mu.Unlock()
 		}
-		b.mu.Unlock()
 	}
 }
 
@@ -109,7 +125,8 @@ func (b *PasswordResetBroker) CreateToken(identifier string) (string, error) {
 }
 
 // VerifyToken checks whether a raw token matches the stored hash and is not expired.
-// Note: VerifyToken does not consume the token. For state-changing reset flows, use ConsumeToken (F-058).
+// Deprecated: VerifyToken does not consume the token and allows replay within the TTL window.
+// Production password reset flows MUST use ConsumeToken to guarantee single-use semantics (F-058).
 func (b *PasswordResetBroker) VerifyToken(identifier, rawToken string) (bool, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()

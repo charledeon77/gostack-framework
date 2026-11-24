@@ -59,7 +59,10 @@ func (c *DatabaseChannel) Send(notifiable any, notification Notification) error 
 	notificationType := fmt.Sprintf("%T", notification)
 
 	// Build secure transaction entry payload
-	notifID := generateUUID()
+	notifID, err := generateUUID()
+	if err != nil {
+		return err
+	}
 	now := time.Now().UTC()
 
 	// SEC-47: Use driver-aware placeholder syntax.
@@ -83,11 +86,11 @@ func (c *DatabaseChannel) Send(notifiable any, notification Notification) error 
 	return nil
 }
 
-// generateUUID creates a quick, unique hex-encoded identifier for notification rows.
-func generateUUID() string {
+// generateUUID creates a quick, unique hex-encoded identifier for notification rows (B10).
+func generateUUID() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		panic("failed to generate secure notification ID")
+		return "", fmt.Errorf("notification: failed to generate secure notification ID: %w", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }

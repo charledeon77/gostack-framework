@@ -188,6 +188,12 @@ func (g *SessionGuard) Login(w http.ResponseWriter, r *http.Request, user contra
 		}
 	}
 
+	targetSess.Set(g.sessionKey, user.GetID())
+	// B3: Save session state FIRST before emitting cookie to avoid orphaned browser cookies on save failure
+	if saveErr := store.Save(targetSess); saveErr != nil {
+		return saveErr
+	}
+
 	http.SetCookie(w, &http.Cookie{
 		Name:     cookieName,
 		Value:    targetSess.ID(),
@@ -198,10 +204,6 @@ func (g *SessionGuard) Login(w http.ResponseWriter, r *http.Request, user contra
 		MaxAge:   maxAge,
 	})
 
-	targetSess.Set(g.sessionKey, user.GetID())
-	if saveErr := store.Save(targetSess); saveErr != nil {
-		return saveErr
-	}
 	*r = *r.WithContext(context.WithValue(r.Context(), contract.SessionContextKey, targetSess))
 	cacheUser(r, user)
 	return nil

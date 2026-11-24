@@ -139,7 +139,12 @@ func (c *Connection) Read() {
 			continue
 		}
 
-		c.hub.Broadcast(msg)
+		// B12: Route through OnMessage if registered; fallback to hub.Broadcast for backwards compatibility
+		if c.hub.OnMessage != nil {
+			c.hub.OnMessage(c, msg)
+		} else {
+			c.hub.Broadcast(msg)
+		}
 	}
 }
 
@@ -157,6 +162,7 @@ type Hub struct {
 	broadcast  chan []byte
 	register   chan *Connection
 	unregister chan *Connection
+	OnMessage  func(conn *Connection, msg []byte)
 	mu         sync.RWMutex
 }
 

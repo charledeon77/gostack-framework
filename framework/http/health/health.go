@@ -55,7 +55,11 @@ func ReadinessHandler(db contract.Database, cache contract.CacheStore) http.Hand
 			} else if p, ok := db.(pinger); ok {
 				dbErr = p.Ping()
 			} else {
-				_, dbErr = db.QueryContext(ctx, "SELECT 1")
+				res, err := db.QueryContext(ctx, "SELECT 1")
+				dbErr = err
+				if closer, ok := res.(interface{ Close() error }); ok && closer != nil {
+					_ = closer.Close()
+				}
 			}
 			cancel()
 			if dbErr != nil {

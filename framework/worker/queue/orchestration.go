@@ -16,10 +16,17 @@ var (
 // RegisterJob binds a unique job name to a constructor factory function so that
 // serialized jobs (including nested jobs inside JobChain and JobBatch) can be
 // accurately reconstructed during queue polling and unmarshaling.
+// If the constructor produces a job whose Name() differs from the passed name,
+// both identifiers are bound to guarantee resolution consistency.
 func RegisterJob(name string, constructor func() contract.Job) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	globalRegistry[name] = constructor
+	if sample := constructor(); sample != nil {
+		if sampleName := sample.Name(); sampleName != "" && sampleName != name {
+			globalRegistry[sampleName] = constructor
+		}
+	}
 }
 
 // LookupJob retrieves the constructor factory associated with the specified job name.

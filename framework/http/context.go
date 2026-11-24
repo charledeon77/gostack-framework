@@ -94,8 +94,8 @@ func (c *Context) JSON(code int, data any) error {
 	}
 	c.Writer.Header().Set("Content-Type", "application/json")
 	c.Writer.WriteHeader(code)
-	_, _ = c.Writer.Write(buf)
-	return nil
+	_, err = c.Writer.Write(buf)
+	return err
 }
 
 // Query abstracts URL query string parameter resolution into a clean, predictable API.

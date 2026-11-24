@@ -3,8 +3,9 @@
         Accepts variables:
         - variant: 'primary', 'secondary', 'danger'
         - text: Button text 
+        - onClick: Click handler
     -->
-    <button class="gs-btn gs-btn-{{ .variant }}" data-action="{{ .action }}">
+    <button class="gs-btn gs-btn-{{ .variant }}" gs-click="{{ .onClick }}">
         {{ .text }}
     </button>
 </div>
