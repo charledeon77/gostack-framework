@@ -203,7 +203,7 @@ function toggleAccordion(trigger) {
         `); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "text"))); err != nil {
+		if _, err := io.WriteString(w, ui.Escape(ui.ApplyFilter(ui.EvaluateOptional(data, "text"), "default", ""))); err != nil {
 			return err
 		}
 		if _, err := io.WriteString(w, `
@@ -383,7 +383,7 @@ console.log('Counter component hydrated successfully');
 		<input type="hidden" name="_token" value="`); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "csrf_token"))); err != nil {
+		if _, err := io.WriteString(w, ui.Escape(ui.ApplyFilter(ui.EvaluateOptional(data, "csrf_token"), "default", ""))); err != nil {
 			return err
 		}
 		if _, err := io.WriteString(w, `" />
@@ -509,13 +509,13 @@ to {
     <div class="gs-modal-overlay gs-hidden" id="gs-modal-`); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "id"))); err != nil {
+		if _, err := io.WriteString(w, ui.Escape(ui.ApplyFilter(ui.EvaluateOptional(data, "id"), "default", "modal"))); err != nil {
 			return err
 		}
 		if _, err := io.WriteString(w, `" data-modal-id="`); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "id"))); err != nil {
+		if _, err := io.WriteString(w, ui.Escape(ui.ApplyFilter(ui.EvaluateOptional(data, "id"), "default", "modal"))); err != nil {
 			return err
 		}
 		if _, err := io.WriteString(w, `">
@@ -525,14 +525,14 @@ to {
                 <h3 class="gs-modal-title">`); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "title"))); err != nil {
+		if _, err := io.WriteString(w, ui.Escape(ui.ApplyFilter(ui.EvaluateOptional(data, "title"), "default", ""))); err != nil {
 			return err
 		}
 		if _, err := io.WriteString(w, `</h3>
                 <button class="gs-modal-close" gs-click="GoStack.closeModal('`); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "id"))); err != nil {
+		if _, err := io.WriteString(w, ui.Escape(ui.ApplyFilter(ui.EvaluateOptional(data, "id"), "default", "modal"))); err != nil {
 			return err
 		}
 		if _, err := io.WriteString(w, `')">&times;</button>
@@ -542,7 +542,7 @@ to {
                 `); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "content"))); err != nil {
+		if _, err := io.WriteString(w, ui.Escape(ui.ApplyFilter(ui.EvaluateOptional(data, "content"), "default", ""))); err != nil {
 			return err
 		}
 		if _, err := io.WriteString(w, `
@@ -679,7 +679,7 @@ to {
 		<input type="hidden" name="_token" value="`); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "csrf_token"))); err != nil {
+		if _, err := io.WriteString(w, ui.Escape(ui.ApplyFilter(ui.EvaluateOptional(data, "csrf_token"), "default", ""))); err != nil {
 			return err
 		}
 		if _, err := io.WriteString(w, `" />
@@ -694,7 +694,7 @@ to {
 		<div class="alert alert-danger">`); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "error"))); err != nil {
+		if _, err := io.WriteString(w, ui.Escape(ui.ApplyFilter(ui.EvaluateOptional(data, "error"), "default", ""))); err != nil {
 			return err
 		}
 		if _, err := io.WriteString(w, `</div>

@@ -2,17 +2,43 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"mime"
+	"mime/multipart"
 	netHTTP "net/http"
+	"net/url"
 	"os"
 	"runtime/debug"
 	"strconv"
 	"strings"
 )
+
+type multiBodyCloser struct {
+	io.Reader
+	closer io.Closer
+}
+
+func (m *multiBodyCloser) Close() error {
+	if m.closer != nil {
+		return m.closer.Close()
+	}
+	return nil
+}
+
+func maxRequestBodySize() int64 {
+	maxBody := int64(8 * 1024 * 1024) // 8MB default
+	if customSize := os.Getenv("MAX_REQUEST_BODY_SIZE"); customSize != "" {
+		if val, err := strconv.ParseInt(customSize, 10, 64); err == nil && val > 0 {
+			maxBody = val
+		}
+	}
+	return maxBody
+}
 
 type headResponseWriter struct {
 	netHTTP.ResponseWriter
@@ -77,12 +103,7 @@ func (e *Engine) ServeHTTP(w netHTTP.ResponseWriter, r *netHTTP.Request) {
 	}
 
 	// Enforce request body size limit (SEC-09 / D46)
-	maxBody := int64(8 * 1024 * 1024) // 8MB default
-	if customSize := os.Getenv("MAX_REQUEST_BODY_SIZE"); customSize != "" {
-		if val, err := strconv.ParseInt(customSize, 10, 64); err == nil && val > 0 {
-			maxBody = val
-		}
-	}
+	maxBody := maxRequestBodySize()
 	// D46: Reject oversized requests immediately by Content-Length before reading a single byte.
 	if r.ContentLength > maxBody {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -122,20 +143,46 @@ func (e *Engine) ServeHTTP(w netHTTP.ResponseWriter, r *netHTTP.Request) {
 	effectiveMethod := r.Method
 	effectiveWriter := w
 
-	// D46: At the boundary, validate only the multipart Content-Type header (media type + boundary)
-	// without buffering or reading the body. Actual body parsing belongs in routed/authenticated handlers.
+	// D46 / C26: Validate multipart Content-Type header (media type + boundary) without buffering,
+	// and validate application/x-www-form-urlencoded bodies for ALL mutating methods (POST/PUT/PATCH/DELETE).
+	var multipartBoundary string
 	if r.Method == netHTTP.MethodPost || r.Method == netHTTP.MethodPut || r.Method == netHTTP.MethodPatch || r.Method == netHTTP.MethodDelete {
 		ct := r.Header.Get("Content-Type")
-		if strings.Contains(strings.ToLower(ct), "multipart/form-data") {
+		lowerCT := strings.ToLower(ct)
+		if strings.Contains(lowerCT, "multipart/form-data") {
 			mediaType, params, parseErr := mime.ParseMediaType(ct)
 			if parseErr != nil || mediaType != "multipart/form-data" || params["boundary"] == "" {
 				_ = writeResponse(w, netHTTP.StatusBadRequest, []byte("400 Bad Request: Malformed multipart Content-Type header"))
 				return
 			}
+			multipartBoundary = params["boundary"]
+		} else if strings.Contains(lowerCT, "application/x-www-form-urlencoded") {
+			if r.Method == netHTTP.MethodDelete {
+				// Go's net/http Request.ParseForm() skips reading the body on DELETE;
+				// read and validate it explicitly (bounded by MaxBytesReader) and restore r.Body.
+				if r.Body != nil {
+					bodyBytes, readErr := io.ReadAll(r.Body)
+					if readErr != nil {
+						writeBodyOrFormError(readErr, "400 Bad Request: Malformed form body")
+						return
+					}
+					if _, parseErr := url.ParseQuery(string(bodyBytes)); parseErr != nil {
+						_ = writeResponse(w, netHTTP.StatusBadRequest, []byte("400 Bad Request: Malformed form body"))
+						return
+					}
+					r.Body = &multiBodyCloser{
+						Reader: bytes.NewReader(bodyBytes),
+						closer: r.Body,
+					}
+				}
+			} else if err := r.ParseForm(); err != nil {
+				writeBodyOrFormError(err, "400 Bad Request: Malformed form body")
+				return
+			}
 		}
 	}
 
-	// HTTP Method Spoofing (PAR-10): Allow POST forms with _method=PUT/PATCH/DELETE
+	// HTTP Method Spoofing (PAR-10 / D46): Allow POST forms with _method=PUT/PATCH/DELETE
 	// or X-HTTP-Method-Override header to match the overridden HTTP method.
 	if r.Method == netHTTP.MethodPost {
 		var override string
@@ -145,12 +192,36 @@ func (e *Engine) ServeHTTP(w netHTTP.ResponseWriter, r *netHTTP.Request) {
 			override = query
 		} else if r.PostForm != nil {
 			override = r.PostFormValue("_method")
-		} else if strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "application/x-www-form-urlencoded") {
-			if err := r.ParseForm(); err != nil {
-				writeBodyOrFormError(err, "400 Bad Request: Malformed form body")
-				return
+		} else if multipartBoundary != "" && r.Body != nil {
+			// D46: Peek only the first multipart part (1 KB cap) for _method, then rebuild r.Body
+			// with io.MultiReader so handlers still receive the full intact stream with zero temp files.
+			var peekBuf bytes.Buffer
+			origBody := r.Body
+			mr := multipart.NewReader(io.TeeReader(origBody, &peekBuf), multipartBoundary)
+			if part, partErr := mr.NextPart(); partErr == nil {
+				if part.FormName() == "_method" {
+					valBytes, readErr := io.ReadAll(io.LimitReader(part, 1024))
+					if readErr != nil {
+						var maxBytesErr *netHTTP.MaxBytesError
+						if errors.As(readErr, &maxBytesErr) {
+							_ = writeResponse(w, netHTTP.StatusRequestEntityTooLarge, []byte("413 Request Entity Too Large: request body exceeds configured limit"))
+							return
+						}
+					}
+					override = strings.TrimSpace(string(valBytes))
+				}
+				_ = part.Close()
+			} else {
+				var maxBytesErr *netHTTP.MaxBytesError
+				if errors.As(partErr, &maxBytesErr) {
+					_ = writeResponse(w, netHTTP.StatusRequestEntityTooLarge, []byte("413 Request Entity Too Large: request body exceeds configured limit"))
+					return
+				}
 			}
-			override = r.PostFormValue("_method")
+			r.Body = &multiBodyCloser{
+				Reader: io.MultiReader(bytes.NewReader(peekBuf.Bytes()), origBody),
+				closer: origBody,
+			}
 		}
 
 		if override != "" {

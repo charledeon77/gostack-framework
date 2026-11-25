@@ -407,13 +407,13 @@ func EvaluateOptional(data any, field string) any {
 	return res
 }
 
-// InlineStyle writes a CSP-nonce-protected <style> block to w (D44).
+// InlineStyle writes a CSP-nonce-protected style element to w (D44).
+// Returns an error when nonce is empty rather than emitting an unnonced block that CSP would reject.
 func InlineStyle(w io.Writer, nonce, css string) error {
-	if nonce != "" {
-		_, err := fmt.Fprintf(w, `<style nonce="%s">%s</style>`, html.EscapeString(nonce), css)
-		return err
+	if strings.TrimSpace(nonce) == "" {
+		return fmt.Errorf("ui.InlineStyle: CSP nonce is empty; refusing to emit unnonced style element")
 	}
-	_, err := fmt.Fprintf(w, `<style>%s</style>`, css)
+	_, err := fmt.Fprintf(w, `<style nonce="%s">%s</style>`, html.EscapeString(nonce), css)
 	return err
 }
 

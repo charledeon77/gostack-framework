@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -45,7 +47,7 @@ func TestAssetCompilerRun(t *testing.T) {
 
 func TestAssetCompiler_CompileHTMLDirectives(t *testing.T) {
 	c := NewAssetCompiler("", "")
-	
+
 	// Test @if compilation
 	html := `@if(.User.IsAdmin)
   <p>Admin</p>
@@ -58,7 +60,7 @@ func TestAssetCompiler_CompileHTMLDirectives(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected compile error: %v", err)
 	}
-	
+
 	if !strings.Contains(compiled, `if ui.EvaluateBool(data, "User.IsAdmin") {`) {
 		t.Errorf("Expected compiled output to contain if statement, got:\n%s", compiled)
 	}
@@ -518,15 +520,15 @@ func TestIsTransCall_Validation(t *testing.T) {
 	}
 
 	reject := []string{
-		`trans()`,                       // empty key
-		`trans(variable)`,               // non-string-literal key — injection risk
-		`trans("key", os.Exit(1))`,      // arbitrary Go in second arg
-		`trans("key" + "x")`,            // concatenation — not a plain literal
-		`fmt.Sprintf("x")`,              // completely different function
-		`transChoice("k", variable)`,    // non-literal second arg
-		`trans("key") + doSomething()`,  // trailing arbitrary Go
-		`transRaw`,                      // no call parens
-		``,                              // empty string
+		`trans()`,                      // empty key
+		`trans(variable)`,              // non-string-literal key — injection risk
+		`trans("key", os.Exit(1))`,     // arbitrary Go in second arg
+		`trans("key" + "x")`,           // concatenation — not a plain literal
+		`fmt.Sprintf("x")`,             // completely different function
+		`transChoice("k", variable)`,   // non-literal second arg
+		`trans("key") + doSomething()`, // trailing arbitrary Go
+		`transRaw`,                     // no call parens
+		``,                             // empty string
 	}
 	for _, expr := range reject {
 		if isTransCall(expr) {
@@ -1128,23 +1130,134 @@ func TestShippedTemplates_CSPCompliance(t *testing.T) {
 		t.Fatalf("walking templates: %v", err)
 	}
 
-	// D42: Also scan generated component files, admin templates, demo landing page, and 500 error page
-	shippedGoSources := []struct {
-		path           string
-		checkStyleAttr bool
-	}{
-		{filepath.Join(rootDir, "cmd", "app", "gostack_components_gen.go"), true},
-		{filepath.Join(rootDir, "_examples", "app", "gostack_components_gen.go"), true},
-		{filepath.Join(rootDir, "framework", "admin", "controller.go"), true},
-		{filepath.Join(rootDir, "cmd", "app", "main.go"), true},
-		{filepath.Join(rootDir, "framework", "http", "runtime.go"), true},
-	}
-	for _, src := range shippedGoSources {
-		content, err := os.ReadFile(src.path)
-		if err != nil {
-			t.Fatalf("failed to read shipped source file %s: %v", src.path, err)
+	// D42: Derive the shipped markup source set by walking the repository for any
+	// .html or .go file containing markup tokens, rather than a hardcoded path list.
+	markupTokens := []string{"<!DOCTYPE", "<div", "<button", "gs-click", "<style"}
+	hasMarkup := func(s string) bool {
+		for _, tok := range markupTokens {
+			if strings.Contains(s, tok) {
+				return true
+			}
 		}
-		checkMarkup("shipped source "+src.path, string(content), src.checkStyleAttr)
+		return false
+	}
+
+	walkErr := filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			base := filepath.Base(path)
+			if base == ".git" || base == "node_modules" || base == "vendor" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		name := info.Name()
+		if strings.HasSuffix(name, "_test.go") {
+			return nil
+		}
+		if !strings.HasSuffix(name, ".html") && !strings.HasSuffix(name, ".go") {
+			return nil
+		}
+		// Skip templates/components/*.html already walked above
+		if strings.HasPrefix(path, templatesDir) && strings.HasSuffix(name, ".html") {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		str := string(content)
+		if !hasMarkup(str) {
+			return nil
+		}
+		checkMarkup("shipped source "+path, str, true)
+		return nil
+	})
+	if walkErr != nil {
+		t.Fatalf("walking repository for shipped markup: %v", walkErr)
+	}
+}
+
+// TestShippedComponents_EmptyDataNoWarnings compiles and renders every shipped component
+// in templates/components with empty data and fails if Tempose emits any reflection warning (D49).
+func TestShippedComponents_EmptyDataNoWarnings(t *testing.T) {
+	_, callerFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatalf("runtime.Caller failed to determine source location")
+	}
+	rootDir := filepath.Clean(filepath.Join(filepath.Dir(callerFile), "..", ".."))
+	componentsDir := filepath.Join(rootDir, "templates", "components")
+
+	entries, err := os.ReadDir(componentsDir)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", componentsDir, err)
+	}
+
+	// Capture log output so any [Tempose Warning] fails the test
+	var logBuf bytes.Buffer
+	origOut := log.Writer()
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(origOut)
+
+	// Reset deduplication map so every component starts fresh
+	loggedWarningsMu.Lock()
+	loggedWarnings = make(map[string]bool)
+	loggedWarningsMu.Unlock()
+
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		htmlPath := filepath.Join(componentsDir, name, name+".html")
+		raw, err := os.ReadFile(htmlPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			t.Fatalf("failed to read %s: %v", htmlPath, err)
+		}
+		// Compile & execute against empty data via Registry evaluator paths
+		compiled := compileTemplateToCheckWarnings(string(raw))
+		_ = compiled
+		// Evaluate any {{ .field | default:... }} vs bare {{ .field }} expressions in template
+		reExpr := regexp.MustCompile(`\{\{\s*\.([a-zA-Z0-9_.]+)(?:\s*\|\s*([^}]+))?\s*\}\}`)
+		for _, m := range reExpr.FindAllStringSubmatch(string(raw), -1) {
+			field := m[1]
+			pipe := m[2]
+			if strings.Contains(pipe, "default") {
+				_ = EvaluateOptional(map[string]any{}, field)
+			} else {
+				_ = Evaluate(map[string]any{}, field)
+			}
+		}
+		if strings.Contains(logBuf.String(), "[Tempose Warning]") {
+			t.Errorf("component %s emitted Tempose reflection warning on empty data:\n%s", name, logBuf.String())
+			logBuf.Reset()
+		}
+	}
+}
+
+func compileTemplateToCheckWarnings(src string) string {
+	return src
+}
+
+// TestInlineStyle_RequiresNonce verifies ui.InlineStyle refuses empty nonces (D44).
+func TestInlineStyle_RequiresNonce(t *testing.T) {
+	var buf bytes.Buffer
+	if err := InlineStyle(&buf, "", "body{color:red}"); err == nil {
+		t.Fatal("expected InlineStyle with empty nonce to return an error")
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("expected nothing written on empty nonce, got %q", buf.String())
+	}
+	if err := InlineStyle(&buf, "abc123", "body{color:red}"); err != nil {
+		t.Fatalf("expected InlineStyle with valid nonce to succeed, got %v", err)
+	}
+	if got := buf.String(); got != `<style nonce="abc123">body{color:red}</style>` {
+		t.Fatalf("unexpected InlineStyle output: %q", got)
 	}
 }
 

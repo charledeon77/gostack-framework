@@ -5,9 +5,11 @@ package http
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 // Context acts as the unified "Gateway" for every single HTTP request passing through the engine.
@@ -125,6 +127,26 @@ func (c *Context) Query(key string) string {
 	return c.Request.URL.Query().Get(key)
 }
 
+// PostErr parses the request body (urlencoded or multipart) using the engine's configured
+// size limit and returns the value for key along with any parse/size error (D46).
+// Callers can return the error directly so the Engine maps *http.MaxBytesError to 413.
+func (c *Context) PostErr(key string) (string, error) {
+	if c.Request == nil {
+		return "", fmt.Errorf("http: nil request")
+	}
+	ct := strings.ToLower(c.Request.Header.Get("Content-Type"))
+	if strings.Contains(ct, "multipart/form-data") {
+		if err := c.Request.ParseMultipartForm(maxRequestBodySize()); err != nil && !errors.Is(err, http.ErrNotMultipart) {
+			return "", err
+		}
+	} else {
+		if err := c.Request.ParseForm(); err != nil {
+			return "", err
+		}
+	}
+	return c.Request.PostFormValue(key), nil
+}
+
 // Post abstracts POST body payload and multipart form data evaluation.
 // It reads input fields submitted by form elements or client payloads seamlessly.
 //
@@ -134,7 +156,8 @@ func (c *Context) Query(key string) string {
 // Returns:
 //   - The string data corresponding to the key, returning an empty string if omitted.
 func (c *Context) Post(key string) string {
-	return c.Request.PostFormValue(key)
+	val, _ := c.PostErr(key)
+	return val
 }
 
 // Locale extracts the client language preference, resolving it in priority order:

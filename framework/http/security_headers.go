@@ -3,8 +3,15 @@ package http
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"log"
 	netHTTP "net/http"
 	"strings"
+	"sync"
+)
+
+var (
+	unsafeInlineWarnMu   sync.Mutex
+	unsafeInlineWarnOnce bool
 )
 
 // GenerateCSPNonce generates a cryptographically random 128-bit base64-encoded CSP nonce.
@@ -17,6 +24,8 @@ func GenerateCSPNonce() (string, error) {
 }
 
 // injectCSPNonce adds 'nonce-<nonce>' to style-src in the CSP policy string.
+// If style-src already allows 'unsafe-inline', the policy is left unchanged (D44),
+// because adding a nonce would silently cause browsers to ignore 'unsafe-inline'.
 // If style-src is not explicitly present, it appends "style-src 'self' 'nonce-<nonce>';".
 func injectCSPNonce(csp, nonce string) string {
 	if csp == "" || nonce == "" {
@@ -28,6 +37,15 @@ func injectCSPNonce(csp, nonce string) string {
 	for i, d := range directives {
 		trimmed := strings.TrimSpace(d)
 		if strings.HasPrefix(trimmed, "style-src ") || trimmed == "style-src" {
+			if strings.Contains(trimmed, "'unsafe-inline'") {
+				unsafeInlineWarnMu.Lock()
+				if !unsafeInlineWarnOnce {
+					unsafeInlineWarnOnce = true
+					log.Printf("[GoStack Security] CSP style-src contains 'unsafe-inline'; skipping nonce injection to preserve app policy")
+				}
+				unsafeInlineWarnMu.Unlock()
+				return csp
+			}
 			directives[i] = " " + trimmed + " " + token
 			foundStyle = true
 		}
@@ -71,9 +89,16 @@ func DefaultSecurityHeadersConfig() SecurityHeadersConfig {
 	}
 }
 
-// ApplySecurityHeaders writes configured security headers to the ResponseWriter.
+// ApplySecurityHeaders writes configured security headers to the ResponseWriter,
+// reading any per-request CSP nonce from r.Context() so middleware and Engine never disagree (D44).
 func ApplySecurityHeaders(w netHTTP.ResponseWriter, r *netHTTP.Request, config SecurityHeadersConfig) {
-	ApplySecurityHeadersWithNonce(w, r, config, "")
+	var nonce string
+	if r != nil {
+		if v, ok := r.Context().Value(cspNonceContextKey{}).(string); ok {
+			nonce = v
+		}
+	}
+	ApplySecurityHeadersWithNonce(w, r, config, nonce)
 }
 
 // ApplySecurityHeadersWithNonce writes configured security headers to the ResponseWriter,

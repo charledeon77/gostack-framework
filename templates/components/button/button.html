@@ -6,6 +6,6 @@
         - onClick: Click handler
     -->
     <button class="gs-btn gs-btn-{{ .variant | default:'primary' }}" gs-click="{{ .onClick | default:'' }}">
-        {{ .text }}
+        {{ .text | default:'' }}
     </button>
 </div>

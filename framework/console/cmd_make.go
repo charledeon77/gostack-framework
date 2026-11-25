@@ -23,7 +23,9 @@ import (
 	"fmt"
 	"go/format"
 	"github.com/charledeon77/gostack-framework/framework/ui"
+	"github.com/charledeon77/gostack-framework/templates"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -773,222 +775,27 @@ func (c *AuthController) APILogin(ctx *http.Context) error {
 	}
 	fmt.Printf("[GoStack CLI] Scaffolding controller: %s\n", controllerPath)
 
-	// 4. Generate login and register views (AOT components)
-	components := map[string]map[string]string{
-		"login": {
-			"login.html": `<div class="auth-card">
-	<h2>Login</h2>
-	<form action="/login" method="POST">
-		<input type="hidden" name="_token" value="{{.csrf_token}}" />
-		<div class="form-group">
-			<label>Email Address</label>
-			<input type="email" name="email" required placeholder="name@example.com" />
-		</div>
-		<div class="form-group">
-			<label>Password</label>
-			<input type="password" name="password" required />
-		</div>
-		<div class="alert alert-danger">{{.error}}</div>
-		<button type="submit" class="btn">Sign In</button>
-	</form>
-	<p class="auth-switch">Don't have an account? <a href="/register">Register</a></p>
-</div>`,
-			"login.css": `.auth-card {
-	max-width: 400px;
-	margin: 50px auto;
-	padding: 30px;
-	background: #ffffff;
-	border-radius: 12px;
-	box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-	font-family: 'Inter', sans-serif;
-}
-.auth-card h2 {
-	margin-top: 0;
-	margin-bottom: 24px;
-	color: #1a1a1a;
-	font-weight: 700;
-	text-align: center;
-}
-.form-group {
-	margin-bottom: 20px;
-}
-.form-group label {
-	display: block;
-	margin-bottom: 8px;
-	font-size: 14px;
-	font-weight: 500;
-	color: #4a4a4a;
-}
-.form-group input {
-	width: 100%;
-	padding: 12px 16px;
-	border: 1px solid #dcdcdc;
-	border-radius: 8px;
-	box-sizing: border-box;
-	font-size: 15px;
-	transition: border-color 0.2s;
-}
-.form-group input:focus {
-	outline: none;
-	border-color: #4f46e5;
-}
-.btn {
-	display: block;
-	width: 100%;
-	padding: 14px;
-	background: #4f46e5;
-	color: #ffffff;
-	border: none;
-	border-radius: 8px;
-	font-size: 16px;
-	font-weight: 600;
-	cursor: pointer;
-	transition: background-color 0.2s;
-}
-.btn:hover {
-	background: #4338ca;
-}
-.alert {
-	padding: 12px;
-	border-radius: 8px;
-	margin-bottom: 20px;
-	font-size: 14px;
-}
-.alert:empty {
-	display: none;
-}
-.alert-danger {
-	background: #fee2e2;
-	color: #991b1b;
-}
-.auth-switch {
-	margin-top: 24px;
-	text-align: center;
-	font-size: 14px;
-	color: #6b7280;
-}
-.auth-switch a {
-	color: #4f46e5;
-	text-decoration: none;
-	font-weight: 500;
-}
-.auth-switch a:hover {
-	text-decoration: underline;
-}`,
-			"login.js": `// Login client scripts`,
-		},
-		"register": {
-			"register.html": `<div class="auth-card">
-	<h2>Register</h2>
-	<form action="/register" method="POST">
-		<input type="hidden" name="_token" value="{{.csrf_token}}" />
-		<div class="form-group">
-			<label>Email Address</label>
-			<input type="email" name="email" required placeholder="name@example.com" />
-		</div>
-		<div class="form-group">
-			<label>Password</label>
-			<input type="password" name="password" required />
-		</div>
-		<div class="alert alert-danger">{{.error}}</div>
-		<button type="submit" class="btn">Create Account</button>
-	</form>
-	<p class="auth-switch">Already have an account? <a href="/login">Login</a></p>
-</div>`,
-			"register.css": `.auth-card {
-	max-width: 400px;
-	margin: 50px auto;
-	padding: 30px;
-	background: #ffffff;
-	border-radius: 12px;
-	box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-	font-family: 'Inter', sans-serif;
-}
-.auth-card h2 {
-	margin-top: 0;
-	margin-bottom: 24px;
-	color: #1a1a1a;
-	font-weight: 700;
-	text-align: center;
-}
-.form-group {
-	margin-bottom: 20px;
-}
-.form-group label {
-	display: block;
-	margin-bottom: 8px;
-	font-size: 14px;
-	font-weight: 500;
-	color: #4a4a4a;
-}
-.form-group input {
-	width: 100%;
-	padding: 12px 16px;
-	border: 1px solid #dcdcdc;
-	border-radius: 8px;
-	box-sizing: border-box;
-	font-size: 15px;
-	transition: border-color 0.2s;
-}
-.form-group input:focus {
-	outline: none;
-	border-color: #4f46e5;
-}
-.btn {
-	display: block;
-	width: 100%;
-	padding: 14px;
-	background: #4f46e5;
-	color: #ffffff;
-	border: none;
-	border-radius: 8px;
-	font-size: 16px;
-	font-weight: 600;
-	cursor: pointer;
-	transition: background-color 0.2s;
-}
-.btn:hover {
-	background: #4338ca;
-}
-.alert {
-	padding: 12px;
-	border-radius: 8px;
-	margin-bottom: 20px;
-	font-size: 14px;
-}
-.alert:empty {
-	display: none;
-}
-.alert-danger {
-	background: #fee2e2;
-	color: #991b1b;
-}
-.auth-switch {
-	margin-top: 24px;
-	text-align: center;
-	font-size: 14px;
-	color: #6b7280;
-}
-.auth-switch a {
-	color: #4f46e5;
-	text-decoration: none;
-	font-weight: 500;
-}
-.auth-switch a:hover {
-	text-decoration: underline;
-}`,
-			"register.js": `// Register client scripts`,
-		},
-	}
-
-	for componentName, files := range components {
+	// 4. Copy canonical login and register views from embedded templates (D49: single source of truth)
+	for _, componentName := range []string{"login", "register"} {
 		componentDir := filepath.Join("templates", "components", componentName)
 		if err := os.MkdirAll(componentDir, 0755); err != nil {
 			return err
 		}
-		for name, content := range files {
-			filePath := filepath.Join(componentDir, name)
-			if err := writeGeneratedFile(filePath, []byte(content), force); err != nil {
+		embedDir := "components/" + componentName
+		entries, err := fs.ReadDir(templates.AuthComponents, embedDir)
+		if err != nil {
+			return fmt.Errorf("failed to read embedded auth component %s: %w", componentName, err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			content, err := fs.ReadFile(templates.AuthComponents, embedDir+"/"+entry.Name())
+			if err != nil {
+				return fmt.Errorf("failed to read embedded file %s/%s: %w", embedDir, entry.Name(), err)
+			}
+			filePath := filepath.Join(componentDir, entry.Name())
+			if err := writeGeneratedFile(filePath, content, force); err != nil {
 				return err
 			}
 			fmt.Printf("[GoStack CLI] Scaffolding view: %s\n", filePath)

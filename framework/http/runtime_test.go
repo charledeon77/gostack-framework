@@ -351,6 +351,105 @@ func TestEngine_D46_BodyGuardLayerAnd413(t *testing.T) {
 	if w3.Code != netHTTP.StatusBadRequest {
 		t.Fatalf("expected malformed multipart Content-Type header to return 400, got %d", w3.Code)
 	}
+
+	// 4. PUT / PATCH / DELETE urlencoded bodies are validated (C26 / D46): malformed -> 400, oversized -> 413
+	for _, method := range []string{"PUT", "PATCH", "DELETE"} {
+		router.Handle(method, "/item", func(ctx *Context) error {
+			ctx.Writer.WriteHeader(netHTTP.StatusOK)
+			return nil
+		})
+
+		reqBad := httptest.NewRequest(method, "/item", strings.NewReader("bad=%ZZ"))
+		reqBad.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		wBad := httptest.NewRecorder()
+		engine.ServeHTTP(wBad, reqBad)
+		if wBad.Code != netHTTP.StatusBadRequest {
+			t.Fatalf("expected malformed urlencoded %s to return 400, got %d", method, wBad.Code)
+		}
+
+		reqBig := httptest.NewRequest(method, "/item", strings.NewReader("k="+strings.Repeat("a", 512)))
+		reqBig.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		wBig := httptest.NewRecorder()
+		engine.ServeHTTP(wBig, reqBig)
+		if wBig.Code != netHTTP.StatusRequestEntityTooLarge {
+			t.Fatalf("expected oversized urlencoded %s to return 413, got %d", method, wBig.Code)
+		}
+	}
+
+	// 5. Multipart POST with _method=DELETE routes to DELETE handler and preserves body stream
+	os.Setenv("MAX_REQUEST_BODY_SIZE", "4096")
+	var gotField string
+	router.Delete("/upload-item", func(ctx *Context) {
+		val, err := ctx.PostErr("title")
+		if err != nil {
+			t.Errorf("PostErr failed: %v", err)
+		}
+		gotField = val
+		ctx.Writer.WriteHeader(netHTTP.StatusOK)
+	})
+	mpBody := "--b1\r\nContent-Disposition: form-data; name=\"_method\"\r\n\r\nDELETE\r\n" +
+		"--b1\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nhello\r\n--b1--\r\n"
+	reqMP := httptest.NewRequest("POST", "/upload-item", strings.NewReader(mpBody))
+	reqMP.Header.Set("Content-Type", "multipart/form-data; boundary=b1")
+	wMP := httptest.NewRecorder()
+	engine.ServeHTTP(wMP, reqMP)
+	if wMP.Code != netHTTP.StatusOK || gotField != "hello" {
+		t.Fatalf("expected multipart _method=DELETE to run DELETE handler and read title='hello', got code=%d title=%q", wMP.Code, gotField)
+	}
+
+	// 6. Context.PostErr surfaces *MaxBytesError on chunked/unknown-length oversized multipart body
+	os.Setenv("MAX_REQUEST_BODY_SIZE", "128")
+	router.Handle("POST", "/posterr", func(ctx *Context) error {
+		_, err := ctx.PostErr("title")
+		return err
+	})
+	bigMP2 := "--b2\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\n" + strings.Repeat("Z", 512) + "\r\n--b2--\r\n"
+	reqErr := httptest.NewRequest("POST", "/posterr", strings.NewReader(bigMP2))
+	reqErr.ContentLength = -1 // simulate chunked so MaxBytesReader triggers inside PostErr
+	reqErr.Header.Set("Content-Type", "multipart/form-data; boundary=b2")
+	wErr := httptest.NewRecorder()
+	engine.ServeHTTP(wErr, reqErr)
+	if wErr.Code != netHTTP.StatusRequestEntityTooLarge {
+		t.Fatalf("expected PostErr on oversized chunked multipart to return 413, got %d", wErr.Code)
+	}
+}
+
+func TestEngine_D44_SecurityHeadersMiddlewareAndUnsafeInline(t *testing.T) {
+	// 1. SecurityHeaders() middleware preserves the Engine's per-request CSP nonce
+	router := NewRouter()
+	router.Use(SecurityHeaders())
+	var handlerNonce string
+	router.Get("/styled", func(ctx *Context) {
+		handlerNonce = ctx.CSPNonce()
+		_, _ = ctx.Writer.Write([]byte(`<style nonce="` + handlerNonce + `">body{}</style>`))
+	})
+	engine := NewEngine(router, nil)
+
+	req := httptest.NewRequest("GET", "/styled", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+
+	csp := w.Header().Get("Content-Security-Policy")
+	if handlerNonce == "" || !strings.Contains(csp, "'nonce-"+handlerNonce+"'") {
+		t.Fatalf("expected SecurityHeaders() middleware to preserve Engine nonce %q in CSP, got %q", handlerNonce, csp)
+	}
+
+	// 2. Policy with style-src 'unsafe-inline' is NOT broken by nonce injection
+	router2 := NewRouter()
+	router2.Get("/legacy", func(ctx *Context) {
+		ctx.Writer.WriteHeader(netHTTP.StatusOK)
+	})
+	engine2 := NewEngine(router2, nil)
+	engine2.SecurityHeadersConfig.ContentSecurityPolicy = "default-src 'self'; style-src 'self' 'unsafe-inline';"
+
+	req2 := httptest.NewRequest("GET", "/legacy", nil)
+	w2 := httptest.NewRecorder()
+	engine2.ServeHTTP(w2, req2)
+
+	csp2 := w2.Header().Get("Content-Security-Policy")
+	if strings.Contains(csp2, "'nonce-") {
+		t.Fatalf("expected 'unsafe-inline' style-src policy to NOT have nonce injected, got %q", csp2)
+	}
 }
 
 func TestEngine_D44_CSPNoncePipelineAndPanicPage(t *testing.T) {
