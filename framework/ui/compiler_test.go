@@ -1207,6 +1207,48 @@ func TestRequiredFieldCompiler_D49(t *testing.T) {
 	}
 }
 
+// TestCompileFilterChain_RequiredAndUnknownFilters_D51 verifies that | required is parsed
+// regardless of whitespace/chaining and unknown filter names fail at compile time.
+func TestCompileFilterChain_RequiredAndUnknownFilters_D51(t *testing.T) {
+	c := &AssetCompiler{}
+
+	validCases := []struct {
+		expr     string
+		reqField string
+		wantSub  string
+	}{
+		{".id|required", "id", "reqVal"},
+		{".id |  required", "id", "reqVal"},
+		{".id | required | upper", "id", `ui.ApplyFilter(reqVal, "upper")`},
+		{".title | upper", "", `ui.ApplyFilter(ui.Evaluate(data, "title"), "upper")`},
+	}
+	for _, tc := range validCases {
+		gotExpr, gotReq, err := c.compileFilterChain(tc.expr)
+		if err != nil {
+			t.Errorf("compileFilterChain(%q) unexpected error: %v", tc.expr, err)
+			continue
+		}
+		if gotReq != tc.reqField {
+			t.Errorf("compileFilterChain(%q) reqField = %q, want %q", tc.expr, gotReq, tc.reqField)
+		}
+		if !strings.Contains(gotExpr, tc.wantSub) {
+			t.Errorf("compileFilterChain(%q) expr = %q, want substring %q", tc.expr, gotExpr, tc.wantSub)
+		}
+	}
+
+	invalidCases := []string{
+		".x | nosuchfilter",
+		".x | uppper",
+		".x | defualt:\"hi\"",
+		".id | required | default:\"modal\"",
+	}
+	for _, expr := range invalidCases {
+		if _, _, err := c.compileFilterChain(expr); err == nil {
+			t.Errorf("compileFilterChain(%q) expected compile error, got nil", expr)
+		}
+	}
+}
+
 // TestInlineStyle_RequiresNonce verifies ui.InlineStyle refuses empty nonces (D44).
 func TestInlineStyle_RequiresNonce(t *testing.T) {
 	var buf bytes.Buffer

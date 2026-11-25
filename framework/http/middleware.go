@@ -115,6 +115,16 @@ func (sc *statusCapture) WriteHeader(code int) {
 	sc.ResponseWriter.WriteHeader(code)
 }
 
+func (sc *statusCapture) Write(b []byte) (int, error) {
+	sc.written = true
+	return sc.ResponseWriter.Write(b)
+}
+
+// Written reports whether WriteHeader or Write has been called on this capture (D50).
+func (sc *statusCapture) Written() bool {
+	return sc.written
+}
+
 func (sc *statusCapture) Flush() {
 	if f, ok := sc.ResponseWriter.(netHTTP.Flusher); ok {
 		f.Flush()

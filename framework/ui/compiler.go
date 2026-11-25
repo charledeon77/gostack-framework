@@ -612,21 +612,14 @@ func (c *AssetCompiler) compileTextSegment(segment string, sb *strings.Builder, 
 		rest := subparts[1]
 
 		if strings.Contains(expr, "|") {
-			// D49: Support `| required` on mandatory identifiers (e.g. modal `id`) so missing
-			// required fields fail loudly at render time instead of falling back to a constant.
-			if strings.HasSuffix(strings.TrimSpace(expr), "| required") {
-				reqBase := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(expr), "| required"))
-				reqField := strings.TrimPrefix(reqBase, ".")
-				if !isVariableName(reqField) {
-					return &exprError{expr: expr, err: fmt.Errorf("invalid required field identifier %q", expr)}
-				}
-				sb.WriteString(fmt.Sprintf("\t\t{ reqVal, reqErr := ui.EvaluateRequired(data, %q); if reqErr != nil { return reqErr }; if _, err := io.WriteString(w, ui.Escape(reqVal)); err != nil { return err } }\n", reqField))
+			// Filter pipe chain (including `| required` and compile-time filter validation) (D51)
+			compiledExpr, reqField, err := c.compileFilterChain(expr)
+			if err != nil {
+				return &exprError{expr: expr, err: err}
+			}
+			if reqField != "" {
+				sb.WriteString(fmt.Sprintf("\t\t{ reqVal, reqErr := ui.EvaluateRequired(data, %q); if reqErr != nil { return reqErr }; if _, err := io.WriteString(w, ui.Escape(%s)); err != nil { return err } }\n", reqField, compiledExpr))
 			} else {
-				// Filter pipe chain: e.g. ".Title | slugify" or ".CreatedAt | date(\"2006-01-02\")"
-				compiledExpr, err := c.compileFilterChain(expr)
-				if err != nil {
-					return &exprError{expr: expr, err: err}
-				}
 				sb.WriteString(fmt.Sprintf("\t\tif _, err := io.WriteString(w, ui.Escape(%s)); err != nil { return err }\n", compiledExpr))
 			}
 		} else if strings.HasPrefix(expr, ".") {
@@ -660,11 +653,8 @@ func (c *AssetCompiler) compileTextSegment(segment string, sb *strings.Builder, 
 }
 
 // compileFilterChain compiles a pipe-separated filter expression into a Go ui.ApplyFilter call chain.
-// Examples:
-//   ".Title | slugify"              → ui.ApplyFilter(ui.Evaluate(data, "Title"), "slugify")
-//   ".CreatedAt | date(\"2006\")"   → ui.ApplyFilter(ui.Evaluate(data, "CreatedAt"), "date", "2006")
-//   ".Name | upper | truncate(20)" → ui.ApplyFilter(ui.ApplyFilter(...), "truncate", "20")
-func (c *AssetCompiler) compileFilterChain(expr string) (string, error) {
+// It also handles `| required` as a parsed pipe segment and validates all filter names at compile time (D51).
+func (c *AssetCompiler) compileFilterChain(expr string) (string, string, error) {
 	// Parse the expression into parts by splitting on '|', but respecting quotes/parens.
 	var pipes []string
 	var current strings.Builder
@@ -711,46 +701,65 @@ func (c *AssetCompiler) compileFilterChain(expr string) (string, error) {
 	}
 
 	if len(pipes) == 0 {
-		return `""`, nil
+		return `""`, "", nil
 	}
 
-	// Compile the base value expression
+	// Scan pipe segments for `default` and `required`
 	base := pipes[0]
 	hasDefault := false
+	isRequired := false
 	for _, pipe := range pipes[1:] {
 		p := strings.TrimSpace(pipe)
 		if strings.HasPrefix(p, "default(") || strings.HasPrefix(p, "default:") || p == "default" {
 			hasDefault = true
-			break
 		}
+		if p == "required" {
+			isRequired = true
+		}
+	}
+	if isRequired && hasDefault {
+		return "", "", fmt.Errorf("expression %q cannot combine | required with | default", expr)
 	}
 
 	var goExpr string
+	var reqField string
 	if strings.HasPrefix(base, ".") {
 		fieldName := strings.TrimPrefix(base, ".")
 		if !isVariableName(fieldName) {
-			return "", fmt.Errorf("invalid field in filter chain: %q", base)
+			return "", "", fmt.Errorf("invalid field in filter chain: %q", base)
 		}
-		if hasDefault {
+		if isRequired {
+			reqField = fieldName
+			goExpr = "reqVal"
+		} else if hasDefault {
 			goExpr = fmt.Sprintf(`ui.EvaluateOptional(data, "%s")`, fieldName)
 		} else {
 			goExpr = fmt.Sprintf(`ui.Evaluate(data, "%s")`, fieldName)
 		}
 	} else if isVariableName(base) {
-		if hasDefault {
+		if isRequired {
+			reqField = base
+			goExpr = "reqVal"
+		} else if hasDefault {
 			goExpr = fmt.Sprintf(`ui.EvaluateOptional(data, "%s")`, base)
 		} else {
 			goExpr = fmt.Sprintf(`ui.Evaluate(data, "%s")`, base)
 		}
 	} else if isLiteral(base) {
+		if isRequired {
+			return "", "", fmt.Errorf("| required cannot be applied to literal %q", base)
+		}
 		goExpr = base
 	} else {
-		return "", fmt.Errorf("invalid base expression in filter chain: %q", base)
+		return "", "", fmt.Errorf("invalid base expression in filter chain: %q", base)
 	}
 
 	// Apply each filter in the chain
 	for _, pipe := range pipes[1:] {
 		pipe = strings.TrimSpace(pipe)
+		if pipe == "required" {
+			continue
+		}
 		if strings.HasPrefix(pipe, "default:") {
 			val := strings.TrimSpace(strings.TrimPrefix(pipe, "default:"))
 			val = strings.Trim(val, `"'`)
@@ -761,7 +770,10 @@ func (c *AssetCompiler) compileFilterChain(expr string) (string, error) {
 		if parenIdx := strings.Index(pipe, "("); parenIdx != -1 {
 			filterName := strings.TrimSpace(pipe[:parenIdx])
 			if !isValidIdentifier(filterName) {
-				return "", fmt.Errorf("invalid filter name: %q", filterName)
+				return "", "", fmt.Errorf("invalid filter name: %q", filterName)
+			}
+			if !HasFilter(filterName) {
+				return "", "", fmt.Errorf("unknown filter %q in expression %q", filterName, expr)
 			}
 			argsStr := strings.TrimSuffix(strings.TrimSpace(pipe[parenIdx+1:]), ")")
 
@@ -800,7 +812,7 @@ func (c *AssetCompiler) compileFilterChain(expr string) (string, error) {
 						cleaned := strings.TrimSpace(argBuilder.String())
 						cleaned = strings.Trim(cleaned, `"'`)
 						if strings.Contains(cleaned, `\`) || strings.Contains(cleaned, `"`) || strings.Contains(cleaned, `'`) {
-							return "", fmt.Errorf("filter argument contains invalid characters (quotes/backslashes not allowed): %s", cleaned)
+							return "", "", fmt.Errorf("filter argument contains invalid characters (quotes/backslashes not allowed): %s", cleaned)
 						}
 						goArgs = append(goArgs, strconv.Quote(cleaned))
 						argBuilder.Reset()
@@ -815,7 +827,7 @@ func (c *AssetCompiler) compileFilterChain(expr string) (string, error) {
 				cleaned := strings.TrimSpace(argBuilder.String())
 				cleaned = strings.Trim(cleaned, `"'`)
 				if strings.Contains(cleaned, `\`) || strings.Contains(cleaned, `"`) || strings.Contains(cleaned, `'`) {
-					return "", fmt.Errorf("filter argument contains invalid characters (quotes/backslashes not allowed): %s", cleaned)
+					return "", "", fmt.Errorf("filter argument contains invalid characters (quotes/backslashes not allowed): %s", cleaned)
 				}
 				goArgs = append(goArgs, strconv.Quote(cleaned))
 			}
@@ -829,13 +841,16 @@ func (c *AssetCompiler) compileFilterChain(expr string) (string, error) {
 			// No args: filterName only
 			filterName := pipe
 			if !isValidIdentifier(filterName) {
-				return "", fmt.Errorf("invalid filter name: %q", filterName)
+				return "", "", fmt.Errorf("invalid filter name: %q", filterName)
+			}
+			if !HasFilter(filterName) {
+				return "", "", fmt.Errorf("unknown filter %q in expression %q", filterName, expr)
 			}
 			goExpr = fmt.Sprintf(`ui.ApplyFilter(%s, "%s")`, goExpr, filterName)
 		}
 	}
 
-	return goExpr, nil
+	return goExpr, reqField, nil
 }
 
 func (c *AssetCompiler) resolveTemplateFile(relPath string) (string, error) {

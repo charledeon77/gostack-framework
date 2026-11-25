@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	netHTTP "net/http"
@@ -9,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"golang.org/x/net/websocket"
 )
 
 func TestEngine_SEC05_ErrorAndRecovery(t *testing.T) {
@@ -457,6 +460,81 @@ func TestEngine_D46_BodyGuardLayerAnd413(t *testing.T) {
 	if cr.n > 4096 {
 		t.Fatalf("D46 regression: boundary peek drained %d bytes of file-first multipart body on unrouted path (expected <= 4096)", cr.n)
 	}
+
+	// 10. 1 MB part named _method (under 2 MB body limit) MUST be rejected with 400 without draining past 1025 bytes
+	os.Setenv("MAX_REQUEST_BODY_SIZE", "2097152")
+	bigMethodBody := "--bm\r\nContent-Disposition: form-data; name=\"_method\"\r\n\r\n" +
+		strings.Repeat("D", 1048576) + "\r\n--bm--\r\n"
+	crMethod := &countingReader{r: strings.NewReader(bigMethodBody)}
+	reqBigMethod := httptest.NewRequest("POST", "/does-not-exist", crMethod)
+	reqBigMethod.ContentLength = int64(len(bigMethodBody))
+	reqBigMethod.Header.Set("Content-Type", "multipart/form-data; boundary=bm")
+	wBigMethod := httptest.NewRecorder()
+	engine.ServeHTTP(wBigMethod, reqBigMethod)
+	if wBigMethod.Code != netHTTP.StatusBadRequest {
+		t.Fatalf("expected oversized _method part to return 400, got %d", wBigMethod.Code)
+	}
+	if crMethod.n > 8192 {
+		t.Fatalf("D46 regression: oversized _method part drained %d bytes (expected <= 8192)", crMethod.n)
+	}
+
+	// 11. DELETE FormValue precedence: body values take precedence over query values (matching net/http)
+	var delFormVal string
+	router.Delete("/del-precedence", func(ctx *Context) {
+		delFormVal = ctx.Request.FormValue("reason")
+		ctx.Writer.WriteHeader(netHTTP.StatusOK)
+	})
+	reqDelPrec := httptest.NewRequest("DELETE", "/del-precedence?reason=fromquery", strings.NewReader("reason=frombody"))
+	reqDelPrec.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	wDelPrec := httptest.NewRecorder()
+	engine.ServeHTTP(wDelPrec, reqDelPrec)
+	if wDelPrec.Code != netHTTP.StatusOK || delFormVal != "frombody" {
+		t.Fatalf("expected DELETE FormValue to prefer body ('frombody') over query, got code=%d val=%q", wDelPrec.Code, delFormVal)
+	}
+}
+
+func TestEngine_D50_ResponseWriterContractsAndWebSocket(t *testing.T) {
+	router := NewRouter()
+
+	var isFlusher, isHijacker, isPusher, isReaderFrom bool
+	router.Get("/contracts", func(ctx *Context) {
+		_, isFlusher = ctx.Writer.(netHTTP.Flusher)
+		_, isHijacker = ctx.Writer.(netHTTP.Hijacker)
+		_, isPusher = ctx.Writer.(netHTTP.Pusher)
+		_, isReaderFrom = ctx.Writer.(io.ReaderFrom)
+		ctx.Writer.WriteHeader(netHTTP.StatusOK)
+	})
+
+	hub := NewHub()
+	wsCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go hub.Run(wsCtx)
+
+	router.Get("/ws", func(ctx *Context) {
+		hub.Handler().ServeHTTP(ctx.Writer, ctx.Request)
+	})
+
+	engine := NewEngine(router, nil)
+
+	// 1. Assert optional interfaces are preserved on ctx.Writer
+	req := httptest.NewRequest("GET", "/contracts", nil)
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, req)
+	if !isFlusher || !isHijacker || !isPusher || !isReaderFrom {
+		t.Fatalf("D50: ctx.Writer missing optional interfaces: flusher=%v hijacker=%v pusher=%v readerFrom=%v",
+			isFlusher, isHijacker, isPusher, isReaderFrom)
+	}
+
+	// 2. Real 101 Switching Protocols WebSocket handshake through Engine.ServeHTTP
+	srv := httptest.NewServer(engine)
+	defer srv.Close()
+
+	wsURL := "ws" + srv.URL[4:] + "/ws"
+	ws, err := websocket.Dial(wsURL, "", "http://localhost/")
+	if err != nil {
+		t.Fatalf("D50: WebSocket handshake through Engine.ServeHTTP failed: %v", err)
+	}
+	_ = ws.Close()
 }
 
 type countingReader struct {

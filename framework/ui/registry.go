@@ -59,6 +59,14 @@ func RegisterFilter(name string, fn any) {
 	filters[name] = fn
 }
 
+// HasFilter reports whether a filter with the given name is registered (D51).
+func HasFilter(name string) bool {
+	filtersMu.RLock()
+	_, ok := filters[name]
+	filtersMu.RUnlock()
+	return ok
+}
+
 // ApplyFilter invokes a named filter on the given value with optional string arguments.
 // It returns the filtered string, or the original fmt.Sprint value if the filter is not found.
 func ApplyFilter(val any, filterName string, args ...string) string {
