@@ -18,6 +18,25 @@ import (
 	"strings"
 )
 
+type responseWriteTracker struct {
+	netHTTP.ResponseWriter
+	wrote bool
+}
+
+func (rt *responseWriteTracker) WriteHeader(code int) {
+	rt.wrote = true
+	rt.ResponseWriter.WriteHeader(code)
+}
+
+func (rt *responseWriteTracker) Write(b []byte) (int, error) {
+	rt.wrote = true
+	return rt.ResponseWriter.Write(b)
+}
+
+func (rt *responseWriteTracker) Unwrap() netHTTP.ResponseWriter {
+	return rt.ResponseWriter
+}
+
 type multiBodyCloser struct {
 	io.Reader
 	closer io.Closer
@@ -125,18 +144,26 @@ func (e *Engine) ServeHTTP(w netHTTP.ResponseWriter, r *netHTTP.Request) {
 	}
 
 	dispatch := func(ctx *Context, fn func(*Context) error) {
+		tracker := &responseWriteTracker{ResponseWriter: ctx.Writer}
+		ctx.Writer = tracker
 		if err := fn(ctx); err != nil {
 			var maxBytesErr *netHTTP.MaxBytesError
 			if errors.As(err, &maxBytesErr) {
-				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-				_ = writeResponse(w, netHTTP.StatusRequestEntityTooLarge, []byte("413 Request Entity Too Large: request body exceeds configured limit"))
+				tracker.ResponseWriter.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				_ = writeResponse(tracker.ResponseWriter, netHTTP.StatusRequestEntityTooLarge, []byte("413 Request Entity Too Large: request body exceeds configured limit"))
 				return
 			}
 			if e.Router != nil && e.Router.errorHandler != nil {
 				e.Router.errorHandler(ctx, err)
 				return
 			}
-			_ = writeResponse(w, netHTTP.StatusInternalServerError, []byte("500 Internal Server Error - GoStack Engine"))
+			_ = writeResponse(tracker.ResponseWriter, netHTTP.StatusInternalServerError, []byte("500 Internal Server Error - GoStack Engine"))
+			return
+		}
+		// D46: If a handler called Context.Post (which cannot return an error directly) and a
+		// form/multipart parse error occurred without the handler writing a response, surface 413/400.
+		if !tracker.wrote && ctx.FormErr() != nil {
+			writeBodyOrFormError(ctx.FormErr(), "400 Bad Request: Malformed form body")
 		}
 	}
 
@@ -166,9 +193,20 @@ func (e *Engine) ServeHTTP(w netHTTP.ResponseWriter, r *netHTTP.Request) {
 						writeBodyOrFormError(readErr, "400 Bad Request: Malformed form body")
 						return
 					}
-					if _, parseErr := url.ParseQuery(string(bodyBytes)); parseErr != nil {
+					vals, parseErr := url.ParseQuery(string(bodyBytes))
+					if parseErr != nil {
 						_ = writeResponse(w, netHTTP.StatusBadRequest, []byte("400 Bad Request: Malformed form body"))
 						return
+					}
+					r.PostForm = vals
+					if r.Form == nil {
+						r.Form = make(url.Values)
+					}
+					for k, vs := range r.URL.Query() {
+						r.Form[k] = append(r.Form[k], vs...)
+					}
+					for k, vs := range vals {
+						r.Form[k] = append(r.Form[k], vs...)
 					}
 					r.Body = &multiBodyCloser{
 						Reader: bytes.NewReader(bodyBytes),
@@ -194,13 +232,16 @@ func (e *Engine) ServeHTTP(w netHTTP.ResponseWriter, r *netHTTP.Request) {
 			override = r.PostFormValue("_method")
 		} else if multipartBoundary != "" && r.Body != nil {
 			// D46: Peek only the first multipart part (1 KB cap) for _method, then rebuild r.Body
-			// with io.MultiReader so handlers still receive the full intact stream with zero temp files.
+			// with io.MultiReader. Multipart _method must be the first form field (otherwise use
+			// ?_method= or X-HTTP-Method-Override). Never call part.Close() on an unconsumed part,
+			// because mime/multipart.Part.Close drains the entire part via io.Copy(io.Discard, p).
 			var peekBuf bytes.Buffer
 			origBody := r.Body
 			mr := multipart.NewReader(io.TeeReader(origBody, &peekBuf), multipartBoundary)
 			if part, partErr := mr.NextPart(); partErr == nil {
 				if part.FormName() == "_method" {
 					valBytes, readErr := io.ReadAll(io.LimitReader(part, 1024))
+					_ = part.Close()
 					if readErr != nil {
 						var maxBytesErr *netHTTP.MaxBytesError
 						if errors.As(readErr, &maxBytesErr) {
@@ -210,7 +251,6 @@ func (e *Engine) ServeHTTP(w netHTTP.ResponseWriter, r *netHTTP.Request) {
 					}
 					override = strings.TrimSpace(string(valBytes))
 				}
-				_ = part.Close()
 			} else {
 				var maxBytesErr *netHTTP.MaxBytesError
 				if errors.As(partErr, &maxBytesErr) {

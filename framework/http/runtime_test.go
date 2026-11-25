@@ -412,6 +412,62 @@ func TestEngine_D46_BodyGuardLayerAnd413(t *testing.T) {
 	if wErr.Code != netHTTP.StatusRequestEntityTooLarge {
 		t.Fatalf("expected PostErr on oversized chunked multipart to return 413, got %d", wErr.Code)
 	}
+
+	// 7. Context.Post (even without PostErr) surfaces 413 via Context.FormErr() when handler returns nil unwritten
+	router.Post("/post-silent", func(ctx *Context) {
+		_ = ctx.Post("title")
+	})
+	reqPostSilent := httptest.NewRequest("POST", "/post-silent", strings.NewReader(bigMP2))
+	reqPostSilent.ContentLength = -1
+	reqPostSilent.Header.Set("Content-Type", "multipart/form-data; boundary=b2")
+	wPostSilent := httptest.NewRecorder()
+	engine.ServeHTTP(wPostSilent, reqPostSilent)
+	if wPostSilent.Code != netHTTP.StatusRequestEntityTooLarge {
+		t.Fatalf("expected Context.Post on oversized chunked multipart to return 413, got %d", wPostSilent.Code)
+	}
+
+	// 8. Valid DELETE urlencoded body preserves parsed form values for ctx.Post / ctx.PostErr
+	os.Setenv("MAX_REQUEST_BODY_SIZE", "4096")
+	var deleteReason string
+	router.Delete("/item-with-body", func(ctx *Context) {
+		deleteReason = ctx.Post("reason")
+		ctx.Writer.WriteHeader(netHTTP.StatusOK)
+	})
+	reqDel := httptest.NewRequest("DELETE", "/item-with-body", strings.NewReader("reason=duplicate"))
+	reqDel.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	wDel := httptest.NewRecorder()
+	engine.ServeHTTP(wDel, reqDel)
+	if wDel.Code != netHTTP.StatusOK || deleteReason != "duplicate" {
+		t.Fatalf("expected DELETE body field reason='duplicate' via ctx.Post, got code=%d reason=%q", wDel.Code, deleteReason)
+	}
+
+	// 9. File-first multipart POST to unauthenticated/unrouted path MUST NOT drain the file part at boundary
+	os.Setenv("MAX_REQUEST_BODY_SIZE", "1048576")
+	fileFirstBody := "--bfile\r\nContent-Disposition: form-data; name=\"file\"; filename=\"big.bin\"\r\n\r\n" +
+		strings.Repeat("F", 65536) + "\r\n--bfile--\r\n"
+	cr := &countingReader{r: strings.NewReader(fileFirstBody)}
+	reqFileFirst := httptest.NewRequest("POST", "/does-not-exist", cr)
+	reqFileFirst.ContentLength = int64(len(fileFirstBody))
+	reqFileFirst.Header.Set("Content-Type", "multipart/form-data; boundary=bfile")
+	wFileFirst := httptest.NewRecorder()
+	engine.ServeHTTP(wFileFirst, reqFileFirst)
+	if wFileFirst.Code != netHTTP.StatusNotFound {
+		t.Fatalf("expected 404 for unrouted path, got %d", wFileFirst.Code)
+	}
+	if cr.n > 4096 {
+		t.Fatalf("D46 regression: boundary peek drained %d bytes of file-first multipart body on unrouted path (expected <= 4096)", cr.n)
+	}
+}
+
+type countingReader struct {
+	r io.Reader
+	n int
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += n
+	return n, err
 }
 
 func TestEngine_D44_SecurityHeadersMiddlewareAndUnsafeInline(t *testing.T) {

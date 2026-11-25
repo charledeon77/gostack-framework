@@ -1,11 +1,11 @@
 <div gs-component="modal">
     <!-- Overlay -->
-    <div class="gs-modal-overlay gs-hidden" id="gs-modal-{{ .id | default:'modal' }}" data-modal-id="{{ .id | default:'modal' }}">
+    <div class="gs-modal-overlay gs-hidden" id="gs-modal-{{ .id | required }}" data-modal-id="{{ .id | required }}">
         <!-- Modal Dialog -->
         <div class="gs-modal-content">
             <div class="gs-modal-header">
                 <h3 class="gs-modal-title">{{ .title | default:'' }}</h3>
-                <button class="gs-modal-close" gs-click="GoStack.closeModal('{{ .id | default:'modal' }}')">&times;</button>
+                <button class="gs-modal-close" gs-click="GoStack.closeModal('{{ .id | required }}')">&times;</button>
             </div>
             
             <div class="gs-modal-body">

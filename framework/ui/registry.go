@@ -407,6 +407,18 @@ func EvaluateOptional(data any, field string) any {
 	return res
 }
 
+// EvaluateRequired performs a reflection lookup and returns an error if the field is absent or empty (D49).
+func EvaluateRequired(data any, field string) (any, error) {
+	res, err := EvaluateErr(data, field)
+	if err != nil {
+		return nil, fmt.Errorf("required field %q missing: %w", field, err)
+	}
+	if strings.TrimSpace(fmt.Sprint(res)) == "" {
+		return nil, fmt.Errorf("required field %q is empty", field)
+	}
+	return res, nil
+}
+
 // InlineStyle writes a CSP-nonce-protected style element to w (D44).
 // Returns an error when nonce is empty rather than emitting an unnonced block that CSP would reject.
 func InlineStyle(w io.Writer, nonce, css string) error {

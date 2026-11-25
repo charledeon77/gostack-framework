@@ -612,12 +612,23 @@ func (c *AssetCompiler) compileTextSegment(segment string, sb *strings.Builder, 
 		rest := subparts[1]
 
 		if strings.Contains(expr, "|") {
-			// Filter pipe chain: e.g. ".Title | slugify" or ".CreatedAt | date(\"2006-01-02\")"
-			compiledExpr, err := c.compileFilterChain(expr)
-			if err != nil {
-				return &exprError{expr: expr, err: err}
+			// D49: Support `| required` on mandatory identifiers (e.g. modal `id`) so missing
+			// required fields fail loudly at render time instead of falling back to a constant.
+			if strings.HasSuffix(strings.TrimSpace(expr), "| required") {
+				reqBase := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(expr), "| required"))
+				reqField := strings.TrimPrefix(reqBase, ".")
+				if !isVariableName(reqField) {
+					return &exprError{expr: expr, err: fmt.Errorf("invalid required field identifier %q", expr)}
+				}
+				sb.WriteString(fmt.Sprintf("\t\t{ reqVal, reqErr := ui.EvaluateRequired(data, %q); if reqErr != nil { return reqErr }; if _, err := io.WriteString(w, ui.Escape(reqVal)); err != nil { return err } }\n", reqField))
+			} else {
+				// Filter pipe chain: e.g. ".Title | slugify" or ".CreatedAt | date(\"2006-01-02\")"
+				compiledExpr, err := c.compileFilterChain(expr)
+				if err != nil {
+					return &exprError{expr: expr, err: err}
+				}
+				sb.WriteString(fmt.Sprintf("\t\tif _, err := io.WriteString(w, ui.Escape(%s)); err != nil { return err }\n", compiledExpr))
 			}
-			sb.WriteString(fmt.Sprintf("\t\tif _, err := io.WriteString(w, ui.Escape(%s)); err != nil { return err }\n", compiledExpr))
 		} else if strings.HasPrefix(expr, ".") {
 			fieldName := strings.TrimPrefix(expr, ".")
 			if !isVariableName(fieldName) {

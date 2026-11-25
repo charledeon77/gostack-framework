@@ -509,14 +509,26 @@ to {
     <div class="gs-modal-overlay gs-hidden" id="gs-modal-`); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(w, ui.Escape(ui.ApplyFilter(ui.EvaluateOptional(data, "id"), "default", "modal"))); err != nil {
-			return err
+		{
+			reqVal, reqErr := ui.EvaluateRequired(data, "id")
+			if reqErr != nil {
+				return reqErr
+			}
+			if _, err := io.WriteString(w, ui.Escape(reqVal)); err != nil {
+				return err
+			}
 		}
 		if _, err := io.WriteString(w, `" data-modal-id="`); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(w, ui.Escape(ui.ApplyFilter(ui.EvaluateOptional(data, "id"), "default", "modal"))); err != nil {
-			return err
+		{
+			reqVal, reqErr := ui.EvaluateRequired(data, "id")
+			if reqErr != nil {
+				return reqErr
+			}
+			if _, err := io.WriteString(w, ui.Escape(reqVal)); err != nil {
+				return err
+			}
 		}
 		if _, err := io.WriteString(w, `">
         
@@ -532,8 +544,14 @@ to {
                 <button class="gs-modal-close" gs-click="GoStack.closeModal('`); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(w, ui.Escape(ui.ApplyFilter(ui.EvaluateOptional(data, "id"), "default", "modal"))); err != nil {
-			return err
+		{
+			reqVal, reqErr := ui.EvaluateRequired(data, "id")
+			if reqErr != nil {
+				return reqErr
+			}
+			if _, err := io.WriteString(w, ui.Escape(reqVal)); err != nil {
+				return err
+			}
 		}
 		if _, err := io.WriteString(w, `')">&times;</button>
             </div>

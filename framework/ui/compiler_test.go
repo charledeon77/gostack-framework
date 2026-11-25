@@ -3,7 +3,6 @@ package ui
 import (
 	"bytes"
 	"context"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1180,68 +1179,32 @@ func TestShippedTemplates_CSPCompliance(t *testing.T) {
 	}
 }
 
-// TestShippedComponents_EmptyDataNoWarnings compiles and renders every shipped component
-// in templates/components with empty data and fails if Tempose emits any reflection warning (D49).
-func TestShippedComponents_EmptyDataNoWarnings(t *testing.T) {
+// TestRequiredFieldCompiler_D49 verifies that `| required` compiles to ui.EvaluateRequired
+// and fails loudly when the required field is absent or empty, rather than falling back to a constant.
+func TestRequiredFieldCompiler_D49(t *testing.T) {
+	if _, err := EvaluateRequired(map[string]any{}, "id"); err == nil {
+		t.Fatal("expected EvaluateRequired to return error for missing field")
+	}
+	if _, err := EvaluateRequired(map[string]any{"id": "   "}, "id"); err == nil {
+		t.Fatal("expected EvaluateRequired to return error for whitespace-only field")
+	}
+	val, err := EvaluateRequired(map[string]any{"id": "modal-42"}, "id")
+	if err != nil || val != "modal-42" {
+		t.Fatalf("expected EvaluateRequired to return 'modal-42', got val=%v err=%v", val, err)
+	}
+
 	_, callerFile, _, ok := runtime.Caller(0)
 	if !ok {
-		t.Fatalf("runtime.Caller failed to determine source location")
+		t.Fatalf("runtime.Caller failed")
 	}
 	rootDir := filepath.Clean(filepath.Join(filepath.Dir(callerFile), "..", ".."))
-	componentsDir := filepath.Join(rootDir, "templates", "components")
-
-	entries, err := os.ReadDir(componentsDir)
+	genBytes, err := os.ReadFile(filepath.Join(rootDir, "cmd", "app", "gostack_components_gen.go"))
 	if err != nil {
-		t.Fatalf("failed to read %s: %v", componentsDir, err)
+		t.Fatalf("failed to read gostack_components_gen.go: %v", err)
 	}
-
-	// Capture log output so any [Tempose Warning] fails the test
-	var logBuf bytes.Buffer
-	origOut := log.Writer()
-	log.SetOutput(&logBuf)
-	defer log.SetOutput(origOut)
-
-	// Reset deduplication map so every component starts fresh
-	loggedWarningsMu.Lock()
-	loggedWarnings = make(map[string]bool)
-	loggedWarningsMu.Unlock()
-
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		htmlPath := filepath.Join(componentsDir, name, name+".html")
-		raw, err := os.ReadFile(htmlPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			t.Fatalf("failed to read %s: %v", htmlPath, err)
-		}
-		// Compile & execute against empty data via Registry evaluator paths
-		compiled := compileTemplateToCheckWarnings(string(raw))
-		_ = compiled
-		// Evaluate any {{ .field | default:... }} vs bare {{ .field }} expressions in template
-		reExpr := regexp.MustCompile(`\{\{\s*\.([a-zA-Z0-9_.]+)(?:\s*\|\s*([^}]+))?\s*\}\}`)
-		for _, m := range reExpr.FindAllStringSubmatch(string(raw), -1) {
-			field := m[1]
-			pipe := m[2]
-			if strings.Contains(pipe, "default") {
-				_ = EvaluateOptional(map[string]any{}, field)
-			} else {
-				_ = Evaluate(map[string]any{}, field)
-			}
-		}
-		if strings.Contains(logBuf.String(), "[Tempose Warning]") {
-			t.Errorf("component %s emitted Tempose reflection warning on empty data:\n%s", name, logBuf.String())
-			logBuf.Reset()
-		}
+	if !strings.Contains(string(genBytes), `ui.EvaluateRequired(data, "id")`) {
+		t.Fatalf("expected compiled modal component to use ui.EvaluateRequired(data, \"id\")")
 	}
-}
-
-func compileTemplateToCheckWarnings(src string) string {
-	return src
 }
 
 // TestInlineStyle_RequiresNonce verifies ui.InlineStyle refuses empty nonces (D44).

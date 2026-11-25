@@ -35,6 +35,14 @@ type Context struct {
 
 	// values stores request-scoped values passed between middlewares and handlers.
 	values map[string]any
+
+	// formErr records the first form/multipart parse error encountered on this request (D46).
+	formErr error
+}
+
+// FormErr returns any form or multipart parse error recorded during this request (D46).
+func (c *Context) FormErr() error {
+	return c.formErr
 }
 
 type cspNonceContextKey struct{}
@@ -127,20 +135,30 @@ func (c *Context) Query(key string) string {
 	return c.Request.URL.Query().Get(key)
 }
 
-// PostErr parses the request body (urlencoded or multipart) using the engine's configured
-// size limit and returns the value for key along with any parse/size error (D46).
+// defaultMultipartMaxMemory caps the in-memory buffer for ParseMultipartForm (4 MB).
+// Larger uploads spill to temporary files bounded by MaxBytesReader rather than holding
+// the entire MAX_REQUEST_BODY_SIZE in per-request RAM (D46).
+const defaultMultipartMaxMemory = 4 << 20
+
+// PostErr parses the request body (urlencoded or multipart) using a bounded in-memory
+// threshold and returns the value for key along with any parse/size error (D46).
 // Callers can return the error directly so the Engine maps *http.MaxBytesError to 413.
 func (c *Context) PostErr(key string) (string, error) {
 	if c.Request == nil {
 		return "", fmt.Errorf("http: nil request")
 	}
+	if c.formErr != nil {
+		return "", c.formErr
+	}
 	ct := strings.ToLower(c.Request.Header.Get("Content-Type"))
 	if strings.Contains(ct, "multipart/form-data") {
-		if err := c.Request.ParseMultipartForm(maxRequestBodySize()); err != nil && !errors.Is(err, http.ErrNotMultipart) {
+		if err := c.Request.ParseMultipartForm(defaultMultipartMaxMemory); err != nil && !errors.Is(err, http.ErrNotMultipart) {
+			c.formErr = err
 			return "", err
 		}
 	} else {
 		if err := c.Request.ParseForm(); err != nil {
+			c.formErr = err
 			return "", err
 		}
 	}
