@@ -56,8 +56,16 @@ func (c *DevCommand) Execute(args []string) error {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
-	// Instantiate the component AssetCompiler
+	strictFilters := false
+	for _, a := range args {
+		if a == "--strict-filters" {
+			strictFilters = true
+		}
+	}
+
+	// Instantiate the component AssetCompiler (out-of-process CLI warns on unknown filters unless --strict-filters is passed, D52)
 	compiler := ui.NewAssetCompiler("templates/components", "cmd/app")
+	compiler.WarnUnknownFilters = !strictFilters
 	log.Println("[GoStack Dev] Running initial component compilation...")
 	if err := compiler.Run(); err != nil {
 		log.Printf("[GoStack Dev] Initial component compilation warning: %v", err)

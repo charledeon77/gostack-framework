@@ -1249,6 +1249,43 @@ func TestCompileFilterChain_RequiredAndUnknownFilters_D51(t *testing.T) {
 	}
 }
 
+// TestAssetCompiler_AppRegisteredFilters_D52 verifies both halves of D52:
+// 1. A filter declared on AssetCompiler via WithFilterNames compiles cleanly.
+// 2. The same template without that filter declared fails in strict mode.
+// 3. With WarnUnknownFilters = true (CLI mode), it compiles with a warning.
+func TestAssetCompiler_AppRegisteredFilters_D52(t *testing.T) {
+	compDir := filepath.Join(t.TempDir(), "components")
+	inboxDir := filepath.Join(compDir, "inbox")
+	if err := os.MkdirAll(inboxDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(inboxDir, "inbox.html"), []byte(`<div>{{ .emails | len }}</div>`), 0644); err != nil {
+		t.Fatalf("write html failed: %v", err)
+	}
+
+	// 1. Fails in strict mode when "len" is not declared
+	outFail := t.TempDir()
+	cStrict := NewAssetCompiler(compDir, outFail, filepath.Join(t.TempDir(), "public"))
+	if err := cStrict.Run(); err == nil {
+		t.Fatal("expected strict AssetCompiler.Run() to fail on undeclared filter 'len', got nil")
+	}
+
+	// 2. Succeeds when "len" is explicitly declared via WithFilterNames
+	outOK := t.TempDir()
+	cDeclared := NewAssetCompiler(compDir, outOK, filepath.Join(t.TempDir(), "public")).WithFilterNames("len")
+	if err := cDeclared.Run(); err != nil {
+		t.Fatalf("expected AssetCompiler with WithFilterNames(\"len\") to compile cleanly, got: %v", err)
+	}
+
+	// 3. Succeeds with WarnUnknownFilters = true (out-of-process CLI mode)
+	outWarn := t.TempDir()
+	cWarn := NewAssetCompiler(compDir, outWarn, filepath.Join(t.TempDir(), "public"))
+	cWarn.WarnUnknownFilters = true
+	if err := cWarn.Run(); err != nil {
+		t.Fatalf("expected AssetCompiler with WarnUnknownFilters=true to compile cleanly, got: %v", err)
+	}
+}
+
 // TestInlineStyle_RequiresNonce verifies ui.InlineStyle refuses empty nonces (D44).
 func TestInlineStyle_RequiresNonce(t *testing.T) {
 	var buf bytes.Buffer

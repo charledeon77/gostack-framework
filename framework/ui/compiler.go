@@ -64,6 +64,35 @@ type AssetCompiler struct {
 	ComponentsPath   string
 	OutputPath       string
 	PublicAssetsPath string
+	// KnownFilters lists app-registered filter names accepted during compile-time
+	// validation when compiling outside the app's runtime process (D52).
+	KnownFilters map[string]bool
+	// WarnUnknownFilters logs a warning instead of failing when an unknown filter
+	// is encountered; intended for out-of-process CLI compilers (gost dev/make) (D52).
+	WarnUnknownFilters bool
+}
+
+// WithFilterNames declares additional app-registered filter names on the compiler
+// and returns the receiver for chaining (D52).
+func (c *AssetCompiler) WithFilterNames(names ...string) *AssetCompiler {
+	for _, n := range names {
+		c.RegisterFilter(n)
+	}
+	return c
+}
+
+// RegisterFilter declares a single app-registered filter name on the compiler (D52).
+func (c *AssetCompiler) RegisterFilter(name string) {
+	if c.KnownFilters == nil {
+		c.KnownFilters = make(map[string]bool)
+	}
+	if name != "" {
+		c.KnownFilters[name] = true
+	}
+}
+
+func (c *AssetCompiler) isKnownFilter(name string) bool {
+	return HasFilter(name) || (c.KnownFilters != nil && c.KnownFilters[name])
 }
 
 // NewAssetCompiler returns a pointer to an initialized AssetCompiler.
@@ -772,8 +801,12 @@ func (c *AssetCompiler) compileFilterChain(expr string) (string, string, error) 
 			if !isValidIdentifier(filterName) {
 				return "", "", fmt.Errorf("invalid filter name: %q", filterName)
 			}
-			if !HasFilter(filterName) {
-				return "", "", fmt.Errorf("unknown filter %q in expression %q", filterName, expr)
+			if !c.isKnownFilter(filterName) {
+				if c.WarnUnknownFilters {
+					log.Printf("[GoStack Compiler Warning] unknown filter %q in expression %q (if app-registered, ensure it is declared on AssetCompiler)", filterName, expr)
+				} else {
+					return "", "", fmt.Errorf("unknown filter %q in expression %q", filterName, expr)
+				}
 			}
 			argsStr := strings.TrimSuffix(strings.TrimSpace(pipe[parenIdx+1:]), ")")
 
@@ -843,8 +876,12 @@ func (c *AssetCompiler) compileFilterChain(expr string) (string, string, error) 
 			if !isValidIdentifier(filterName) {
 				return "", "", fmt.Errorf("invalid filter name: %q", filterName)
 			}
-			if !HasFilter(filterName) {
-				return "", "", fmt.Errorf("unknown filter %q in expression %q", filterName, expr)
+			if !c.isKnownFilter(filterName) {
+				if c.WarnUnknownFilters {
+					log.Printf("[GoStack Compiler Warning] unknown filter %q in expression %q (if app-registered, ensure it is declared on AssetCompiler)", filterName, expr)
+				} else {
+					return "", "", fmt.Errorf("unknown filter %q in expression %q", filterName, expr)
+				}
 			}
 			goExpr = fmt.Sprintf(`ui.ApplyFilter(%s, "%s")`, goExpr, filterName)
 		}

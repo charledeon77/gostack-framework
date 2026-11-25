@@ -802,8 +802,9 @@ func (c *AuthController) APILogin(ctx *http.Context) error {
 		}
 	}
 
-	// 5. Trigger Asset Compiler programmatically to recompile components
+	// 5. Trigger Asset Compiler programmatically to recompile components (CLI process warns on app-registered filters, D52)
 	compiler := ui.NewAssetCompiler(filepath.Join("templates", "components"), filepath.Join("cmd", "app"))
+	compiler.WarnUnknownFilters = true
 	if err := compiler.Run(); err != nil {
 		return fmt.Errorf("failed to compile view assets: %w", err)
 	}
@@ -1467,6 +1468,7 @@ func (c *AddComponentCommand) Execute(args []string) error {
 
 	fmt.Println("[GoStack CLI] Compiling component assets...")
 	compiler := ui.NewAssetCompiler(filepath.Join("templates", "components"), filepath.Join("cmd", "app"))
+	compiler.WarnUnknownFilters = true
 	if err := compiler.Run(); err != nil {
 		return fmt.Errorf("asset compilation failed: %w", err)
 	}
