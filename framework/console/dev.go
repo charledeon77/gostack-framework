@@ -24,7 +24,7 @@ func (c *DevCommand) Name() string {
 
 // Description returns help text shown in command lists.
 func (c *DevCommand) Description() string {
-	return "Start the GoStack web server with hot reload (recompiles components and restarts on code changes)"
+	return "Start the GoStack web server with hot reload (recompiles components and restarts on code changes; supports --strict-filters and gostack.filters)"
 }
 
 // Execute runs the GoStack app dev watcher environment.
@@ -66,6 +66,9 @@ func (c *DevCommand) Execute(args []string) error {
 	// Instantiate the component AssetCompiler (out-of-process CLI warns on unknown filters unless --strict-filters is passed, D52)
 	compiler := ui.NewAssetCompiler("templates/components", "cmd/app")
 	compiler.WarnUnknownFilters = !strictFilters
+	if err := compiler.LoadFilterManifest("gostack.filters"); err != nil && !os.IsNotExist(err) {
+		log.Printf("[GoStack Dev] Warning: failed to read gostack.filters: %v", err)
+	}
 	log.Println("[GoStack Dev] Running initial component compilation...")
 	if err := compiler.Run(); err != nil {
 		log.Printf("[GoStack Dev] Initial component compilation warning: %v", err)

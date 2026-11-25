@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"context"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1223,7 +1224,7 @@ func TestCompileFilterChain_RequiredAndUnknownFilters_D51(t *testing.T) {
 		{".title | upper", "", `ui.ApplyFilter(ui.Evaluate(data, "title"), "upper")`},
 	}
 	for _, tc := range validCases {
-		gotExpr, gotReq, err := c.compileFilterChain(tc.expr)
+		gotExpr, gotReq, _, err := c.compileFilterChain(tc.expr)
 		if err != nil {
 			t.Errorf("compileFilterChain(%q) unexpected error: %v", tc.expr, err)
 			continue
@@ -1243,7 +1244,7 @@ func TestCompileFilterChain_RequiredAndUnknownFilters_D51(t *testing.T) {
 		".id | required | default:\"modal\"",
 	}
 	for _, expr := range invalidCases {
-		if _, _, err := c.compileFilterChain(expr); err == nil {
+		if _, _, _, err := c.compileFilterChain(expr); err == nil {
 			t.Errorf("compileFilterChain(%q) expected compile error, got nil", expr)
 		}
 	}
@@ -1283,6 +1284,70 @@ func TestAssetCompiler_AppRegisteredFilters_D52(t *testing.T) {
 	cWarn.WarnUnknownFilters = true
 	if err := cWarn.Run(); err != nil {
 		t.Fatalf("expected AssetCompiler with WarnUnknownFilters=true to compile cleanly, got: %v", err)
+	}
+}
+
+// TestAssetCompiler_WarningsLocatedDedupedAndManifest_D53 verifies that:
+// 1. Unknown filter warnings include component:line location and are deduplicated per (component, filter).
+// 2. LoadFilterManifest loads declared filter names from gostack.filters (ignoring blank lines and # comments),
+//    suppressing both strict errors and warning logs.
+func TestAssetCompiler_WarningsLocatedDedupedAndManifest_D53(t *testing.T) {
+	dir := t.TempDir()
+	compDir := filepath.Join(dir, "components")
+	inboxDir := filepath.Join(compDir, "inbox")
+	if err := os.MkdirAll(inboxDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	tmpl := "<span>{{ .emails | len }}</span>\n<span>{{ .drafts | len }}</span>"
+	if err := os.WriteFile(filepath.Join(inboxDir, "inbox.html"), []byte(tmpl), 0644); err != nil {
+		t.Fatalf("write template: %v", err)
+	}
+
+	// Capture log output for warning verification
+	var logBuf bytes.Buffer
+	oldOut := log.Writer()
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(oldOut)
+
+	cWarn := NewAssetCompiler(compDir, t.TempDir(), filepath.Join(t.TempDir(), "public"))
+	cWarn.WarnUnknownFilters = true
+	if err := cWarn.Run(); err != nil {
+		t.Fatalf("expected WarnUnknownFilters=true to succeed, got: %v", err)
+	}
+
+	if len(cWarn.Warnings) != 1 {
+		t.Fatalf("expected 1 deduplicated warning, got %d (%+v)", len(cWarn.Warnings), cWarn.Warnings)
+	}
+	w := cWarn.Warnings[0]
+	if w.Component != "inbox" || w.Line != 1 || w.Filter != "len" {
+		t.Fatalf("unexpected warning metadata: %+v", w)
+	}
+
+	logged := logBuf.String()
+	if !strings.Contains(logged, "inbox:1:") || !strings.Contains(logged, `"len"`) {
+		t.Errorf("expected warning log to include component:line and filter name, got: %s", logged)
+	}
+	if count := strings.Count(logged, "[GoStack Compiler Warning]"); count != 1 {
+		t.Errorf("expected exactly 1 deduplicated warning log line, got %d:\n%s", count, logged)
+	}
+
+	// Verify gostack.filters manifest eliminates errors in strict mode and produces 0 warnings
+	manifestPath := filepath.Join(dir, "gostack.filters")
+	manifestContent := "# App custom filters\n\nlen\n"
+	if err := os.WriteFile(manifestPath, []byte(manifestContent), 0644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	cManifest := NewAssetCompiler(compDir, t.TempDir(), filepath.Join(t.TempDir(), "public"))
+	if err := cManifest.LoadFilterManifest(manifestPath); err != nil {
+		t.Fatalf("LoadFilterManifest failed: %v", err)
+	}
+	if err := cManifest.Run(); err != nil {
+		t.Fatalf("expected strict Run() with gostack.filters manifest to succeed, got: %v", err)
+	}
+	if len(cManifest.Warnings) != 0 {
+		t.Fatalf("expected 0 warnings when filter is declared in manifest, got %+v", cManifest.Warnings)
 	}
 }
 

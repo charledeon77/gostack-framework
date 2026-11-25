@@ -301,14 +301,17 @@ type MakeAuthCommand struct{}
 
 func (c *MakeAuthCommand) Name() string        { return "make:auth" }
 func (c *MakeAuthCommand) Description() string {
-	return "Scaffold a complete authentication system (Users model, migrations, login/register UI views, controller)"
+	return "Scaffold a complete authentication system (Users model, migrations, login/register UI views, controller; supports --force and --strict-filters)"
 }
 
 func (c *MakeAuthCommand) Execute(args []string) error {
 	force := false
+	strictFilters := false
 	for _, arg := range args {
 		if arg == "--force" || arg == "-f" {
 			force = true
+		} else if arg == "--strict-filters" {
+			strictFilters = true
 		}
 	}
 	projectMod := detectProjectModule()
@@ -804,7 +807,10 @@ func (c *AuthController) APILogin(ctx *http.Context) error {
 
 	// 5. Trigger Asset Compiler programmatically to recompile components (CLI process warns on app-registered filters, D52)
 	compiler := ui.NewAssetCompiler(filepath.Join("templates", "components"), filepath.Join("cmd", "app"))
-	compiler.WarnUnknownFilters = true
+	compiler.WarnUnknownFilters = !strictFilters
+	if err := compiler.LoadFilterManifest("gostack.filters"); err != nil && !os.IsNotExist(err) {
+		fmt.Printf("[GoStack CLI] Warning: failed to read gostack.filters: %v\n", err)
+	}
 	if err := compiler.Run(); err != nil {
 		return fmt.Errorf("failed to compile view assets: %w", err)
 	}
@@ -1318,7 +1324,7 @@ func (c *AddComponentCommand) Name() string {
 }
 
 func (c *AddComponentCommand) Description() string {
-	return "Add a UI component from the GoStack repository (Usage: add <component-name>)"
+	return "Add a UI component from the GoStack repository (Usage: add <component-name> [--force] [--strict-filters])"
 }
 
 type componentInfo struct {
@@ -1340,10 +1346,13 @@ func (c *AddComponentCommand) Execute(args []string) error {
 	}
 
 	force := false
+	strictFilters := false
 	var targetComp string
 	for _, arg := range args {
 		if arg == "--force" || arg == "-f" {
 			force = true
+		} else if arg == "--strict-filters" {
+			strictFilters = true
 		} else if !strings.HasPrefix(arg, "-") && targetComp == "" {
 			targetComp = strings.ToLower(arg)
 		}
@@ -1468,7 +1477,10 @@ func (c *AddComponentCommand) Execute(args []string) error {
 
 	fmt.Println("[GoStack CLI] Compiling component assets...")
 	compiler := ui.NewAssetCompiler(filepath.Join("templates", "components"), filepath.Join("cmd", "app"))
-	compiler.WarnUnknownFilters = true
+	compiler.WarnUnknownFilters = !strictFilters
+	if err := compiler.LoadFilterManifest("gostack.filters"); err != nil && !os.IsNotExist(err) {
+		fmt.Printf("[GoStack CLI] Warning: failed to read gostack.filters: %v\n", err)
+	}
 	if err := compiler.Run(); err != nil {
 		return fmt.Errorf("asset compilation failed: %w", err)
 	}

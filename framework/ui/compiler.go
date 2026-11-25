@@ -45,6 +45,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,6 +61,15 @@ import (
 //   - ComponentsPath: Absolute or relative path to the components source directory.
 //   - OutputPath: Absolute or relative path where the generated Go file will be written.
 //   - PublicAssetsPath: Destination directory for compiled CSS/JS bundles (defaults to "public/assets").
+// CompileWarning describes a non-fatal compile-time diagnostic (such as an undeclared
+// filter in WarnUnknownFilters mode) with its exact component name and line number (D53).
+type CompileWarning struct {
+	Component string
+	Line      int
+	Filter    string
+	Expr      string
+}
+
 type AssetCompiler struct {
 	ComponentsPath   string
 	OutputPath       string
@@ -70,6 +80,8 @@ type AssetCompiler struct {
 	// WarnUnknownFilters logs a warning instead of failing when an unknown filter
 	// is encountered; intended for out-of-process CLI compilers (gost dev/make) (D52).
 	WarnUnknownFilters bool
+	// Warnings holds deduplicated, sorted warnings emitted by the most recent Run() (D53).
+	Warnings []CompileWarning
 }
 
 // WithFilterNames declares additional app-registered filter names on the compiler
@@ -93,6 +105,24 @@ func (c *AssetCompiler) RegisterFilter(name string) {
 
 func (c *AssetCompiler) isKnownFilter(name string) bool {
 	return HasFilter(name) || (c.KnownFilters != nil && c.KnownFilters[name])
+}
+
+// LoadFilterManifest reads a newline-delimited filter manifest file (e.g. "gostack.filters"),
+// ignoring blank lines and '#' comments, and registers each filter name on the compiler (D53).
+// Returns os.ErrNotExist if the file does not exist.
+func (c *AssetCompiler) LoadFilterManifest(path string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		c.RegisterFilter(line)
+	}
+	return nil
 }
 
 // NewAssetCompiler returns a pointer to an initialized AssetCompiler.
@@ -131,6 +161,7 @@ func hashBytes(b []byte) string {
 
 // Run executes the full compilation sequence.
 func (c *AssetCompiler) Run() error {
+	c.Warnings = nil
 	entries, err := os.ReadDir(c.ComponentsPath)
 	if err != nil {
 		return fmt.Errorf("cannot scan components directory: %w", err)
@@ -292,7 +323,45 @@ func RegisterComponents(t *http.Tempose) {
 	if err := os.MkdirAll(c.OutputPath, 0755); err != nil {
 		return fmt.Errorf("cannot create output directory %q: %w", c.OutputPath, err)
 	}
-	return os.WriteFile(filepath.Join(c.OutputPath, "gostack_components_gen.go"), formatted, 0644)
+	if err := os.WriteFile(filepath.Join(c.OutputPath, "gostack_components_gen.go"), formatted, 0644); err != nil {
+		return err
+	}
+	c.flushWarnings()
+	return nil
+}
+
+func (c *AssetCompiler) flushWarnings() {
+	if len(c.Warnings) == 0 {
+		return
+	}
+	type warnKey struct {
+		component string
+		filter    string
+	}
+	seen := make(map[warnKey]CompileWarning, len(c.Warnings))
+	for _, w := range c.Warnings {
+		k := warnKey{component: w.Component, filter: w.Filter}
+		if existing, ok := seen[k]; !ok || w.Line < existing.Line {
+			seen[k] = w
+		}
+	}
+	deduped := make([]CompileWarning, 0, len(seen))
+	for _, w := range seen {
+		deduped = append(deduped, w)
+	}
+	sort.Slice(deduped, func(i, j int) bool {
+		if deduped[i].Component != deduped[j].Component {
+			return deduped[i].Component < deduped[j].Component
+		}
+		if deduped[i].Line != deduped[j].Line {
+			return deduped[i].Line < deduped[j].Line
+		}
+		return deduped[i].Filter < deduped[j].Filter
+	})
+	c.Warnings = deduped
+	for _, w := range deduped {
+		log.Printf("[GoStack Compiler Warning] %s:%d: unknown filter %q in expression %q (declare in gostack.filters or on AssetCompiler)", w.Component, w.Line, w.Filter, w.Expr)
+	}
 }
 
 // Package-level compiled regexes (RE2-compatible, no backreferences).
@@ -461,10 +530,19 @@ func (c *AssetCompiler) compileHTML(componentName, rawHTML string) (string, bool
 
 	var sb strings.Builder
 	needsFmt := false
+	recordWarnings := func(warns []CompileWarning) {
+		for _, w := range warns {
+			w.Component = componentName
+			w.Line = calculateLine(wrappedHTML, w.Expr)
+			c.Warnings = append(c.Warnings, w)
+		}
+	}
 
 	matches := directiveRegex.FindAllStringIndex(wrappedHTML, -1)
 	if len(matches) == 0 {
-		if errExp := c.compileTextSegment(wrappedHTML, &sb, &needsFmt); errExp != nil {
+		warns, errExp := c.compileTextSegment(wrappedHTML, &sb, &needsFmt)
+		recordWarnings(warns)
+		if errExp != nil {
 			line := calculateLine(wrappedHTML, errExp.expr)
 			return "", false, fmt.Errorf("%s:%d: %w", componentName, line, errExp.err)
 		}
@@ -480,7 +558,9 @@ func (c *AssetCompiler) compileHTML(componentName, rawHTML string) (string, bool
 	for _, match := range matches {
 		start, end := match[0], match[1]
 		if start > lastIdx {
-			if errExp := c.compileTextSegment(wrappedHTML[lastIdx:start], &sb, &needsFmt); errExp != nil {
+			warns, errExp := c.compileTextSegment(wrappedHTML[lastIdx:start], &sb, &needsFmt)
+			recordWarnings(warns)
+			if errExp != nil {
 				line := calculateLine(wrappedHTML, errExp.expr)
 				return "", false, fmt.Errorf("%s:%d: %w", componentName, line, errExp.err)
 			}
@@ -526,7 +606,9 @@ func (c *AssetCompiler) compileHTML(componentName, rawHTML string) (string, bool
 		lastIdx = end
 	}
 	if lastIdx < len(wrappedHTML) {
-		if errExp := c.compileTextSegment(wrappedHTML[lastIdx:], &sb, &needsFmt); errExp != nil {
+		warns, errExp := c.compileTextSegment(wrappedHTML[lastIdx:], &sb, &needsFmt)
+		recordWarnings(warns)
+		if errExp != nil {
 			line := calculateLine(wrappedHTML, errExp.expr)
 			return "", false, fmt.Errorf("%s:%d: %w", componentName, line, errExp.err)
 		}
@@ -621,10 +703,11 @@ func (c *AssetCompiler) compileDirective(dirStr string, sb *strings.Builder, nee
 	return nil
 }
 
-func (c *AssetCompiler) compileTextSegment(segment string, sb *strings.Builder, needsFmt *bool) *exprError {
+func (c *AssetCompiler) compileTextSegment(segment string, sb *strings.Builder, needsFmt *bool) ([]CompileWarning, *exprError) {
 	if segment == "" {
-		return nil
+		return nil, nil
 	}
+	var warns []CompileWarning
 	parts := strings.Split(segment, "{{")
 
 	firstSafe := strings.ReplaceAll(parts[0], "`", "` + \"`\" + `")
@@ -641,10 +724,11 @@ func (c *AssetCompiler) compileTextSegment(segment string, sb *strings.Builder, 
 		rest := subparts[1]
 
 		if strings.Contains(expr, "|") {
-			// Filter pipe chain (including `| required` and compile-time filter validation) (D51)
-			compiledExpr, reqField, err := c.compileFilterChain(expr)
+			// Filter pipe chain (including `| required` and compile-time filter validation) (D51/D53)
+			compiledExpr, reqField, chainWarns, err := c.compileFilterChain(expr)
+			warns = append(warns, chainWarns...)
 			if err != nil {
-				return &exprError{expr: expr, err: err}
+				return warns, &exprError{expr: expr, err: err}
 			}
 			if reqField != "" {
 				sb.WriteString(fmt.Sprintf("\t\t{ reqVal, reqErr := ui.EvaluateRequired(data, %q); if reqErr != nil { return reqErr }; if _, err := io.WriteString(w, ui.Escape(%s)); err != nil { return err } }\n", reqField, compiledExpr))
@@ -654,7 +738,7 @@ func (c *AssetCompiler) compileTextSegment(segment string, sb *strings.Builder, 
 		} else if strings.HasPrefix(expr, ".") {
 			fieldName := strings.TrimPrefix(expr, ".")
 			if !isVariableName(fieldName) {
-				return &exprError{expr: expr, err: fmt.Errorf("invalid field identifier %q", expr)}
+				return warns, &exprError{expr: expr, err: fmt.Errorf("invalid field identifier %q", expr)}
 			}
 			sb.WriteString(fmt.Sprintf("\t\tif _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, \"%s\"))); err != nil { return err }\n", fieldName))
 		} else if isVariableName(expr) {
@@ -667,7 +751,7 @@ func (c *AssetCompiler) compileTextSegment(segment string, sb *strings.Builder, 
 			// internally, so we emit a direct write — no additional ui.Escape wrapper.
 			sb.WriteString(fmt.Sprintf("\t\tif _, err := io.WriteString(w, %s); err != nil { return err }\n", expr))
 		} else {
-			return &exprError{expr: expr, err: fmt.Errorf(
+			return warns, &exprError{expr: expr, err: fmt.Errorf(
 				"invalid template expression {{ %s }}: only field references (.Field), "+
 					"simple variables, string/number literals, filter pipes (expr | filter), "+
 					"and translation calls (trans/transRaw/transChoice) are accepted", expr)}
@@ -678,12 +762,12 @@ func (c *AssetCompiler) compileTextSegment(segment string, sb *strings.Builder, 
 			sb.WriteString(fmt.Sprintf("\t\tif _, err := io.WriteString(w, `%s`); err != nil { return err }\n", restSafe))
 		}
 	}
-	return nil
+	return warns, nil
 }
 
 // compileFilterChain compiles a pipe-separated filter expression into a Go ui.ApplyFilter call chain.
-// It also handles `| required` as a parsed pipe segment and validates all filter names at compile time (D51).
-func (c *AssetCompiler) compileFilterChain(expr string) (string, string, error) {
+// It also handles `| required` as a parsed pipe segment and validates all filter names at compile time (D51/D53).
+func (c *AssetCompiler) compileFilterChain(expr string) (string, string, []CompileWarning, error) {
 	// Parse the expression into parts by splitting on '|', but respecting quotes/parens.
 	var pipes []string
 	var current strings.Builder
@@ -730,7 +814,7 @@ func (c *AssetCompiler) compileFilterChain(expr string) (string, string, error) 
 	}
 
 	if len(pipes) == 0 {
-		return `""`, "", nil
+		return `""`, "", nil, nil
 	}
 
 	// Scan pipe segments for `default` and `required`
@@ -747,15 +831,16 @@ func (c *AssetCompiler) compileFilterChain(expr string) (string, string, error) 
 		}
 	}
 	if isRequired && hasDefault {
-		return "", "", fmt.Errorf("expression %q cannot combine | required with | default", expr)
+		return "", "", nil, fmt.Errorf("expression %q cannot combine | required with | default", expr)
 	}
 
 	var goExpr string
 	var reqField string
+	var warns []CompileWarning
 	if strings.HasPrefix(base, ".") {
 		fieldName := strings.TrimPrefix(base, ".")
 		if !isVariableName(fieldName) {
-			return "", "", fmt.Errorf("invalid field in filter chain: %q", base)
+			return "", "", nil, fmt.Errorf("invalid field in filter chain: %q", base)
 		}
 		if isRequired {
 			reqField = fieldName
@@ -776,11 +861,11 @@ func (c *AssetCompiler) compileFilterChain(expr string) (string, string, error) 
 		}
 	} else if isLiteral(base) {
 		if isRequired {
-			return "", "", fmt.Errorf("| required cannot be applied to literal %q", base)
+			return "", "", nil, fmt.Errorf("| required cannot be applied to literal %q", base)
 		}
 		goExpr = base
 	} else {
-		return "", "", fmt.Errorf("invalid base expression in filter chain: %q", base)
+		return "", "", nil, fmt.Errorf("invalid base expression in filter chain: %q", base)
 	}
 
 	// Apply each filter in the chain
@@ -799,13 +884,13 @@ func (c *AssetCompiler) compileFilterChain(expr string) (string, string, error) 
 		if parenIdx := strings.Index(pipe, "("); parenIdx != -1 {
 			filterName := strings.TrimSpace(pipe[:parenIdx])
 			if !isValidIdentifier(filterName) {
-				return "", "", fmt.Errorf("invalid filter name: %q", filterName)
+				return "", "", warns, fmt.Errorf("invalid filter name: %q", filterName)
 			}
 			if !c.isKnownFilter(filterName) {
 				if c.WarnUnknownFilters {
-					log.Printf("[GoStack Compiler Warning] unknown filter %q in expression %q (if app-registered, ensure it is declared on AssetCompiler)", filterName, expr)
+					warns = append(warns, CompileWarning{Filter: filterName, Expr: expr})
 				} else {
-					return "", "", fmt.Errorf("unknown filter %q in expression %q", filterName, expr)
+					return "", "", warns, fmt.Errorf("unknown filter %q in expression %q", filterName, expr)
 				}
 			}
 			argsStr := strings.TrimSuffix(strings.TrimSpace(pipe[parenIdx+1:]), ")")
@@ -845,7 +930,7 @@ func (c *AssetCompiler) compileFilterChain(expr string) (string, string, error) 
 						cleaned := strings.TrimSpace(argBuilder.String())
 						cleaned = strings.Trim(cleaned, `"'`)
 						if strings.Contains(cleaned, `\`) || strings.Contains(cleaned, `"`) || strings.Contains(cleaned, `'`) {
-							return "", "", fmt.Errorf("filter argument contains invalid characters (quotes/backslashes not allowed): %s", cleaned)
+							return "", "", warns, fmt.Errorf("filter argument contains invalid characters (quotes/backslashes not allowed): %s", cleaned)
 						}
 						goArgs = append(goArgs, strconv.Quote(cleaned))
 						argBuilder.Reset()
@@ -860,7 +945,7 @@ func (c *AssetCompiler) compileFilterChain(expr string) (string, string, error) 
 				cleaned := strings.TrimSpace(argBuilder.String())
 				cleaned = strings.Trim(cleaned, `"'`)
 				if strings.Contains(cleaned, `\`) || strings.Contains(cleaned, `"`) || strings.Contains(cleaned, `'`) {
-					return "", "", fmt.Errorf("filter argument contains invalid characters (quotes/backslashes not allowed): %s", cleaned)
+					return "", "", warns, fmt.Errorf("filter argument contains invalid characters (quotes/backslashes not allowed): %s", cleaned)
 				}
 				goArgs = append(goArgs, strconv.Quote(cleaned))
 			}
@@ -874,20 +959,20 @@ func (c *AssetCompiler) compileFilterChain(expr string) (string, string, error) 
 			// No args: filterName only
 			filterName := pipe
 			if !isValidIdentifier(filterName) {
-				return "", "", fmt.Errorf("invalid filter name: %q", filterName)
+				return "", "", warns, fmt.Errorf("invalid filter name: %q", filterName)
 			}
 			if !c.isKnownFilter(filterName) {
 				if c.WarnUnknownFilters {
-					log.Printf("[GoStack Compiler Warning] unknown filter %q in expression %q (if app-registered, ensure it is declared on AssetCompiler)", filterName, expr)
+					warns = append(warns, CompileWarning{Filter: filterName, Expr: expr})
 				} else {
-					return "", "", fmt.Errorf("unknown filter %q in expression %q", filterName, expr)
+					return "", "", warns, fmt.Errorf("unknown filter %q in expression %q", filterName, expr)
 				}
 			}
 			goExpr = fmt.Sprintf(`ui.ApplyFilter(%s, "%s")`, goExpr, filterName)
 		}
 	}
 
-	return goExpr, reqField, nil
+	return goExpr, reqField, warns, nil
 }
 
 func (c *AssetCompiler) resolveTemplateFile(relPath string) (string, error) {
