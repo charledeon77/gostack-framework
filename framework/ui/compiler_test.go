@@ -1067,7 +1067,10 @@ func TestShippedTemplates_CSPCompliance(t *testing.T) {
 		t.Fatalf("templates/components directory not found: %s", templatesDir)
 	}
 
-	validMethods := GoStackMethodNames()
+	validMethods, err := GoStackMethodNames()
+	if err != nil {
+		t.Fatalf("GoStackMethodNames() failed: %v", err)
+	}
 	if len(validMethods) == 0 {
 		t.Fatalf("GoStackMethodNames() returned empty list from glide.go")
 	}
@@ -1076,7 +1079,7 @@ func TestShippedTemplates_CSPCompliance(t *testing.T) {
 		validGoStackMethods[m] = true
 	}
 
-	err := filepath.Walk(templatesDir, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(templatesDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".html") {
 			return nil
 		}

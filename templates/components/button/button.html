@@ -5,7 +5,7 @@
         - text: Button text 
         - onClick: Click handler
     -->
-    <button class="gs-btn gs-btn-{{ .variant }}" gs-click="{{ .onClick }}">
+    <button class="gs-btn gs-btn-{{ .variant | default:'primary' }}" gs-click="{{ .onClick | default:'' }}">
         {{ .text }}
     </button>
 </div>

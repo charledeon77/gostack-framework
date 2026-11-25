@@ -52,9 +52,10 @@ func (e *Engine) ServeHTTP(w netHTTP.ResponseWriter, r *netHTTP.Request) {
 
 			// Never drop the TCP socket ungracefully — return a standardized 500 response
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_ = writeResponse(w, netHTTP.StatusInternalServerError, []byte(fmt.Sprintf(`<!DOCTYPE html>
+			// D44: 500 panic page — inline style is intentional; nonce pipeline is unavailable at panic recovery time.
+		_ = writeResponse(w, netHTTP.StatusInternalServerError, []byte(fmt.Sprintf(`<!DOCTYPE html>
 <html>
-<head><title>500 Internal Server Error</title><style>body{font-family:sans-serif;background:#0b0f19;color:#f8fafc;padding:40px;display:flex;justify-content:center;align-items:center;height:80vh;} .card{background:#1e293b;padding:30px;border-radius:12px;border:1px solid #334155;max-width:600px;text-align:center;} h1{color:#ef4444;margin-top:0;} p{color:#94a3b8;line-height:1.6;}</style></head>
+<head><title>500 Internal Server Error</title><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0b0f19;color:#f8fafc;padding:40px;display:flex;justify-content:center;align-items:center;height:80vh;} .card{background:#1e293b;padding:30px;border-radius:12px;border:1px solid #334155;max-width:600px;text-align:center;} h1{color:#ef4444;margin-top:0;} p{color:#94a3b8;line-height:1.6;}</style></head>
 <body><div class="card"><h1>500 Internal Server Error</h1><p>An unexpected condition was encountered while processing this request. The application kernel intercepted the crash safely.</p></div></body></html>`)))
 		}
 	}()
@@ -94,10 +95,16 @@ func (e *Engine) ServeHTTP(w netHTTP.ResponseWriter, r *netHTTP.Request) {
 	effectiveMethod := r.Method
 	effectiveWriter := w
 
-	// C26: Reject malformed form bodies on mutating methods with 400 Bad Request
+	// C26 / D46: Reject malformed form bodies on mutating methods with 400 Bad Request.
+	// Validates both application/x-www-form-urlencoded and multipart/form-data.
 	if r.Method == netHTTP.MethodPost || r.Method == netHTTP.MethodPut || r.Method == netHTTP.MethodPatch || r.Method == netHTTP.MethodDelete {
 		ct := r.Header.Get("Content-Type")
-		if strings.Contains(ct, "application/x-www-form-urlencoded") || strings.Contains(ct, "multipart/form-data") {
+		if strings.Contains(ct, "multipart/form-data") {
+			if parseErr := r.ParseMultipartForm(32 << 20); parseErr != nil && parseErr != netHTTP.ErrNotMultipart {
+				_ = writeResponse(w, netHTTP.StatusBadRequest, []byte("400 Bad Request: Malformed multipart form body"))
+				return
+			}
+		} else if strings.Contains(ct, "application/x-www-form-urlencoded") {
 			if parseErr := r.ParseForm(); parseErr != nil {
 				_ = writeResponse(w, netHTTP.StatusBadRequest, []byte("400 Bad Request: Malformed form body"))
 				return
@@ -116,8 +123,17 @@ func (e *Engine) ServeHTTP(w netHTTP.ResponseWriter, r *netHTTP.Request) {
 		} else if r.PostForm != nil {
 			override = r.PostFormValue("_method")
 		} else if strings.Contains(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
-			_ = r.ParseForm()
+			if err := r.ParseForm(); err != nil {
+				_ = writeResponse(w, netHTTP.StatusBadRequest, []byte("400 Bad Request: Malformed form body"))
+				return
+			}
 			override = r.PostFormValue("_method")
+		} else if strings.Contains(r.Header.Get("Content-Type"), "multipart/form-data") {
+			if r.MultipartForm != nil {
+				if vals := r.MultipartForm.Value["_method"]; len(vals) > 0 {
+					override = vals[0]
+				}
+			}
 		}
 
 		if override != "" {

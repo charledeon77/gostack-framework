@@ -10,7 +10,7 @@
 			<label>Password</label>
 			<input type="password" name="password" required />
 		</div>
-		<div class="alert alert-danger">{{.error}}</div>
+		<div class="alert alert-danger">{{.error | default:""}}</div>
 		<button type="submit" class="btn">Sign In</button>
 	</form>
 	<p class="auth-switch">Don't have an account? <a href="/register">Register</a></p>

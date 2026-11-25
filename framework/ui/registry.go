@@ -47,6 +47,7 @@ var (
 		"plural":   FilterPlural,
 		"upper":    FilterUpper,
 		"lower":    FilterLower,
+		"default":  FilterDefault,
 	}
 )
 
@@ -230,6 +231,22 @@ func FilterLower(val any, _ ...string) string {
 	return strings.ToLower(fmt.Sprint(val))
 }
 
+// FilterDefault returns the value if non-empty, or the fallback string if empty or nil (D33).
+func FilterDefault(val any, args ...string) string {
+	fallback := ""
+	if len(args) > 0 {
+		fallback = args[0]
+	}
+	if val == nil {
+		return fallback
+	}
+	s := fmt.Sprint(val)
+	if s == "" {
+		return fallback
+	}
+	return s
+}
+
 // HotReloadClientJS provides the browser client SSE connection for development hot reloading.
 const HotReloadClientJS = `if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
   let disconnected = false;
@@ -359,13 +376,23 @@ func EvaluateErr(data any, field string) (any, error) {
 	return current, nil
 }
 
+var (
+	loggedWarningsMu sync.Mutex
+	loggedWarnings   = make(map[string]bool)
+)
+
 // Evaluate performs a safe runtime reflection lookup of a field name on a given data object.
 // It supports nested dot-notation paths (e.g. "User.Profile.Name").
-// D33: Structural reflection failures are logged loudly in ALL environments (including production).
+// D33: Structural reflection failures are logged once per field name to eliminate log flooding on repeat renders.
 func Evaluate(data any, field string) any {
 	res, err := EvaluateErr(data, field)
 	if err != nil {
-		log.Printf("[Tempose Error] Reflection lookup failed for %q: %v", field, err)
+		loggedWarningsMu.Lock()
+		if !loggedWarnings[field] {
+			loggedWarnings[field] = true
+			log.Printf("[Tempose Warning] Reflection lookup failed for %q: %v", field, err)
+		}
+		loggedWarningsMu.Unlock()
 		return ""
 	}
 	return res
@@ -416,7 +443,7 @@ func evaluateSingleErr(data any, field string) (any, error) {
 
 // EvaluateBool inspects the resolved value of a field path and returns its truthiness.
 func EvaluateBool(data any, field string) bool {
-	res := Evaluate(data, field)
+	res := EvaluateOptional(data, field)
 	if res == nil {
 		return false
 	}
@@ -461,7 +488,7 @@ func EvaluateBool(data any, field string) bool {
 
 // EvaluateSlice inspects the field path and returns a slice of interfaces.
 func EvaluateSlice(data any, field string) []any {
-	res := Evaluate(data, field)
+	res := EvaluateOptional(data, field)
 	if res == nil {
 		return nil
 	}

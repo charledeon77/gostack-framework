@@ -29,9 +29,6 @@ Usage:
 // ServeCommand starts the GoStack application web server.
 type ServeCommand struct{}
 
-// RequiresDatabase indicates this command requires an active database connection.
-func (c *ServeCommand) RequiresDatabase() bool { return true }
-
 // Name returns the trigger string.
 func (c *ServeCommand) Name() string {
 	return "serve"

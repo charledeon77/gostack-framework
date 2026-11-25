@@ -18,6 +18,140 @@ import (
 
 const adminCSRFCookieName = "admin_csrf"
 
+// adminCSS is the shared stylesheet served at /admin/assets/admin.css.
+// All admin HTML templates reference it via <link> instead of inline <style> blocks (D44).
+const adminCSS = `
+/* GoStack Admin Panel — system-font stylesheet (D44: CSP-compliant, no CDN fonts) */
+:root {
+	--bg-main: #0b0f19;
+	--bg-card: #151d30;
+	--border-color: #24324f;
+	--text-primary: #f8fafc;
+	--text-secondary: #94a3b8;
+	--primary-cyan: #06b6d4;
+	--primary-cyan-hover: #22d3ee;
+	--accent-yellow: #f59e0b;
+	--accent-red: #ef4444;
+	--accent-green: #10b981;
+}
+body {
+	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+	background: var(--bg-main);
+	color: var(--text-primary);
+	margin: 0;
+	padding: 0;
+	-webkit-font-smoothing: antialiased;
+}
+.header {
+	background: var(--bg-card);
+	padding: 1.25rem 2rem;
+	border-bottom: 1px solid var(--border-color);
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+.logo-area { display: flex; align-items: center; gap: 0.75rem; }
+.logo {
+	font-size: 1.35rem;
+	font-weight: 700;
+	background: linear-gradient(135deg, var(--primary-cyan), var(--primary-cyan-hover));
+	-webkit-background-clip: text;
+	-webkit-text-fill-color: transparent;
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+.driver-badge {
+	font-size: 0.75rem;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	padding: 0.25rem 0.6rem;
+	border-radius: 9999px;
+	background: rgba(6, 182, 212, 0.15);
+	color: var(--primary-cyan);
+	border: 1px solid rgba(6, 182, 212, 0.3);
+}
+.back-btn, .back {
+	color: var(--text-secondary);
+	text-decoration: none;
+	font-size: 0.9rem;
+	font-weight: 500;
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+}
+.back-btn:hover, .back:hover { color: var(--text-primary); }
+.container { padding: 2.5rem 2rem; max-width: 1280px; margin: 0 auto; }
+h1 { font-size: 1.85rem; font-weight: 700; margin-bottom: 2rem; letter-spacing: -0.02em; color: #38bdf8; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin-bottom: 2.5rem; }
+.card {
+	background: var(--bg-card);
+	border: 1px solid var(--border-color);
+	border-radius: 12px;
+	padding: 1.5rem;
+	position: relative;
+	overflow: hidden;
+	transition: transform 0.2s ease, border-color 0.2s ease;
+	text-align: center;
+}
+.card:hover { transform: translateY(-2px); border-color: rgba(6, 182, 212, 0.4); }
+.card::before { content: ''; position: absolute; top: 0; left: 0; width: 4px; height: 100%; }
+.card-pending::before { background: var(--primary-cyan); }
+.card-delayed::before { background: var(--accent-yellow); }
+.card-failed::before { background: var(--accent-red); }
+.card-label { font-size: 0.85rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); margin-bottom: 0.5rem; }
+.card-value { font-size: 2.5rem; font-weight: 700; letter-spacing: -0.03em; }
+.section-title { font-size: 1.25rem; font-weight: 600; margin-bottom: 1.25rem; color: var(--text-primary); }
+.table-container { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; overflow: hidden; }
+table { width: 100%%; border-collapse: collapse; text-align: left; }
+th, td { padding: 1rem 1.25rem; border-bottom: 1px solid var(--border-color); font-size: 0.9rem; }
+th { background: rgba(15, 23, 42, 0.4); color: var(--text-secondary); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; }
+tr:last-child td { border-bottom: none; }
+.empty-state { text-align: center; color: var(--text-secondary); padding: 4rem 2rem; font-size: 0.95rem; }
+td a { color: #38bdf8; text-decoration: none; margin-right: 0.5rem; }
+td a:hover { text-decoration: underline; }
+.inline-form { display: inline; }
+.btn-delete-link { background: none; border: none; color: #ef4444; cursor: pointer; padding: 0; font: inherit; text-decoration: underline; }
+.payload-box {
+	background: rgba(15, 23, 42, 0.6);
+	border: 1px solid var(--border-color);
+	border-radius: 6px;
+	padding: 0.35rem 0.6rem;
+	font-family: monospace;
+	font-size: 0.8rem;
+	color: var(--primary-cyan);
+	max-width: 320px;
+	display: inline-block;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.badge { font-size: 0.75rem; font-weight: 600; padding: 0.25rem 0.5rem; border-radius: 6px; }
+.badge-attempt { background: rgba(245, 158, 11, 0.1); color: var(--accent-yellow); border: 1px solid rgba(245, 158, 11, 0.2); }
+.error-msg { color: #fca5a5; font-family: monospace; font-size: 0.825rem; }
+.action-buttons { display: flex; gap: 0.5rem; }
+.btn-action { padding: 0.4rem 0.75rem; font-size: 0.8rem; font-weight: 600; border-radius: 6px; text-decoration: none; text-align: center; transition: background-color 0.2s ease, color 0.2s ease; }
+.btn-retry { background: rgba(6, 182, 212, 0.1); color: var(--primary-cyan); border: 1px solid rgba(6, 182, 212, 0.2); }
+.btn-retry:hover { background: var(--primary-cyan); color: var(--bg-main); }
+.btn-delete { background: rgba(239, 68, 68, 0.1); color: var(--accent-red); border: 1px solid rgba(239, 68, 68, 0.2); }
+.btn-delete:hover { background: var(--accent-red); color: var(--text-primary); }
+th.col-name { width: 20%%; }
+th.col-payload { width: 25%%; }
+th.col-attempts { width: 15%%; }
+th.col-error { width: 25%%; }
+th.col-actions { width: 15%%; }
+.actions { margin-bottom: 1.5rem; }
+.btn { display: inline-block; padding: 0.6rem 1.5rem; border-radius: 6px; background: #38bdf8; color: #0f172a; font-weight: 700; border: none; cursor: pointer; font-size: 1rem; text-decoration: none; }
+.btn:hover { background: #7dd3fc; }
+.field { margin-bottom: 1rem; }
+label { display: block; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.3rem; text-transform: capitalize; }
+input { width: 100%%; padding: 0.6rem 0.8rem; background: #1e293b; border: 1px solid #334155; border-radius: 6px; color: #e2e8f0; font-size: 1rem; box-sizing: border-box; }
+input:focus { outline: none; border-color: #38bdf8; }
+code { background: #0b0f19; color: #38bdf8; padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace; }
+.code-box { text-align: left; background: #0b0f19; padding: 1rem; border-radius: 8px; border: 1px solid var(--border-color); }
+`
+
 func getOrSetAdminCSRF(w http.ResponseWriter, r *http.Request) (string, error) {
 	cookie, err := r.Cookie(adminCSRFCookieName)
 	if err == nil && cookie.Value != "" {
@@ -132,6 +266,11 @@ func Mount(mux *http.ServeMux, db *sql.DB, prefix string) error {
 		}
 
 		switch {
+		case path == "/assets/admin.css" || (len(parts) == 2 && parts[0] == "assets" && parts[1] == "admin.css"):
+			w.Header().Set("Content-Type", "text/css; charset=utf-8")
+			w.Header().Set("Cache-Control", "public, max-age=86400")
+			_, _ = w.Write([]byte(adminCSS))
+			return
 		case path == "" || path == "/":
 			handleDashboard(w, r)
 		case path == "/sequence" || path == "sequence" || (len(parts) == 1 && parts[0] == "sequence"):
@@ -561,305 +700,37 @@ func handleSequenceDelete(w http.ResponseWriter, r *http.Request) {
 
 // ─────────────────── Embedded HTML Templates ────────────────────────────────
 
-const dashboardTpl = `<!DOCTYPE html><html><head><title>GoStack Admin</title><style>
-body{font-family:sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:0}
-.header{background:#1e293b;padding:1rem 2rem;border-bottom:1px solid #334155;display:flex;align-items:center;gap:1rem}
-.logo{font-size:1.4rem;font-weight:700;color:#38bdf8}
-.container{padding:2rem}
-h1{color:#38bdf8;font-size:1.8rem;margin-bottom:1.5rem}
-table{width:100%%;border-collapse:collapse;background:#1e293b;border-radius:8px;overflow:hidden}
-th,td{padding:0.75rem 1rem;text-align:left;border-bottom:1px solid #334155}
-th{background:#0f172a;color:#94a3b8;text-transform:uppercase;font-size:0.75rem;letter-spacing:0.05em}
-td a{color:#38bdf8;text-decoration:none}
-td a:hover{text-decoration:underline}
-</style></head><body>
-<div class="header"><span class="logo">⚡ GoStack Admin</span></div>
+const dashboardTpl = `<!DOCTYPE html><html><head><title>GoStack Admin</title>
+<link rel="stylesheet" href="/admin/assets/admin.css">
+</head><body>
+<div class="header"><div class="logo-area"><span class="logo">⚡ GoStack Admin</span></div></div>
 <div class="container">
 <h1>Registered Models</h1>
-<table><thead><tr><th>Model</th><th>Table</th></tr></thead><tbody>%s</tbody></table>
+<div class="table-container"><table><thead><tr><th>Model</th><th>Table</th></tr></thead><tbody>%s</tbody></table></div>
 </div></body></html>`
 
-const listTpl = `<!DOCTYPE html><html><head><title>GoStack Admin — %s</title><style>
-body{font-family:sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:0}
-.header{background:#1e293b;padding:1rem 2rem;border-bottom:1px solid #334155;display:flex;align-items:center;gap:1rem}
-.logo{font-size:1.4rem;font-weight:700;color:#38bdf8}
-.container{padding:2rem}
-h1{color:#38bdf8;font-size:1.8rem;margin-bottom:1rem}
-.actions{margin-bottom:1.5rem}
-.btn{display:inline-block;padding:0.5rem 1rem;border-radius:6px;background:#38bdf8;color:#0f172a;font-weight:600;text-decoration:none;font-size:0.9rem}
-.btn:hover{background:#7dd3fc}
-table{width:100%%;border-collapse:collapse;background:#1e293b;border-radius:8px;overflow:hidden}
-th,td{padding:0.75rem 1rem;text-align:left;border-bottom:1px solid #334155}
-th{background:#0f172a;color:#94a3b8;text-transform:uppercase;font-size:0.75rem;letter-spacing:0.05em}
-td a{color:#38bdf8;text-decoration:none;margin-right:0.5rem}
-td a:hover{text-decoration:underline}
-.back{color:#94a3b8;text-decoration:none;font-size:0.9rem}
-.back:hover{color:#e2e8f0}
-.inline-form{display:inline}
-.btn-delete-link{background:none;border:none;color:#ef4444;cursor:pointer;padding:0;font:inherit;text-decoration:underline}
-</style></head><body>
-<div class="header"><span class="logo">⚡ GoStack Admin</span><a href="/admin" class="back">← Dashboard</a></div>
+const listTpl = `<!DOCTYPE html><html><head><title>GoStack Admin — %s</title>
+<link rel="stylesheet" href="/admin/assets/admin.css">
+</head><body>
+<div class="header"><div class="logo-area"><span class="logo">⚡ GoStack Admin</span></div><a href="/admin" class="back-btn">← Dashboard</a></div>
 <div class="container">
 <h1>%s</h1>
 <div class="actions"><a href="/admin/%s/create" class="btn">+ New Record</a></div>
-<table><thead><tr>%s</tr></thead><tbody>%s</tbody></table>
+<div class="table-container"><table><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>
 </div></body></html>`
 
-const editTpl = `<!DOCTYPE html><html><head><title>GoStack Admin — %s</title><style>
-body{font-family:sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:0}
-.header{background:#1e293b;padding:1rem 2rem;border-bottom:1px solid #334155;display:flex;align-items:center;gap:1rem}
-.logo{font-size:1.4rem;font-weight:700;color:#38bdf8}
-.container{padding:2rem;max-width:640px}
-h1{color:#38bdf8;font-size:1.8rem;margin-bottom:1.5rem}
-.field{margin-bottom:1rem}
-label{display:block;font-size:0.85rem;color:#94a3b8;margin-bottom:0.3rem;text-transform:capitalize}
-input{width:100%%;padding:0.6rem 0.8rem;background:#1e293b;border:1px solid #334155;border-radius:6px;color:#e2e8f0;font-size:1rem;box-sizing:border-box}
-input:focus{outline:none;border-color:#38bdf8}
-.btn{display:inline-block;padding:0.6rem 1.5rem;border-radius:6px;background:#38bdf8;color:#0f172a;font-weight:700;border:none;cursor:pointer;font-size:1rem}
-.btn:hover{background:#7dd3fc}
-.back{color:#94a3b8;text-decoration:none;font-size:0.9rem}
-</style></head><body>
-<div class="header"><span class="logo">⚡ GoStack Admin</span><a href="javascript:history.back()" class="back">← Back</a></div>
+const editTpl = `<!DOCTYPE html><html><head><title>GoStack Admin — %s</title>
+<link rel="stylesheet" href="/admin/assets/admin.css">
+</head><body>
+<div class="header"><div class="logo-area"><span class="logo">⚡ GoStack Admin</span></div><a href="javascript:history.back()" class="back-btn">← Back</a></div>
 <div class="container">
 <h1>%s</h1>
 <form method="POST" action="%s">%s<button type="submit" class="btn">Save</button></form>
 </div></body></html>`
 
 const sequenceTpl = `<!DOCTYPE html><html><head><title>GoStack Sequence Dashboard</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-:root {
-	--bg-main: #0b0f19;
-	--bg-card: #151d30;
-	--border-color: #24324f;
-	--text-primary: #f8fafc;
-	--text-secondary: #94a3b8;
-	--primary-cyan: #06b6d4;
-	--primary-cyan-hover: #22d3ee;
-	--accent-yellow: #f59e0b;
-	--accent-red: #ef4444;
-	--accent-red-hover: #f87171;
-	--accent-green: #10b981;
-}
-body {
-	font-family: 'Plus Jakarta Sans', sans-serif;
-	background: var(--bg-main);
-	color: var(--text-primary);
-	margin: 0;
-	padding: 0;
-	-webkit-font-smoothing: antialiased;
-}
-.header {
-	background: var(--bg-card);
-	padding: 1.25rem 2rem;
-	border-bottom: 1px solid var(--border-color);
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-}
-.logo-area {
-	display: flex;
-	align-items: center;
-	gap: 0.75rem;
-}
-.logo {
-	font-size: 1.35rem;
-	font-weight: 700;
-	background: linear-gradient(135deg, var(--primary-cyan), var(--primary-cyan-hover));
-	-webkit-background-clip: text;
-	-webkit-text-fill-color: transparent;
-	display: flex;
-	align-items: center;
-	gap: 0.5rem;
-}
-.driver-badge {
-	font-size: 0.75rem;
-	font-weight: 600;
-	text-transform: uppercase;
-	letter-spacing: 0.05em;
-	padding: 0.25rem 0.6rem;
-	border-radius: 9999px;
-	background: rgba(6, 182, 212, 0.15);
-	color: var(--primary-cyan);
-	border: 1px solid rgba(6, 182, 212, 0.3);
-}
-.back-btn {
-	color: var(--text-secondary);
-	text-decoration: none;
-	font-size: 0.9rem;
-	font-weight: 500;
-	transition: color 0.2s ease;
-	display: flex;
-	align-items: center;
-	gap: 0.4rem;
-}
-.back-btn:hover {
-	color: var(--text-primary);
-}
-.container {
-	padding: 2.5rem 2rem;
-	max-width: 1280px;
-	margin: 0 auto;
-}
-h1 {
-	font-size: 1.85rem;
-	font-weight: 700;
-	margin-bottom: 2rem;
-	letter-spacing: -0.02em;
-}
-.stats-grid {
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-	gap: 1.5rem;
-	margin-bottom: 2.5rem;
-}
-.card {
-	background: var(--bg-card);
-	border: 1px solid var(--border-color);
-	border-radius: 12px;
-	padding: 1.5rem;
-	position: relative;
-	overflow: hidden;
-	transition: transform 0.2s ease, border-color 0.2s ease;
-}
-.card:hover {
-	transform: translateY(-2px);
-	border-color: rgba(6, 182, 212, 0.4);
-}
-.card::before {
-	content: '';
-	position: absolute;
-	top: 0;
-	left: 0;
-	width: 4px;
-	height: 100%%;
-}
-.card-pending::before { background: var(--primary-cyan); }
-.card-delayed::before { background: var(--accent-yellow); }
-.card-failed::before { background: var(--accent-red); }
-
-.card-label {
-	font-size: 0.85rem;
-	font-weight: 600;
-	text-transform: uppercase;
-	letter-spacing: 0.05em;
-	color: var(--text-secondary);
-	margin-bottom: 0.5rem;
-}
-.card-value {
-	font-size: 2.5rem;
-	font-weight: 700;
-	letter-spacing: -0.03em;
-}
-
-.section-title {
-	font-size: 1.25rem;
-	font-weight: 600;
-	margin-bottom: 1.25rem;
-	color: var(--text-primary);
-}
-.table-container {
-	background: var(--bg-card);
-	border: 1px solid var(--border-color);
-	border-radius: 12px;
-	overflow: hidden;
-}
-table {
-	width: 100%%;
-	border-collapse: collapse;
-	text-align: left;
-}
-th, td {
-	padding: 1rem 1.25rem;
-	border-bottom: 1px solid var(--border-color);
-	font-size: 0.9rem;
-}
-th {
-	background: rgba(15, 23, 42, 0.4);
-	color: var(--text-secondary);
-	font-weight: 600;
-	text-transform: uppercase;
-	font-size: 0.75rem;
-	letter-spacing: 0.05em;
-}
-tr:last-child td {
-	border-bottom: none;
-}
-.empty-state {
-	text-align: center;
-	color: var(--text-secondary);
-	padding: 4rem 2rem;
-	font-size: 0.95rem;
-}
-.payload-box {
-	background: rgba(15, 23, 42, 0.6);
-	border: 1px solid var(--border-color);
-	border-radius: 6px;
-	padding: 0.35rem 0.6rem;
-	font-family: monospace;
-	font-size: 0.8rem;
-	color: var(--primary-cyan);
-	max-width: 320px;
-	display: inline-block;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-.badge {
-	font-size: 0.75rem;
-	font-weight: 600;
-	padding: 0.25rem 0.5rem;
-	border-radius: 6px;
-}
-.badge-attempt {
-	background: rgba(245, 158, 11, 0.1);
-	color: var(--accent-yellow);
-	border: 1px solid rgba(245, 158, 11, 0.2);
-}
-.error-msg {
-	color: #fca5a5;
-	font-family: monospace;
-	font-size: 0.825rem;
-}
-.action-buttons {
-	display: flex;
-	gap: 0.5rem;
-}
-.btn-action {
-	padding: 0.4rem 0.75rem;
-	font-size: 0.8rem;
-	font-weight: 600;
-	border-radius: 6px;
-	text-decoration: none;
-	text-align: center;
-	transition: background-color 0.2s ease, color 0.2s ease;
-}
-.btn-retry {
-	background: rgba(6, 182, 212, 0.1);
-	color: var(--primary-cyan);
-	border: 1px solid rgba(6, 182, 212, 0.2);
-}
-.btn-retry:hover {
-	background: var(--primary-cyan);
-	color: var(--bg-main);
-}
-.btn-delete {
-	background: rgba(239, 68, 68, 0.1);
-	color: var(--accent-red);
-	border: 1px solid rgba(239, 68, 68, 0.2);
-}
-.btn-delete:hover {
-	background: var(--accent-red);
-	color: var(--text-primary);
-}
-th.col-name { width: 20%%; }
-th.col-payload { width: 25%%; }
-th.col-attempts { width: 15%%; }
-th.col-error { width: 25%%; }
-th.col-actions { width: 15%%; }
-</style></head><body>
+<link rel="stylesheet" href="/admin/assets/admin.css">
+</head><body>
 <div class="header">
 	<div class="logo-area">
 		<span class="logo">⚡ Sequence Dashboard</span>
@@ -890,69 +761,9 @@ th.col-actions { width: 15%%; }
 </body></html>`
 
 const sequenceUnconfiguredTpl = `<!DOCTYPE html><html><head><title>GoStack Sequence Dashboard</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-body {
-	font-family: 'Plus Jakarta Sans', sans-serif;
-	background: #0b0f19;
-	color: #f8fafc;
-	margin: 0;
-	padding: 0;
-	display: flex;
-	justify-content: center;
-	align-items: center;
-	min-height: 100vh;
-}
-.card {
-	background: #151d30;
-	border: 1px solid #24324f;
-	border-radius: 16px;
-	padding: 2.5rem;
-	max-width: 500px;
-	text-align: center;
-}
-h1 {
-	color: #06b6d4;
-	font-size: 1.5rem;
-	margin-top: 0;
-	margin-bottom: 1rem;
-}
-p {
-	color: #94a3b8;
-	line-height: 1.6;
-	font-size: 0.95rem;
-}
-code {
-	background: #0b0f19;
-	color: #38bdf8;
-	padding: 0.2rem 0.4rem;
-	border-radius: 4px;
-	font-family: monospace;
-}
-.btn {
-	display: inline-block;
-	margin-top: 1.5rem;
-	padding: 0.6rem 1.2rem;
-	background: #06b6d4;
-	color: #0b0f19;
-	font-weight: 600;
-	border-radius: 8px;
-	text-decoration: none;
-	font-size: 0.9rem;
-}
-.btn:hover {
-	background: #22d3ee;
-}
-.code-box {
-	text-align: left;
-	background: #0b0f19;
-	padding: 1rem;
-	border-radius: 8px;
-	border: 1px solid #24324f;
-}
-</style></head><body>
+<link rel="stylesheet" href="/admin/assets/admin.css">
+</head>
+<body>
 <div class="card">
 	<h1>⚡ Sequence Queue Unconfigured</h1>
 	<p>The Sequence background queue dashboard is currently not active because no active queue instance was registered with the admin panel.</p>
@@ -965,55 +776,9 @@ code {
 </body></html>`
 
 const sequenceUnsupportedTpl = `<!DOCTYPE html><html><head><title>GoStack Sequence Dashboard</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-body {
-	font-family: 'Plus Jakarta Sans', sans-serif;
-	background: #0b0f19;
-	color: #f8fafc;
-	margin: 0;
-	padding: 0;
-	display: flex;
-	justify-content: center;
-	align-items: center;
-	min-height: 100vh;
-}
-.card {
-	background: #151d30;
-	border: 1px solid #24324f;
-	border-radius: 16px;
-	padding: 2.5rem;
-	max-width: 500px;
-	text-align: center;
-}
-h1 {
-	color: #f59e0b;
-	font-size: 1.5rem;
-	margin-top: 0;
-	margin-bottom: 1rem;
-}
-p {
-	color: #94a3b8;
-	line-height: 1.6;
-	font-size: 0.95rem;
-}
-.btn {
-	display: inline-block;
-	margin-top: 1.5rem;
-	padding: 0.6rem 1.2rem;
-	background: #f59e0b;
-	color: #0b0f19;
-	font-weight: 600;
-	border-radius: 8px;
-	text-decoration: none;
-	font-size: 0.9rem;
-}
-.btn:hover {
-	background: #fbbf24;
-}
-</style></head><body>
+<link rel="stylesheet" href="/admin/assets/admin.css">
+</head>
+<body>
 <div class="card">
 	<h1>⚡ Dashboard Inspection Unsupported</h1>
 	<p>The registered queue instance does not support inspection services because it does not implement the required <code>contract.QueueInspector</code> interface.</p>

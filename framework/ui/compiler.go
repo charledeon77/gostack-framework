@@ -423,8 +423,8 @@ func (c *AssetCompiler) compileHTML(componentName, rawHTML string) (string, bool
 		// Document generated via layout inheritance (@extends) already has the component badge
 		// injected into the layout's primary @yield slot (<div gs-component="...">).
 		wrappedHTML = trimmedHTML
-	} else if strings.HasPrefix(lower, fmt.Sprintf("<div gs-component=\"%s\"", componentName)) {
-		// D14: Template already contains outer component wrapper; avoid nested duplicate wrappers.
+	} else if strings.HasPrefix(lower, fmt.Sprintf("<div gs-component=\"%s\"", strings.ToLower(componentName))) {
+		// D14 / D45: Template already contains outer component wrapper; avoid nested duplicate wrappers (case-insensitive).
 		wrappedHTML = trimmedHTML
 	} else {
 		wrappedHTML = fmt.Sprintf("<div gs-component=\"%s\">\n%s\n</div>", componentName, trimmedHTML)
@@ -705,15 +705,32 @@ func (c *AssetCompiler) compileFilterChain(expr string) (string, error) {
 
 	// Compile the base value expression
 	base := pipes[0]
+	hasDefault := false
+	for _, pipe := range pipes[1:] {
+		p := strings.TrimSpace(pipe)
+		if strings.HasPrefix(p, "default(") || strings.HasPrefix(p, "default:") || p == "default" {
+			hasDefault = true
+			break
+		}
+	}
+
 	var goExpr string
 	if strings.HasPrefix(base, ".") {
 		fieldName := strings.TrimPrefix(base, ".")
 		if !isVariableName(fieldName) {
 			return "", fmt.Errorf("invalid field in filter chain: %q", base)
 		}
-		goExpr = fmt.Sprintf(`ui.Evaluate(data, "%s")`, fieldName)
+		if hasDefault {
+			goExpr = fmt.Sprintf(`ui.EvaluateOptional(data, "%s")`, fieldName)
+		} else {
+			goExpr = fmt.Sprintf(`ui.Evaluate(data, "%s")`, fieldName)
+		}
 	} else if isVariableName(base) {
-		goExpr = fmt.Sprintf(`ui.Evaluate(data, "%s")`, base)
+		if hasDefault {
+			goExpr = fmt.Sprintf(`ui.EvaluateOptional(data, "%s")`, base)
+		} else {
+			goExpr = fmt.Sprintf(`ui.Evaluate(data, "%s")`, base)
+		}
 	} else if isLiteral(base) {
 		goExpr = base
 	} else {
@@ -723,6 +740,12 @@ func (c *AssetCompiler) compileFilterChain(expr string) (string, error) {
 	// Apply each filter in the chain
 	for _, pipe := range pipes[1:] {
 		pipe = strings.TrimSpace(pipe)
+		if strings.HasPrefix(pipe, "default:") {
+			val := strings.TrimSpace(strings.TrimPrefix(pipe, "default:"))
+			val = strings.Trim(val, `"'`)
+			goExpr = fmt.Sprintf(`ui.ApplyFilter(%s, "default", %s)`, goExpr, strconv.Quote(val))
+			continue
+		}
 		// Parse filter name and optional args: filterName(arg1, arg2)
 		if parenIdx := strings.Index(pipe, "("); parenIdx != -1 {
 			filterName := strings.TrimSpace(pipe[:parenIdx])

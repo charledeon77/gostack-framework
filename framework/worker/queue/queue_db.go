@@ -51,6 +51,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/charledeon77/gostack-framework/framework/contract"
@@ -66,16 +67,17 @@ type dbJobEnvelope struct {
 // DatabaseQueue is a SQL-backed implementation of contract.Queue.
 // It is safe for use across multiple worker instances.
 type DatabaseQueue struct {
-	db           *sql.DB
-	driver       string // detected driver name: "postgres", "mysql", "sqlite", etc.
-	table        string // jobs table name
-	failedTable  string // failed_jobs table name
-	queue        string // logical queue name (allows multiple queues in one table)
-	pollInterval time.Duration
-	registry     map[string]func() contract.Job // job name → constructor
-	mu           sync.RWMutex
-	wg           sync.WaitGroup
-	stop         chan struct{}
+	db                 *sql.DB
+	driver             string // detected driver name: "postgres", "mysql", "sqlite", etc.
+	table              string // jobs table name
+	failedTable        string // failed_jobs table name
+	queue              string // logical queue name (allows multiple queues in one table)
+	pollInterval       time.Duration
+	registry           map[string]func() contract.Job // job name → constructor
+	mu                 sync.RWMutex
+	wg                 sync.WaitGroup
+	stop               chan struct{}
+	lostRecoveryWrites int64 // D47: count recovery and dead-letter write failures across drivers
 }
 
 // isPostgres reports whether the queue is backed by PostgreSQL or CockroachDB.
@@ -409,8 +411,9 @@ func (q *DatabaseQueue) processNext(workerID int) error {
 	}
 
 	if err := q.deleteJob(jobID); err != nil {
-		// B4 / D36: If delete fails, release the job so it isn't permanently stranded, and log errors
+		// B4 / D36 / D47: If delete fails, release the job so it isn't permanently stranded, log error and count
 		if _, relErr := q.db.Exec(fmt.Sprintf(`UPDATE %s SET reserved_at = NULL WHERE id = %s`, q.table, q.ph(1)), jobID); relErr != nil {
+			atomic.AddInt64(&q.lostRecoveryWrites, 1)
 			log.Printf("[Sequence DBQueue CRITICAL] Failed to release reserved job %d after delete failure: %v", jobID, relErr)
 		}
 		return err
@@ -425,13 +428,17 @@ func (q *DatabaseQueue) deadLetter(jobID int64, payload string, attempts int, re
 		q.queue, payload, attempts, reason, time.Now().Unix(),
 	)
 	if err != nil {
+		atomic.AddInt64(&q.lostRecoveryWrites, 1)
 		if _, relErr := q.db.Exec(fmt.Sprintf(`UPDATE %s SET reserved_at = NULL WHERE id = %s`, q.table, q.ph(1)), jobID); relErr != nil {
+			atomic.AddInt64(&q.lostRecoveryWrites, 1)
 			log.Printf("[Sequence DBQueue CRITICAL] Failed to release reserved job %d after deadLetter insert error: %v", jobID, relErr)
 		}
 		return fmt.Errorf("deadLetter insert failed: %w", err)
 	}
 	if err := q.deleteJob(jobID); err != nil {
+		atomic.AddInt64(&q.lostRecoveryWrites, 1)
 		if _, relErr := q.db.Exec(fmt.Sprintf(`UPDATE %s SET reserved_at = NULL WHERE id = %s`, q.table, q.ph(1)), jobID); relErr != nil {
+			atomic.AddInt64(&q.lostRecoveryWrites, 1)
 			log.Printf("[Sequence DBQueue CRITICAL] Failed to release reserved job %d after deleteJob error: %v", jobID, relErr)
 		}
 		return fmt.Errorf("deadLetter deleteJob failed: %w", err)
@@ -465,11 +472,17 @@ func (q *DatabaseQueue) GetStats() (contract.QueueStats, error) {
 	}
 
 	return contract.QueueStats{
-		Driver:  "database",
-		Pending: pending,
-		Delayed: 0,
-		Failed:  failed,
+		Driver:             "database",
+		Pending:            pending,
+		Delayed:            0,
+		Failed:             failed,
+		LostRecoveryWrites: atomic.LoadInt64(&q.lostRecoveryWrites),
 	}, nil
+}
+
+// LostRecoveryWrites returns the count of failed recovery or dead-letter write operations (D47).
+func (q *DatabaseQueue) LostRecoveryWrites() int64 {
+	return atomic.LoadInt64(&q.lostRecoveryWrites)
 }
 
 // GetFailedJobs lists all permanently failed jobs for this queue.

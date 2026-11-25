@@ -190,13 +190,13 @@ function toggleAccordion(trigger) {
     <button class="gs-btn gs-btn-`); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "variant"))); err != nil {
+		if _, err := io.WriteString(w, ui.Escape(ui.ApplyFilter(ui.EvaluateOptional(data, "variant"), "default", "primary"))); err != nil {
 			return err
 		}
 		if _, err := io.WriteString(w, `" gs-click="`); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "onClick"))); err != nil {
+		if _, err := io.WriteString(w, ui.Escape(ui.ApplyFilter(ui.EvaluateOptional(data, "onClick"), "default", ""))); err != nil {
 			return err
 		}
 		if _, err := io.WriteString(w, `">
@@ -398,7 +398,7 @@ console.log('Counter component hydrated successfully');
 		<div class="alert alert-danger">`); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "error"))); err != nil {
+		if _, err := io.WriteString(w, ui.Escape(ui.ApplyFilter(ui.EvaluateOptional(data, "error"), "default", ""))); err != nil {
 			return err
 		}
 		if _, err := io.WriteString(w, `</div>
@@ -552,7 +552,7 @@ to {
                 `); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(w, ui.Escape(ui.Evaluate(data, "footer"))); err != nil {
+		if _, err := io.WriteString(w, ui.Escape(ui.ApplyFilter(ui.EvaluateOptional(data, "footer"), "default", ""))); err != nil {
 			return err
 		}
 		if _, err := io.WriteString(w, `

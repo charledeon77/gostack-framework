@@ -20,6 +20,7 @@ components and carries zero third-party footprint.
 package ui
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -1896,10 +1897,12 @@ const GlideJS = `
 
 // GoStackMethodNames dynamically inspects and extracts the method names declared on the global.GoStack object in GlideJS.
 // This is the authoritative single source of truth for runtime GoStack JS method bindings (D42).
-func GoStackMethodNames() []string {
+// Returns an error if the GoStack object block cannot be located or yields no method names — frozen fallbacks are removed
+// to ensure test failures surface real issues rather than silently passing on stale data.
+func GoStackMethodNames() ([]string, error) {
 	idx := strings.Index(GlideJS, "global.GoStack = {")
 	if idx == -1 {
-		return []string{"closeModal", "showModal", "toggleAccordion"}
+		return nil, fmt.Errorf("GoStackMethodNames: could not locate 'global.GoStack = {' in GlideJS — glide.go may be malformed")
 	}
 	sub := GlideJS[idx:]
 	end := strings.Index(sub, "};")
@@ -1913,7 +1916,7 @@ func GoStackMethodNames() []string {
 		names = append(names, m[1])
 	}
 	if len(names) == 0 {
-		return []string{"closeModal", "showModal", "toggleAccordion"}
+		return nil, fmt.Errorf("GoStackMethodNames: regex matched zero method names inside GoStack object block — GlideJS structure may have changed")
 	}
-	return names
+	return names, nil
 }

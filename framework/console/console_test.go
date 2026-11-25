@@ -466,7 +466,6 @@ func TestCommand_DatabaseDependencyContract(t *testing.T) {
 		"migrate":          true,
 		"migrate:rollback": true,
 		"db:seed":          true,
-		"serve":            true,
 	}
 
 	for name := range expectedDBCommands {
@@ -481,8 +480,8 @@ func TestCommand_DatabaseDependencyContract(t *testing.T) {
 		}
 	}
 
-	// Commands that should NOT require a database connection
-	nonDBCommands := []string{"new", "dev", "make:migration", "make:controller", "make:model"}
+	// Commands that should NOT require a database connection (including serve and dev, which delegate to the app subprocess)
+	nonDBCommands := []string{"new", "dev", "serve", "make:migration", "make:controller", "make:model"}
 	for _, name := range nonDBCommands {
 		cmd, exists := kernel.Get(name)
 		if !exists {
