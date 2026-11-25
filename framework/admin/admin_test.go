@@ -227,3 +227,61 @@ func TestAdmin_EditForm_PreservesBlankSensitiveColumns(t *testing.T) {
 	}
 }
 
+func TestAdmin_D48_CustomPrefixAndPublicAsset(t *testing.T) {
+	os.Setenv("APP_ENV", "local")
+	defer os.Unsetenv("APP_ENV")
+
+	oldGuard := AuthGuard
+	// Require explicit header on guarded routes so we prove asset route bypasses auth guard
+	AuthGuard = func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("X-Admin-Auth") != "ok" {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+	defer func() { AuthGuard = oldGuard }()
+
+	db := openTestAdminDB(t)
+	defer db.Close()
+
+	mux := http.NewServeMux()
+	if err := Mount(mux, db, "/backoffice"); err != nil {
+		t.Fatalf("Mount failed: %v", err)
+	}
+
+	// 1. Asset route is accessible without auth, sets immutable cache-control, and sets NO Set-Cookie
+	assetURL := "/backoffice/assets/" + adminCSSFilename
+	reqCSS := httptest.NewRequest("GET", assetURL, nil)
+	wCSS := httptest.NewRecorder()
+	mux.ServeHTTP(wCSS, reqCSS)
+
+	if wCSS.Code != http.StatusOK {
+		t.Fatalf("expected public admin CSS at %s to return 200 without auth, got %d", assetURL, wCSS.Code)
+	}
+	if cc := wCSS.Header().Get("Cache-Control"); cc != "public, max-age=31536000, immutable" {
+		t.Fatalf("expected immutable Cache-Control on admin CSS, got %q", cc)
+	}
+	if sc := wCSS.Header().Get("Set-Cookie"); sc != "" {
+		t.Fatalf("expected NO Set-Cookie on public admin CSS asset, got %q", sc)
+	}
+
+	// 2. Authenticated dashboard at /backoffice/ links to /backoffice/assets/... and uses /backoffice/ links
+	reqDash := httptest.NewRequest("GET", "/backoffice/", nil)
+	reqDash.Header.Set("X-Admin-Auth", "ok")
+	wDash := httptest.NewRecorder()
+	mux.ServeHTTP(wDash, reqDash)
+	if wDash.Code != http.StatusOK {
+		t.Fatalf("expected dashboard to return 200, got %d", wDash.Code)
+	}
+	body := wDash.Body.String()
+	if !strings.Contains(body, `href="`+assetURL+`"`) {
+		t.Fatalf("expected dashboard HTML to link %q, got:\n%s", assetURL, body)
+	}
+	if strings.Contains(body, `href="/admin`) || strings.Contains(body, `action="/admin`) {
+		t.Fatalf("expected dashboard HTML mounted at /backoffice to contain zero hardcoded /admin URLs, got:\n%s", body)
+	}
+}
+

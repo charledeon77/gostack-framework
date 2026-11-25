@@ -312,4 +312,86 @@ func TestRouter_UseGlobalMiddleware(t *testing.T) {
 	}
 }
 
+func TestEngine_D46_BodyGuardLayerAnd413(t *testing.T) {
+	os.Setenv("MAX_REQUEST_BODY_SIZE", "256")
+	defer os.Unsetenv("MAX_REQUEST_BODY_SIZE")
+
+	router := NewRouter()
+	router.Post("/submit", func(ctx *Context) {
+		ctx.Writer.WriteHeader(netHTTP.StatusOK)
+	})
+	engine := NewEngine(router, nil)
+
+	// 1. Oversized multipart POST returns 413 (not 400) before reading body
+	bigMultipart := "--bound\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\n\r\n" +
+		strings.Repeat("X", 512) + "\r\n--bound--\r\n"
+	req1 := httptest.NewRequest("POST", "/submit", strings.NewReader(bigMultipart))
+	req1.Header.Set("Content-Type", "multipart/form-data; boundary=bound")
+	w1 := httptest.NewRecorder()
+	engine.ServeHTTP(w1, req1)
+	if w1.Code != netHTTP.StatusRequestEntityTooLarge {
+		t.Fatalf("expected oversized multipart POST to return 413, got %d", w1.Code)
+	}
+
+	// 2. Oversized urlencoded POST returns 413 (not 400) even during method-override check
+	bigForm := "k=" + strings.Repeat("a", 512)
+	req2 := httptest.NewRequest("POST", "/submit", strings.NewReader(bigForm))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w2 := httptest.NewRecorder()
+	engine.ServeHTTP(w2, req2)
+	if w2.Code != netHTTP.StatusRequestEntityTooLarge {
+		t.Fatalf("expected oversized urlencoded POST to return 413, got %d", w2.Code)
+	}
+
+	// 3. Malformed multipart Content-Type header (missing boundary) returns 400
+	req3 := httptest.NewRequest("POST", "/submit", strings.NewReader("body"))
+	req3.Header.Set("Content-Type", "multipart/form-data")
+	w3 := httptest.NewRecorder()
+	engine.ServeHTTP(w3, req3)
+	if w3.Code != netHTTP.StatusBadRequest {
+		t.Fatalf("expected malformed multipart Content-Type header to return 400, got %d", w3.Code)
+	}
+}
+
+func TestEngine_D44_CSPNoncePipelineAndPanicPage(t *testing.T) {
+	router := NewRouter()
+	var capturedNonce string
+	router.Get("/ok", func(ctx *Context) {
+		capturedNonce = ctx.CSPNonce()
+		ctx.Writer.WriteHeader(netHTTP.StatusOK)
+	})
+	router.Get("/boom", func(ctx *Context) {
+		panic("kaboom")
+	})
+	engine := NewEngine(router, nil)
+
+	// 1. Normal request exposes CSPNonce() and injects it into Content-Security-Policy
+	req1 := httptest.NewRequest("GET", "/ok", nil)
+	w1 := httptest.NewRecorder()
+	engine.ServeHTTP(w1, req1)
+	if capturedNonce == "" {
+		t.Fatal("expected non-empty ctx.CSPNonce()")
+	}
+	csp1 := w1.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp1, "'nonce-"+capturedNonce+"'") {
+		t.Fatalf("expected CSP header to contain 'nonce-%s', got %q", capturedNonce, csp1)
+	}
+
+	// 2. Panic 500 page <style nonce="..."> matches Content-Security-Policy nonce
+	req2 := httptest.NewRequest("GET", "/boom", nil)
+	w2 := httptest.NewRecorder()
+	engine.ServeHTTP(w2, req2)
+	if w2.Code != netHTTP.StatusInternalServerError {
+		t.Fatalf("expected 500 on panic, got %d", w2.Code)
+	}
+	csp2 := w2.Header().Get("Content-Security-Policy")
+	body2 := w2.Body.String()
+	if !strings.Contains(body2, `<style nonce="`) {
+		t.Fatalf("expected 500 panic page to carry <style nonce=\"...\">, got %s", body2)
+	}
+	if !strings.Contains(csp2, "'nonce-") {
+		t.Fatalf("expected 500 panic response CSP to carry nonce, got %q", csp2)
+	}
+}
+
 

@@ -2,6 +2,7 @@ package admin
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
@@ -18,8 +19,14 @@ import (
 
 const adminCSRFCookieName = "admin_csrf"
 
-// adminCSS is the shared stylesheet served at /admin/assets/admin.css.
-// All admin HTML templates reference it via <link> instead of inline <style> blocks (D44).
+// adminCSSFilename is content-hashed so the asset can be served with immutable caching (D48).
+var adminCSSFilename = func() string {
+	sum := sha256.Sum256([]byte(adminCSS))
+	return fmt.Sprintf("admin-%x.css", sum[:4])
+}()
+
+// adminCSS is the shared stylesheet served at <prefix>/assets/admin-<hash>.css.
+// All admin HTML templates reference it via <link> instead of inline style blocks (D44).
 const adminCSS = `
 /* GoStack Admin Panel — system-font stylesheet (D44: CSP-compliant, no CDN fonts) */
 :root {
@@ -230,6 +237,7 @@ func Mount(mux *http.ServeMux, db *sql.DB, prefix string) error {
 	if db == nil {
 		return fmt.Errorf("admin: database connection cannot be nil")
 	}
+	prefix = strings.TrimRight(prefix, "/")
 	if prefix == "" {
 		prefix = "/admin"
 	}
@@ -249,6 +257,22 @@ func Mount(mux *http.ServeMux, db *sql.DB, prefix string) error {
 		guard = LocalOnlyGuard
 	}
 
+	// D48: Serve the content-hashed admin stylesheet as a real public, immutable asset
+	// outside the auth guard and without issuing any per-user CSRF cookie.
+	assetURL := prefix + "/assets/" + adminCSSFilename
+	mux.HandleFunc(assetURL, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "405 Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(adminCSS))
+		}
+	})
+
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, prefix)
 		parts := strings.Split(strings.Trim(path, "/"), "/")
@@ -266,27 +290,22 @@ func Mount(mux *http.ServeMux, db *sql.DB, prefix string) error {
 		}
 
 		switch {
-		case path == "/assets/admin.css" || (len(parts) == 2 && parts[0] == "assets" && parts[1] == "admin.css"):
-			w.Header().Set("Content-Type", "text/css; charset=utf-8")
-			w.Header().Set("Cache-Control", "public, max-age=86400")
-			_, _ = w.Write([]byte(adminCSS))
-			return
 		case path == "" || path == "/":
-			handleDashboard(w, r)
+			handleDashboard(w, r, prefix, assetURL)
 		case path == "/sequence" || path == "sequence" || (len(parts) == 1 && parts[0] == "sequence"):
-			handleSequenceDashboard(w, r, csrfToken)
+			handleSequenceDashboard(w, r, csrfToken, prefix, assetURL)
 		case len(parts) == 2 && parts[0] == "sequence" && parts[1] == "retry":
-			handleSequenceRetry(w, r)
+			handleSequenceRetry(w, r, prefix)
 		case len(parts) == 2 && parts[0] == "sequence" && parts[1] == "delete":
-			handleSequenceDelete(w, r)
+			handleSequenceDelete(w, r, prefix)
 		case len(parts) == 1 && parts[0] != "":
-			handleList(w, r, db, parts[0], csrfToken)
+			handleList(w, r, db, parts[0], csrfToken, prefix, assetURL)
 		case len(parts) == 2 && parts[1] == "create":
-			handleCreate(w, r, db, parts[0], csrfToken)
+			handleCreate(w, r, db, parts[0], csrfToken, prefix, assetURL)
 		case len(parts) == 2:
-			handleEdit(w, r, db, parts[0], parts[1], csrfToken)
+			handleEdit(w, r, db, parts[0], parts[1], csrfToken, prefix, assetURL)
 		case len(parts) == 3 && parts[2] == "delete":
-			handleDestroy(w, r, db, parts[0], parts[1])
+			handleDestroy(w, r, db, parts[0], parts[1], prefix)
 		default:
 			http.NotFound(w, r)
 		}
@@ -302,17 +321,18 @@ func writeTemplate(w http.ResponseWriter, format string, a ...any) {
 	}
 }
 
-func handleDashboard(w http.ResponseWriter, r *http.Request) {
+func handleDashboard(w http.ResponseWriter, r *http.Request, prefix, assetURL string) {
 	entries := All()
 	var rows string
+	escPrefix := html.EscapeString(prefix)
 	for name, entry := range entries {
-		rows += fmt.Sprintf(`<tr><td><a href="/admin/%s">%s</a></td><td>%s</td></tr>`, html.EscapeString(name), html.EscapeString(entry.Label), html.EscapeString(entry.TableName))
+		rows += fmt.Sprintf(`<tr><td><a href="%s/%s">%s</a></td><td>%s</td></tr>`, escPrefix, html.EscapeString(name), html.EscapeString(entry.Label), html.EscapeString(entry.TableName))
 	}
 	w.Header().Set("Content-Type", "text/html")
-	writeTemplate(w, dashboardTpl, rows)
+	writeTemplate(w, dashboardTpl, html.EscapeString(assetURL), rows)
 }
 
-func handleList(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, csrfToken string) {
+func handleList(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, csrfToken, prefix, assetURL string) {
 	entry, ok := Find(modelName)
 	if !ok {
 		http.NotFound(w, r)
@@ -374,7 +394,8 @@ func handleList(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, c
 		}
 		escModel := html.EscapeString(modelName)
 		escID := html.EscapeString(fmt.Sprintf("%v", id))
-		tableRows += fmt.Sprintf(`<td><a href="/admin/%s/%s">Edit</a> | <form method="POST" action="/admin/%s/%s/delete" class="inline-form"><input type="hidden" name="_csrf" value="%s"><button type="submit" class="btn-delete-link">Delete</button></form></td></tr>`, escModel, escID, escModel, escID, escCSRF)
+		escPrefix := html.EscapeString(prefix)
+		tableRows += fmt.Sprintf(`<td><a href="%s/%s/%s">Edit</a> | <form method="POST" action="%s/%s/%s/delete" class="inline-form"><input type="hidden" name="_csrf" value="%s"><button type="submit" class="btn-delete-link">Delete</button></form></td></tr>`, escPrefix, escModel, escID, escPrefix, escModel, escID, escCSRF)
 	}
 	if err := rows.Err(); err != nil {
 		log.Printf("[GoStack Admin] Row iteration error: %v", err)
@@ -389,10 +410,11 @@ func handleList(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, c
 	headers += "<th>Actions</th>"
 
 	w.Header().Set("Content-Type", "text/html")
-	writeTemplate(w, listTpl, html.EscapeString(entry.Label), html.EscapeString(entry.Label), html.EscapeString(modelName), headers, tableRows)
+	escPrefix := html.EscapeString(prefix)
+	writeTemplate(w, listTpl, html.EscapeString(entry.Label), html.EscapeString(assetURL), escPrefix, html.EscapeString(entry.Label), escPrefix, html.EscapeString(modelName), headers, tableRows)
 }
 
-func handleCreate(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, csrfToken string) {
+func handleCreate(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, csrfToken, prefix, assetURL string) {
 	entry, ok := Find(modelName)
 	if !ok {
 		http.NotFound(w, r)
@@ -428,7 +450,7 @@ func handleCreate(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName,
 			http.Error(w, "500 Internal Server Error: Failed to create record", http.StatusInternalServerError)
 			return
 		}
-		http.Redirect(w, r, "/admin/"+modelName, http.StatusFound)
+		http.Redirect(w, r, prefix+"/"+modelName, http.StatusFound)
 		return
 	}
 
@@ -440,10 +462,12 @@ func handleCreate(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName,
 		fields += fmt.Sprintf(`<div class="field"><label>%s</label><input name="%s" type="text"></div>`, html.EscapeString(col.Name), html.EscapeString(col.Name))
 	}
 	w.Header().Set("Content-Type", "text/html")
-	writeTemplate(w, editTpl, "Create "+html.EscapeString(entry.Label), "Create "+html.EscapeString(entry.Label), "/admin/"+html.EscapeString(modelName)+"/create", fields)
+	escPrefix := html.EscapeString(prefix)
+	escModel := html.EscapeString(modelName)
+	writeTemplate(w, editTpl, "Create "+html.EscapeString(entry.Label), html.EscapeString(assetURL), escPrefix+"/"+escModel, "Create "+html.EscapeString(entry.Label), escPrefix+"/"+escModel+"/create", fields)
 }
 
-func handleEdit(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, id, csrfToken string) {
+func handleEdit(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, id, csrfToken, prefix, assetURL string) {
 	entry, ok := Find(modelName)
 	if !ok {
 		http.NotFound(w, r)
@@ -472,7 +496,7 @@ func handleEdit(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, i
 			setClauses = append(setClauses, fmt.Sprintf("%s = %s", col.Name, sqlPlaceholder(isPg, len(args))))
 		}
 		if len(setClauses) == 0 {
-			http.Redirect(w, r, "/admin/"+modelName, http.StatusFound)
+			http.Redirect(w, r, prefix+"/"+modelName, http.StatusFound)
 			return
 		}
 		args = append(args, id)
@@ -483,7 +507,7 @@ func handleEdit(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, i
 			http.Error(w, "500 Internal Server Error: Failed to update record", http.StatusInternalServerError)
 			return
 		}
-		http.Redirect(w, r, "/admin/"+modelName, http.StatusFound)
+		http.Redirect(w, r, prefix+"/"+modelName, http.StatusFound)
 		return
 	}
 
@@ -527,10 +551,11 @@ func handleEdit(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, i
 	escLabel := html.EscapeString(entry.Label)
 	escID := html.EscapeString(id)
 	escModel := html.EscapeString(modelName)
-	writeTemplate(w, editTpl, "Edit "+escLabel+" #"+escID, "Edit "+escLabel+" #"+escID, "/admin/"+escModel+"/"+escID, fields)
+	escPrefix := html.EscapeString(prefix)
+	writeTemplate(w, editTpl, "Edit "+escLabel+" #"+escID, html.EscapeString(assetURL), escPrefix+"/"+escModel, "Edit "+escLabel+" #"+escID, escPrefix+"/"+escModel+"/"+escID, fields)
 }
 
-func handleDestroy(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, id string) {
+func handleDestroy(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName, id, prefix string) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		http.Error(w, "405 Method Not Allowed - Destructive actions require POST", http.StatusMethodNotAllowed)
@@ -548,20 +573,22 @@ func handleDestroy(w http.ResponseWriter, r *http.Request, db *sql.DB, modelName
 		http.Error(w, "500 Internal Server Error: Failed to delete record", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, "/admin/"+modelName, http.StatusFound)
+	http.Redirect(w, r, prefix+"/"+modelName, http.StatusFound)
 }
 
-func handleSequenceDashboard(w http.ResponseWriter, r *http.Request, csrfToken string) {
+func handleSequenceDashboard(w http.ResponseWriter, r *http.Request, csrfToken, prefix, assetURL string) {
 	w.Header().Set("Content-Type", "text/html")
+	escAsset := html.EscapeString(assetURL)
+	escPrefix := html.EscapeString(prefix)
 
 	if Queue == nil {
-		writeTemplate(w, sequenceUnconfiguredTpl)
+		writeTemplate(w, sequenceUnconfiguredTpl, escAsset, escPrefix)
 		return
 	}
 
 	inspector, ok := Queue.(contract.QueueInspector)
 	if !ok {
-		writeTemplate(w, sequenceUnsupportedTpl)
+		writeTemplate(w, sequenceUnsupportedTpl, escAsset, escPrefix)
 		return
 	}
 
@@ -593,11 +620,11 @@ func handleSequenceDashboard(w http.ResponseWriter, r *http.Request, csrfToken s
 				<td><span class="error-msg">%s</span></td>
 				<td>
 					<div class="action-buttons">
-						<form method="POST" action="/admin/sequence/retry?id=%s" class="inline-form">
+						<form method="POST" action="%s/sequence/retry?id=%s" class="inline-form">
 							<input type="hidden" name="_csrf" value="%s">
 							<button type="submit" class="btn-action btn-retry">Retry</button>
 						</form>
-						<form method="POST" action="/admin/sequence/delete?id=%s" class="inline-form">
+						<form method="POST" action="%s/sequence/delete?id=%s" class="inline-form">
 							<input type="hidden" name="_csrf" value="%s">
 							<button type="submit" class="btn-action btn-delete">Delete</button>
 						</form>
@@ -608,8 +635,10 @@ func handleSequenceDashboard(w http.ResponseWriter, r *http.Request, csrfToken s
 				html.EscapeString(job.Payload),
 				job.Attempts,
 				html.EscapeString(job.Error),
+				escPrefix,
 				html.EscapeString(job.ID),
 				escCSRF,
+				escPrefix,
 				html.EscapeString(job.ID),
 				escCSRF,
 			)
@@ -631,10 +660,10 @@ func handleSequenceDashboard(w http.ResponseWriter, r *http.Request, csrfToken s
 		</div>
 	`, stats.Pending, stats.Delayed, stats.Failed)
 
-	writeTemplate(w, sequenceTpl, stats.Driver, statsBar, rows)
+	writeTemplate(w, sequenceTpl, escAsset, stats.Driver, escPrefix, statsBar, rows)
 }
 
-func handleSequenceRetry(w http.ResponseWriter, r *http.Request) {
+func handleSequenceRetry(w http.ResponseWriter, r *http.Request, prefix string) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		http.Error(w, "405 Method Not Allowed - Retrying jobs requires POST", http.StatusMethodNotAllowed)
@@ -663,10 +692,10 @@ func handleSequenceRetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, "/admin/sequence", http.StatusFound)
+	http.Redirect(w, r, prefix+"/sequence", http.StatusFound)
 }
 
-func handleSequenceDelete(w http.ResponseWriter, r *http.Request) {
+func handleSequenceDelete(w http.ResponseWriter, r *http.Request, prefix string) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		http.Error(w, "405 Method Not Allowed - Deleting jobs requires POST", http.StatusMethodNotAllowed)
@@ -695,13 +724,13 @@ func handleSequenceDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, "/admin/sequence", http.StatusFound)
+	http.Redirect(w, r, prefix+"/sequence", http.StatusFound)
 }
 
 // ─────────────────── Embedded HTML Templates ────────────────────────────────
 
 const dashboardTpl = `<!DOCTYPE html><html><head><title>GoStack Admin</title>
-<link rel="stylesheet" href="/admin/assets/admin.css">
+<link rel="stylesheet" href="%s">
 </head><body>
 <div class="header"><div class="logo-area"><span class="logo">⚡ GoStack Admin</span></div></div>
 <div class="container">
@@ -710,33 +739,33 @@ const dashboardTpl = `<!DOCTYPE html><html><head><title>GoStack Admin</title>
 </div></body></html>`
 
 const listTpl = `<!DOCTYPE html><html><head><title>GoStack Admin — %s</title>
-<link rel="stylesheet" href="/admin/assets/admin.css">
+<link rel="stylesheet" href="%s">
 </head><body>
-<div class="header"><div class="logo-area"><span class="logo">⚡ GoStack Admin</span></div><a href="/admin" class="back-btn">← Dashboard</a></div>
+<div class="header"><div class="logo-area"><span class="logo">⚡ GoStack Admin</span></div><a href="%s" class="back-btn">← Dashboard</a></div>
 <div class="container">
 <h1>%s</h1>
-<div class="actions"><a href="/admin/%s/create" class="btn">+ New Record</a></div>
+<div class="actions"><a href="%s/%s/create" class="btn">+ New Record</a></div>
 <div class="table-container"><table><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>
 </div></body></html>`
 
 const editTpl = `<!DOCTYPE html><html><head><title>GoStack Admin — %s</title>
-<link rel="stylesheet" href="/admin/assets/admin.css">
+<link rel="stylesheet" href="%s">
 </head><body>
-<div class="header"><div class="logo-area"><span class="logo">⚡ GoStack Admin</span></div><a href="javascript:history.back()" class="back-btn">← Back</a></div>
+<div class="header"><div class="logo-area"><span class="logo">⚡ GoStack Admin</span></div><a href="%s" class="back-btn">← Back</a></div>
 <div class="container">
 <h1>%s</h1>
 <form method="POST" action="%s">%s<button type="submit" class="btn">Save</button></form>
 </div></body></html>`
 
 const sequenceTpl = `<!DOCTYPE html><html><head><title>GoStack Sequence Dashboard</title>
-<link rel="stylesheet" href="/admin/assets/admin.css">
+<link rel="stylesheet" href="%s">
 </head><body>
 <div class="header">
 	<div class="logo-area">
 		<span class="logo">⚡ Sequence Dashboard</span>
 		<span class="driver-badge">%s driver</span>
 	</div>
-	<a href="/admin" class="back-btn">← Back to Admin</a>
+	<a href="%s" class="back-btn">← Back to Admin</a>
 </div>
 <div class="container">
 	<div class="stats-grid">%s</div>
@@ -761,7 +790,7 @@ const sequenceTpl = `<!DOCTYPE html><html><head><title>GoStack Sequence Dashboar
 </body></html>`
 
 const sequenceUnconfiguredTpl = `<!DOCTYPE html><html><head><title>GoStack Sequence Dashboard</title>
-<link rel="stylesheet" href="/admin/assets/admin.css">
+<link rel="stylesheet" href="%s">
 </head>
 <body>
 <div class="card">
@@ -771,18 +800,18 @@ const sequenceUnconfiguredTpl = `<!DOCTYPE html><html><head><title>GoStack Seque
 	<p class="code-box">
 		<code>admin.SetQueue(myQueueInstance)</code>
 	</p>
-	<a href="/admin" class="btn">Return to Dashboard</a>
+	<a href="%s" class="btn">Return to Dashboard</a>
 </div>
 </body></html>`
 
 const sequenceUnsupportedTpl = `<!DOCTYPE html><html><head><title>GoStack Sequence Dashboard</title>
-<link rel="stylesheet" href="/admin/assets/admin.css">
+<link rel="stylesheet" href="%s">
 </head>
 <body>
 <div class="card">
 	<h1>⚡ Dashboard Inspection Unsupported</h1>
 	<p>The registered queue instance does not support inspection services because it does not implement the required <code>contract.QueueInspector</code> interface.</p>
 	<p>Please ensure you are using one of GoStack's built-in queue drivers (e.g. MemoryQueue or RedisQueue).</p>
-	<a href="/admin" class="btn">Return to Dashboard</a>
+	<a href="%s" class="btn">Return to Dashboard</a>
 </div>
 </body></html>`

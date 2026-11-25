@@ -2,9 +2,11 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
+	"mime"
 	netHTTP "net/http"
 	"os"
 	"runtime/debug"
@@ -44,6 +46,16 @@ func NewEngine(router *Router, tempose *Tempose) *Engine {
 
 // ServeHTTP acts as the low-level execution entry point required by Go's standard http.Server interface.
 func (e *Engine) ServeHTTP(w netHTTP.ResponseWriter, r *netHTTP.Request) {
+	// D44: Generate per-request CSP nonce at the top of ServeHTTP before security headers
+	// and panic recovery so both normal responses and the 500 panic page share a valid nonce.
+	cspNonce, err := GenerateCSPNonce()
+	if err != nil {
+		log.Printf("[GoStack Security] Failed to generate CSP nonce: %v", err)
+	}
+	if cspNonce != "" {
+		r = r.WithContext(context.WithValue(r.Context(), cspNonceContextKey{}, cspNonce))
+	}
+
 	// Global Crash-Catcher & Panic Recovery Shield (SEC-05)
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -52,28 +64,43 @@ func (e *Engine) ServeHTTP(w netHTTP.ResponseWriter, r *netHTTP.Request) {
 
 			// Never drop the TCP socket ungracefully — return a standardized 500 response
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			// D44: 500 panic page — inline style is intentional; nonce pipeline is unavailable at panic recovery time.
-		_ = writeResponse(w, netHTTP.StatusInternalServerError, []byte(fmt.Sprintf(`<!DOCTYPE html>
+			_ = writeResponse(w, netHTTP.StatusInternalServerError, []byte(fmt.Sprintf(`<!DOCTYPE html>
 <html>
-<head><title>500 Internal Server Error</title><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0b0f19;color:#f8fafc;padding:40px;display:flex;justify-content:center;align-items:center;height:80vh;} .card{background:#1e293b;padding:30px;border-radius:12px;border:1px solid #334155;max-width:600px;text-align:center;} h1{color:#ef4444;margin-top:0;} p{color:#94a3b8;line-height:1.6;}</style></head>
-<body><div class="card"><h1>500 Internal Server Error</h1><p>An unexpected condition was encountered while processing this request. The application kernel intercepted the crash safely.</p></div></body></html>`)))
+<head><title>500 Internal Server Error</title><style nonce="%s">body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0b0f19;color:#f8fafc;padding:40px;display:flex;justify-content:center;align-items:center;height:80vh;} .card{background:#1e293b;padding:30px;border-radius:12px;border:1px solid #334155;max-width:600px;text-align:center;} h1{color:#ef4444;margin-top:0;} p{color:#94a3b8;line-height:1.6;}</style></head>
+<body><div class="card"><h1>500 Internal Server Error</h1><p>An unexpected condition was encountered while processing this request. The application kernel intercepted the crash safely.</p></div></body></html>`, cspNonce)))
 		}
 	}()
 
-	// Automatic production security headers at engine level (SEC-12)
+	// Automatic production security headers at engine level (SEC-12 / D44)
 	if !e.DisableSecurityHeaders {
-		ApplySecurityHeaders(w, r, e.SecurityHeadersConfig)
+		ApplySecurityHeadersWithNonce(w, r, e.SecurityHeadersConfig, cspNonce)
 	}
 
-	// Enforce request body size limit (SEC-09)
+	// Enforce request body size limit (SEC-09 / D46)
 	maxBody := int64(8 * 1024 * 1024) // 8MB default
 	if customSize := os.Getenv("MAX_REQUEST_BODY_SIZE"); customSize != "" {
 		if val, err := strconv.ParseInt(customSize, 10, 64); err == nil && val > 0 {
 			maxBody = val
 		}
 	}
+	// D46: Reject oversized requests immediately by Content-Length before reading a single byte.
+	if r.ContentLength > maxBody {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_ = writeResponse(w, netHTTP.StatusRequestEntityTooLarge, []byte("413 Request Entity Too Large: request body exceeds configured limit"))
+		return
+	}
 	if r.Body != nil {
 		r.Body = netHTTP.MaxBytesReader(w, r.Body, maxBody)
+	}
+
+	writeBodyOrFormError := func(err error, malformedMsg string) {
+		var maxBytesErr *netHTTP.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_ = writeResponse(w, netHTTP.StatusRequestEntityTooLarge, []byte("413 Request Entity Too Large: request body exceeds configured limit"))
+			return
+		}
+		_ = writeResponse(w, netHTTP.StatusBadRequest, []byte(malformedMsg))
 	}
 
 	dispatch := func(ctx *Context, fn func(*Context) error) {
@@ -95,18 +122,14 @@ func (e *Engine) ServeHTTP(w netHTTP.ResponseWriter, r *netHTTP.Request) {
 	effectiveMethod := r.Method
 	effectiveWriter := w
 
-	// C26 / D46: Reject malformed form bodies on mutating methods with 400 Bad Request.
-	// Validates both application/x-www-form-urlencoded and multipart/form-data.
+	// D46: At the boundary, validate only the multipart Content-Type header (media type + boundary)
+	// without buffering or reading the body. Actual body parsing belongs in routed/authenticated handlers.
 	if r.Method == netHTTP.MethodPost || r.Method == netHTTP.MethodPut || r.Method == netHTTP.MethodPatch || r.Method == netHTTP.MethodDelete {
 		ct := r.Header.Get("Content-Type")
-		if strings.Contains(ct, "multipart/form-data") {
-			if parseErr := r.ParseMultipartForm(32 << 20); parseErr != nil && parseErr != netHTTP.ErrNotMultipart {
-				_ = writeResponse(w, netHTTP.StatusBadRequest, []byte("400 Bad Request: Malformed multipart form body"))
-				return
-			}
-		} else if strings.Contains(ct, "application/x-www-form-urlencoded") {
-			if parseErr := r.ParseForm(); parseErr != nil {
-				_ = writeResponse(w, netHTTP.StatusBadRequest, []byte("400 Bad Request: Malformed form body"))
+		if strings.Contains(strings.ToLower(ct), "multipart/form-data") {
+			mediaType, params, parseErr := mime.ParseMediaType(ct)
+			if parseErr != nil || mediaType != "multipart/form-data" || params["boundary"] == "" {
+				_ = writeResponse(w, netHTTP.StatusBadRequest, []byte("400 Bad Request: Malformed multipart Content-Type header"))
 				return
 			}
 		}
@@ -122,18 +145,12 @@ func (e *Engine) ServeHTTP(w netHTTP.ResponseWriter, r *netHTTP.Request) {
 			override = query
 		} else if r.PostForm != nil {
 			override = r.PostFormValue("_method")
-		} else if strings.Contains(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
+		} else if strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "application/x-www-form-urlencoded") {
 			if err := r.ParseForm(); err != nil {
-				_ = writeResponse(w, netHTTP.StatusBadRequest, []byte("400 Bad Request: Malformed form body"))
+				writeBodyOrFormError(err, "400 Bad Request: Malformed form body")
 				return
 			}
 			override = r.PostFormValue("_method")
-		} else if strings.Contains(r.Header.Get("Content-Type"), "multipart/form-data") {
-			if r.MultipartForm != nil {
-				if vals := r.MultipartForm.Value["_method"]; len(vals) > 0 {
-					override = vals[0]
-				}
-			}
 		}
 
 		if override != "" {

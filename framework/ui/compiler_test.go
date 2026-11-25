@@ -1079,6 +1079,40 @@ func TestShippedTemplates_CSPCompliance(t *testing.T) {
 		validGoStackMethods[m] = true
 	}
 
+	// D42: Unified CSP rules across all shipped markup sources
+	reMethodCall := regexp.MustCompile(`GoStack\.([a-zA-Z0-9_]+)\(`)
+	reBadThisArg := regexp.MustCompile(`GoStack\.[a-zA-Z0-9_]+\(\s*this\b`)
+	reStyleTag := regexp.MustCompile(`(?i)<style\b[^>]*>`)
+	reInlineStyleAttr := regexp.MustCompile(`(?i)\bstyle\s*=`)
+
+	checkMarkup := func(label, content string, checkStyleAttr bool) {
+		if strings.Contains(content, "onclick=") {
+			t.Errorf("%s contains prohibited inline onclick= handler (CSP violation)", label)
+		}
+		if checkStyleAttr && reInlineStyleAttr.MatchString(content) {
+			t.Errorf("%s contains prohibited inline style= attribute (CSP violation)", label)
+		}
+		for _, tag := range reStyleTag.FindAllString(content, -1) {
+			if !strings.Contains(strings.ToLower(tag), "nonce=") {
+				t.Errorf("%s contains <style> block without a nonce= attribute: %s (D44/D42 CSP violation)", label, tag)
+			}
+		}
+		if strings.Contains(content, `data-controller="`) {
+			t.Errorf("%s contains unsupported data-controller attribute", label)
+		}
+		if strings.Contains(content, "fonts.googleapis.com") || strings.Contains(content, "fonts.gstatic.com") {
+			t.Errorf("%s contains prohibited external Google Fonts reference", label)
+		}
+		if reBadThisArg.MatchString(content) {
+			t.Errorf("%s passes bare 'this' to GoStack.<method>() instead of $el/$event/$refs (D42)", label)
+		}
+		for _, m := range reMethodCall.FindAllStringSubmatch(content, -1) {
+			if !validGoStackMethods[m[1]] {
+				t.Errorf("%s calls GoStack.%s which does not exist in glide.go", label, m[1])
+			}
+		}
+	}
+
 	err = filepath.Walk(templatesDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".html") {
 			return nil
@@ -1087,50 +1121,67 @@ func TestShippedTemplates_CSPCompliance(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		str := string(content)
-
-		if strings.Contains(str, "onclick=") {
-			t.Errorf("template %s contains prohibited inline onclick= handler (CSP violation)", path)
-		}
-		if strings.Contains(str, "style=") {
-			t.Errorf("template %s contains prohibited inline style= attribute (CSP violation)", path)
-		}
-		if strings.Contains(str, `data-controller="`) {
-			t.Errorf("template %s contains unsupported data-controller attribute", path)
-		}
-
-		// Verify any GoStack.method($el) calls
-		re := regexp.MustCompile(`GoStack\.([a-zA-Z0-9_]+)\(`)
-		matches := re.FindAllStringSubmatch(str, -1)
-		for _, m := range matches {
-			methodName := m[1]
-			if !validGoStackMethods[methodName] {
-				t.Errorf("template %s calls GoStack.%s which does not exist in glide.go", path, methodName)
-			}
-		}
-
+		checkMarkup("template "+path, string(content), true)
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("walking templates: %v", err)
 	}
 
-	// D42: Also scan generated component files to assert CSP compliance
-	genFiles := []string{
+	// D42: Also scan generated component files, admin templates, demo landing page, and 500 error page
+	shippedGoSources := []struct {
+		path           string
+		checkStyleAttr bool
+	}{
+		{filepath.Join(rootDir, "cmd", "app", "gostack_components_gen.go"), true},
+		{filepath.Join(rootDir, "_examples", "app", "gostack_components_gen.go"), true},
+		{filepath.Join(rootDir, "framework", "admin", "controller.go"), true},
+		{filepath.Join(rootDir, "cmd", "app", "main.go"), true},
+		{filepath.Join(rootDir, "framework", "http", "runtime.go"), true},
+	}
+	for _, src := range shippedGoSources {
+		content, err := os.ReadFile(src.path)
+		if err != nil {
+			t.Fatalf("failed to read shipped source file %s: %v", src.path, err)
+		}
+		checkMarkup("shipped source "+src.path, string(content), src.checkStyleAttr)
+	}
+}
+
+// TestGeneratedComponents_UpToDate is a golden test verifying that both checked-in
+// generated component files match the current output of AssetCompiler.Compile (D45).
+func TestGeneratedComponents_UpToDate(t *testing.T) {
+	_, callerFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatalf("runtime.Caller failed to determine source location")
+	}
+	rootDir := filepath.Clean(filepath.Join(filepath.Dir(callerFile), "..", ".."))
+	componentsDir := filepath.Join(rootDir, "templates", "components")
+
+	tmpOut := t.TempDir()
+	compiler := NewAssetCompiler(componentsDir, tmpOut)
+	if err := compiler.Run(); err != nil {
+		t.Fatalf("AssetCompiler.Run failed: %v", err)
+	}
+
+	freshBytes, err := os.ReadFile(filepath.Join(tmpOut, "gostack_components_gen.go"))
+	if err != nil {
+		t.Fatalf("failed to read freshly compiled gostack_components_gen.go: %v", err)
+	}
+	fresh := strings.ReplaceAll(string(freshBytes), "\r\n", "\n")
+
+	targets := []string{
 		filepath.Join(rootDir, "cmd", "app", "gostack_components_gen.go"),
 		filepath.Join(rootDir, "_examples", "app", "gostack_components_gen.go"),
 	}
-	for _, genFile := range genFiles {
-		content, err := os.ReadFile(genFile)
+	for _, target := range targets {
+		checkedInBytes, err := os.ReadFile(target)
 		if err != nil {
-			t.Fatalf("failed to read generated component file %s: %v", genFile, err)
+			t.Fatalf("failed to read checked-in generated file %s: %v", target, err)
 		}
-		genStr := string(content)
-		if strings.Contains(genStr, "onclick=") {
-			t.Errorf("generated file %s contains prohibited inline onclick= handler (CSP violation)", genFile)
-		}
-		if strings.Contains(genStr, `data-controller="`) {
-			t.Errorf("generated file %s contains unsupported data-controller attribute", genFile)
+		checkedIn := strings.ReplaceAll(string(checkedInBytes), "\r\n", "\n")
+		if checkedIn != fresh {
+			t.Errorf("D45 drift detected: %s does not match freshly compiled output from templates/components", target)
 		}
 	}
 }

@@ -407,6 +407,16 @@ func EvaluateOptional(data any, field string) any {
 	return res
 }
 
+// InlineStyle writes a CSP-nonce-protected <style> block to w (D44).
+func InlineStyle(w io.Writer, nonce, css string) error {
+	if nonce != "" {
+		_, err := fmt.Fprintf(w, `<style nonce="%s">%s</style>`, html.EscapeString(nonce), css)
+		return err
+	}
+	_, err := fmt.Fprintf(w, `<style>%s</style>`, css)
+	return err
+}
+
 func evaluateSingleErr(data any, field string) (any, error) {
 	val := reflect.ValueOf(data)
 	if val.Kind() == reflect.Ptr {
@@ -442,8 +452,19 @@ func evaluateSingleErr(data any, field string) (any, error) {
 }
 
 // EvaluateBool inspects the resolved value of a field path and returns its truthiness.
+// D33: Missing fields remain lenient (false), but are logged once per field so typos are visible.
 func EvaluateBool(data any, field string) bool {
-	res := EvaluateOptional(data, field)
+	res, err := EvaluateErr(data, field)
+	if err != nil {
+		loggedWarningsMu.Lock()
+		key := "bool:" + field
+		if !loggedWarnings[key] {
+			loggedWarnings[key] = true
+			log.Printf("[Tempose Warning] Condition lookup failed for %q (%v) — treated as false", field, err)
+		}
+		loggedWarningsMu.Unlock()
+		return false
+	}
 	if res == nil {
 		return false
 	}
@@ -487,8 +508,19 @@ func EvaluateBool(data any, field string) bool {
 }
 
 // EvaluateSlice inspects the field path and returns a slice of interfaces.
+// D33: Missing fields remain lenient (nil), but are logged once per field so typos are visible.
 func EvaluateSlice(data any, field string) []any {
-	res := EvaluateOptional(data, field)
+	res, err := EvaluateErr(data, field)
+	if err != nil {
+		loggedWarningsMu.Lock()
+		key := "slice:" + field
+		if !loggedWarnings[key] {
+			loggedWarnings[key] = true
+			log.Printf("[Tempose Warning] Range lookup failed for %q (%v) — treated as empty", field, err)
+		}
+		loggedWarningsMu.Unlock()
+		return nil
+	}
 	if res == nil {
 		return nil
 	}

@@ -30,82 +30,7 @@ func main() {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GoStack UI — Premium Demo</title>
-
-    <style>
-        :root {
-            --bg-dark: #060608;
-            --bg-surface: #0e0e12;
-            --border-color: rgba(255, 255, 255, 0.08);
-            --text-primary: #f8fafc;
-            --text-secondary: #94a3b8;
-            --accent: #6366f1;
-            --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            --font-display: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        }
-        body {
-            margin: 0;
-            background: var(--bg-dark);
-            color: var(--text-primary);
-            font-family: var(--font-sans);
-            display: flex;
-            flex-direction: column;
-            min-height: 100vh;
-        }
-        /* Hero Section */
-        .hero {
-            position: relative;
-            padding: 100px 24px;
-            text-align: center;
-            background: radial-gradient(circle at top, rgba(99, 102, 241, 0.15) 0%, transparent 60%);
-            border-bottom: 1px solid var(--border-color);
-        }
-        .hero-title {
-            font-family: var(--font-display);
-            font-size: 48px;
-            font-weight: 800;
-            letter-spacing: -1.5px;
-            margin: 0 0 16px 0;
-            background: linear-gradient(135deg, #fff 30%, #a5b4fc 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        .hero-desc {
-            font-size: 18px;
-            color: var(--text-secondary);
-            max-width: 600px;
-            margin: 0 auto;
-            line-height: 1.6;
-        }
-        /* Test Section */
-        .test-section {
-            padding: 80px 24px;
-            max-width: 600px;
-            margin: 0 auto;
-            width: 100%;
-            box-sizing: border-box;
-        }
-        .section-title {
-            font-family: var(--font-display);
-            font-size: 28px;
-            font-weight: 700;
-            letter-spacing: -0.5px;
-            margin: 0 0 12px 0;
-            text-align: center;
-        }
-        .section-desc {
-            color: var(--text-secondary);
-            font-size: 15px;
-            text-align: center;
-            margin: 0 0 40px 0;
-            line-height: 1.5;
-        }
-        /* Center Accordion Component */
-        .component-container {
-            display: flex;
-            justify-content: center;
-            width: 100%;
-        }
-    </style>
+    <link rel="stylesheet" href="/assets/demo.css">
 </head>
 <body class="gostack-root">
     <!-- Hero Section -->
@@ -174,6 +99,11 @@ func main() {
 	home := controller.NewHomeController(dbInstance)
 
 	// 6. Register application endpoints.
+	router.Get("/assets/demo.css", func(ctx *http.Context) {
+		ctx.Writer.Header().Set("Content-Type", "text/css; charset=utf-8")
+		ctx.Writer.Header().Set("Cache-Control", "public, max-age=86400")
+		_, _ = ctx.Writer.Write([]byte(demoCSS))
+	})
 	router.Get("/", home.Index, http.Logger)
 	router.Get("/users", home.Users, http.Logger)
 
@@ -186,3 +116,74 @@ func main() {
 		log.Fatalf("Critical Error: Core framework server crashed or failed to bind to socket address: %v", err)
 	}
 }
+
+const demoCSS = `:root {
+    --bg-dark: #060608;
+    --bg-surface: #0e0e12;
+    --border-color: rgba(255, 255, 255, 0.08);
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --accent: #6366f1;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-display: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+body {
+    margin: 0;
+    background: var(--bg-dark);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+.hero {
+    position: relative;
+    padding: 100px 24px;
+    text-align: center;
+    background: radial-gradient(circle at top, rgba(99, 102, 241, 0.15) 0%, transparent 60%);
+    border-bottom: 1px solid var(--border-color);
+}
+.hero-title {
+    font-family: var(--font-display);
+    font-size: 48px;
+    font-weight: 800;
+    letter-spacing: -1.5px;
+    margin: 0 0 16px 0;
+    background: linear-gradient(135deg, #fff 30%, #a5b4fc 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.hero-desc {
+    font-size: 18px;
+    color: var(--text-secondary);
+    max-width: 600px;
+    margin: 0 auto;
+    line-height: 1.6;
+}
+.test-section {
+    padding: 80px 24px;
+    max-width: 600px;
+    margin: 0 auto;
+    width: 100%;
+    box-sizing: border-box;
+}
+.section-title {
+    font-family: var(--font-display);
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    margin: 0 0 12px 0;
+    text-align: center;
+}
+.section-desc {
+    color: var(--text-secondary);
+    font-size: 15px;
+    text-align: center;
+    margin: 0 0 40px 0;
+    line-height: 1.5;
+}
+.component-container {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+}`
